@@ -566,6 +566,13 @@ components:
       description: Replaying the same key and body returns the original result; reusing it with a different body returns 409.
       schema: { type: string, minLength: 16, maxLength: 128 }
   responses:
+    Problem:
+      description: RFC 9457 problem response with stable application code and request ID.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
     CreateReviewRequest:
       type: object
       additionalProperties: false
@@ -620,12 +627,205 @@ components:
         fileName: { type: string, minLength: 1, maxLength: 180 }
         contentType: { type: string, enum: [image/png, image/jpeg, application/pdf] }
         sizeBytes: { type: integer, minimum: 1, maximum: 20971520 }
-        sha256: { type: string, pattern: '^[a-fA-F0-9]{64}      description: RFC 9457 problem response with stable application code and request ID.
-      content:
-        application/problem+json:
-          schema:
-            $ref: '#/components/schemas/Problem'
-  schemas:
+        sha256: { type: string, pattern: "^[a-fA-F0-9]{64}$" }
+    DesignUploadResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [assetId, uploadUrl, expiresAt, requiredHeaders]
+          properties:
+            assetId: { type: string, format: uuid }
+            uploadUrl: { type: string, format: uri }
+            expiresAt: { type: string, format: date-time }
+            requiredHeaders:
+              type: object
+              additionalProperties: { type: string }
+    DesignAssetResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [assetId, fileName, status, sha256]
+          properties:
+            assetId: { type: string, format: uuid }
+            fileName: { type: string }
+            status: { type: string, enum: [verified, rejected, scanning] }
+            sha256: { type: string }
+    DiscoverPagesRequest:
+      type: object
+      additionalProperties: false
+      required: [maxPages, maxDepth]
+      properties:
+        maxPages: { type: integer, minimum: 1, maximum: 100, default: 30 }
+        maxDepth: { type: integer, minimum: 0, maximum: 5, default: 3 }
+        includeSitemap: { type: boolean, default: true }
+    ReviewJobAccepted:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [jobId, status]
+          properties:
+            jobId: { type: string, format: uuid }
+            status: { type: string, enum: [queued, running] }
+    PageMappingRequest:
+      type: object
+      additionalProperties: false
+      required: [viewport, requirementIds]
+      properties:
+        designAssetId: { type: [string, 'null'], format: uuid }
+        figmaFileKey: { type: [string, 'null'], maxLength: 128, description: Reserved for an explicitly authorized read-only Figma integration. }
+        figmaNodeId: { type: [string, 'null'], maxLength: 128 }
+        viewport:
+          $ref: '#/components/schemas/ReviewViewport'
+        requirementIds:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    ReviewViewport:
+      type: object
+      additionalProperties: false
+      required: [width, height, deviceScale]
+      properties:
+        width: { type: integer, minimum: 320, maximum: 3840 }
+        height: { type: integer, minimum: 568, maximum: 4320 }
+        deviceScale: { type: number, minimum: 1, maximum: 3 }
+    ReviewPage:
+      type: object
+      additionalProperties: false
+      required: [id, route, label, status, designAssetId, viewport, findingCount]
+      properties:
+        id: { type: string, format: uuid }
+        route: { type: string, maxLength: 2048 }
+        label: { type: string, maxLength: 120 }
+        status: { type: string, enum: [discovered, mapped, captured, needs_review, failed] }
+        designAssetId: { type: [string, 'null'], format: uuid }
+        viewport: { $ref: '#/components/schemas/ReviewViewport' }
+        findingCount: { type: integer, minimum: 0 }
+    ReviewPageResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ReviewPage' }
+    ReviewPageListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ReviewPage' }
+    CaptureReviewPageRequest:
+      type: object
+      additionalProperties: false
+      required: [pageId, viewport]
+      properties:
+        pageId: { type: string, format: uuid }
+        viewport: { $ref: '#/components/schemas/ReviewViewport' }
+        stateLabel: { type: string, maxLength: 100 }
+    CreateReviewFindingRequest:
+      type: object
+      additionalProperties: false
+      required: [category, severity, summary, evidenceCaptureId]
+      properties:
+        pageId: { type: [string, 'null'], format: uuid }
+        category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security] }
+        severity: { type: string, enum: [critical, high, medium, low, info] }
+        summary: { type: string, minLength: 1, maxLength: 500 }
+        evidenceCaptureId: { type: string, format: uuid }
+        coordinate:
+          type: [object, 'null']
+          additionalProperties: false
+          required: [x, y]
+          properties:
+            x: { type: number, minimum: 0, maximum: 1 }
+            y: { type: number, minimum: 0, maximum: 1 }
+    UpdateReviewFindingRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        status: { type: string, enum: [open, accepted, dismissed, fixed, unknown] }
+        assignedUserId: { type: [string, 'null'], format: uuid }
+        comment: { type: string, maxLength: 2000 }
+    ReviewFindingResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [id, category, severity, status, summary, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            pageId: { type: [string, 'null'], format: uuid }
+            category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security] }
+            severity: { type: string, enum: [critical, high, medium, low, info] }
+            status: { type: string, enum: [open, accepted, dismissed, fixed, unknown] }
+            summary: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    ReviewExportRequest:
+      type: object
+      additionalProperties: false
+      required: [format]
+      properties:
+        format: { type: string, enum: [pdf, html, json] }
+    ReviewReportResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [reviewId, version, status, coverage, findings, limitations, generatedAt]
+          properties:
+            reviewId: { type: string, format: uuid }
+            version: { type: integer, minimum: 1 }
+            status: { type: string, enum: [complete, partial, failed] }
+            coverage:
+              type: object
+              additionalProperties: false
+              required: [pagesTotal, pagesCaptured, requirementsTotal, requirementsVerified, requirementsUnknown]
+              properties:
+                pagesTotal: { type: integer, minimum: 0 }
+                pagesCaptured: { type: integer, minimum: 0 }
+                requirementsTotal: { type: integer, minimum: 0 }
+                requirementsVerified: { type: integer, minimum: 0 }
+                requirementsUnknown: { type: integer, minimum: 0 }
+            findings:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, category, severity, status, summary, evidence, confidence]
+                properties:
+                  id: { type: string, format: uuid }
+                  pageId: { type: [string, 'null'], format: uuid }
+                  category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security] }
+                  severity: { type: string, enum: [critical, high, medium, low, info] }
+                  status: { type: string, enum: [open, accepted, dismissed, fixed, unknown] }
+                  summary: { type: string, maxLength: 500 }
+                  evidence: { type: array, items: { type: string, format: uri } }
+                  confidence: { type: string, enum: [high, medium, low] }
+            limitations:
+              type: array
+              items: { type: string, maxLength: 500 }
+            generatedAt: { type: string, format: date-time }
     HealthResponse:
       type: object
       additionalProperties: false
