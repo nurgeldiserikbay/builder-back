@@ -1,4 +1,9 @@
-import { lookup, type LookupAddress } from 'node:dns/promises';
+import { lookup } from 'node:dns/promises';
+
+interface ReviewDnsAddress {
+  readonly address: string;
+  readonly family: number;
+}
 import { isIP } from 'node:net';
 
 export type ReviewTargetPolicyErrorCode =
@@ -28,7 +33,7 @@ export interface ValidatedReviewTarget {
 
 export interface ReviewTargetPolicyOptions {
   /** Resolver injection keeps DNS behavior explicit and makes unit testing deterministic. */
-  readonly resolve?: (hostname: string) => Promise<readonly LookupAddress[]>;
+  readonly resolve?: (hostname: string) => Promise<readonly ReviewDnsAddress[]>;
 }
 
 /**
@@ -73,7 +78,7 @@ export async function resolveAndValidateReviewTarget(
     throw new ReviewTargetPolicyError('URL_HOST_NOT_ALLOWED');
   }
 
-  let addresses: readonly LookupAddress[];
+  let addresses: readonly ReviewDnsAddress[];
   const family = isIP(normalizedHostname);
   if (family > 0) {
     addresses = [{ address: normalizedHostname, family }];
@@ -100,7 +105,7 @@ export async function resolveAndValidateReviewTarget(
   };
 }
 
-async function resolveAll(hostname: string): Promise<readonly LookupAddress[]> {
+async function resolveAll(hostname: string): Promise<readonly ReviewDnsAddress[]> {
   return lookup(hostname, { all: true, verbatim: true });
 }
 
