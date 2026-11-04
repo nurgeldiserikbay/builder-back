@@ -80,6 +80,9 @@ export async function resolveAndValidateReviewTarget(
 
   let addresses: readonly ReviewDnsAddress[];
   const family = isIP(normalizedHostname);
+  if (family === 0 && !normalizedHostname.includes('.')) {
+    throw new ReviewTargetPolicyError('URL_HOST_NOT_ALLOWED');
+  }
   if (family > 0) {
     addresses = [{ address: normalizedHostname, family }];
   } else {
@@ -119,7 +122,9 @@ function isBlockedHostname(hostname: string): boolean {
     || value.endsWith('.internal')
     || value.endsWith('.test')
     || value.endsWith('.invalid')
-    || value.endsWith('.example');
+    || value.endsWith('.example')
+    || value.endsWith('.arpa')
+    || value.endsWith('.onion');
 }
 
 function isPublicAddress(address: string): boolean {
@@ -167,9 +172,9 @@ function isPublicIpv6(address: string): boolean {
 
   // Exclude documentation, protocol-assignment, Teredo, and 6to4 ranges.
   if (hasIpv6Prefix(value, 0x20010db8n, 32)) return false; // 2001:db8::/32
-  if (hasIpv6Prefix(value, 0x3fffn, 20)) return false; // 3fff::/20
-  if (hasIpv6Prefix(value, 0x20010000n, 23)) return false; // 2001::/23
-  if (hasIpv6Prefix(value, 0x2002000000000000n, 16)) return false; // 2002::/16
+  if (hasIpv6Prefix(value, 0x3fff0n, 20)) return false; // 3fff::/20
+  if (hasIpv6Prefix(value, 0x100080n, 23)) return false; // 2001::/23
+  if (hasIpv6Prefix(value, 0x2002n, 16)) return false; // 2002::/16
 
   return true;
 }
