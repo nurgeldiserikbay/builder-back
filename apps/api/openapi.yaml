@@ -12,6 +12,7 @@ tags:
   - name: Health
   - name: Authentication
   - name: Projects
+  - name: Reviews
 paths:
   /health:
     get:
@@ -185,6 +186,273 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/reviews:
+    post:
+      tags: [Reviews]
+      operationId: createReview
+      summary: Create a read-only site review
+      description: Creates a review in the current project. A review never changes the source site, project requirements, backend data, or deployment state.
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReviewRequest'
+      responses:
+        '201':
+          description: Review created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}:
+    get:
+      tags: [Reviews]
+      operationId: getReview
+      summary: Get review progress and configuration
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+      responses:
+        '200':
+          description: Review state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResponse'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/sources/url:
+    post:
+      tags: [Reviews]
+      operationId: registerReviewUrl
+      summary: Add a website URL for analysis
+      description: Server validates the URL and every redirect against the SSRF policy before any fetch. Private, reserved, metadata, or cross-origin redirect targets are rejected. Use a user-authorized preview reference for non-public sites.
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterReviewUrlRequest'
+      responses:
+        '202':
+          description: URL accepted for asynchronous validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewSourceAccepted'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/sources/design-upload:
+    post:
+      tags: [Reviews]
+      operationId: requestDesignUpload
+      summary: Request a private signed upload for a page design
+      description: Returns a short-lived upload target after validating file metadata. The client uploads bytes directly to private object storage, then calls the completion operation.
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DesignUploadRequest'
+      responses:
+        '201':
+          description: Private upload reservation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DesignUploadResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/sources/design-upload/{assetId}/complete:
+    post:
+      tags: [Reviews]
+      operationId: completeDesignUpload
+      summary: Verify an uploaded design asset
+      description: Checks file signature, checksum, malware scan state, and project access before the asset can be mapped to a page.
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - in: path
+          name: assetId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Verified design asset
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DesignAssetResponse'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/pages/discover:
+    post:
+      tags: [Reviews]
+      operationId: discoverReviewPages
+      summary: Queue bounded same-origin page discovery
+      description: Discovery uses only the validated review origin, follows bounded redirects and page/depth limits, and runs in an isolated worker with restricted egress.
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscoverPagesRequest'
+      responses:
+        '202':
+          description: Discovery job queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewJobAccepted'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/pages:
+    get:
+      tags: [Reviews]
+      operationId: listReviewPages
+      summary: List discovered or manually added pages
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+      responses:
+        '200':
+          description: Review pages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewPageListResponse'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/page-mappings/{pageId}:
+    put:
+      tags: [Reviews]
+      operationId: mapReviewPage
+      summary: Map a website page to a design and project evidence
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - in: path
+          name: pageId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PageMappingRequest'
+      responses:
+        '200':
+          description: Saved page mapping
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewPageResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/captures:
+    post:
+      tags: [Reviews]
+      operationId: captureReviewPage
+      summary: Queue an immutable page capture
+      description: Captures a mapped route at the requested viewport using an isolated browser worker. Captures are read-only and tied to a source snapshot.
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureReviewPageRequest'
+      responses:
+        '202':
+          description: Capture job queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewJobAccepted'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/report:
+    get:
+      tags: [Reviews]
+      operationId: getReviewReport
+      summary: Get the latest versioned evidence report
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+      responses:
+        '200':
+          description: Review report with explicit coverage and unknown states
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewReportResponse'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
     sessionCookie:
@@ -197,6 +465,11 @@ components:
       name: projectId
       required: true
       schema: { type: string, format: uuid }
+    ReviewId:
+      in: path
+      name: reviewId
+      required: true
+      schema: { type: string, format: uuid }
     IdempotencyKey:
       in: header
       name: Idempotency-Key
@@ -204,6 +477,335 @@ components:
       description: Replaying the same key and body returns the original result; reusing it with a different body returns 409.
       schema: { type: string, minLength: 16, maxLength: 128 }
   responses:
+    CreateReviewRequest:
+      type: object
+      additionalProperties: false
+      required: [title, mode, locale]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        mode: { type: string, enum: [site_only, site_and_design, design_only] }
+        locale: { type: string, enum: [en, ru, kk] }
+    Review:
+      type: object
+      additionalProperties: false
+      required: [id, projectId, title, mode, status, locale, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        title: { type: string }
+        mode: { type: string, enum: [site_only, site_and_design, design_only] }
+        status: { type: string, enum: [draft, queued, discovering, ready, failed, cancelled] }
+        locale: { type: string, enum: [en, ru, kk] }
+        sourceSnapshotId: { type: [string, 'null'], format: uuid }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ReviewResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Review' }
+    RegisterReviewUrlRequest:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url: { type: string, format: uri, maxLength: 2048 }
+    ReviewSourceAccepted:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [sourceId, status]
+          properties:
+            sourceId: { type: string, format: uuid }
+            status: { type: string, enum: [queued, validating] }
+    DesignUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [fileName, contentType, sizeBytes, sha256]
+      properties:
+        fileName: { type: string, minLength: 1, maxLength: 180 }
+        contentType: { type: string, enum: [image/png, image/jpeg, application/pdf] }
+        sizeBytes: { type: integer, minimum: 1, maximum: 20971520 }
+        sha256: { type: string, pattern: '^[a-fA-F0-9]{64}      description: RFC 9457 problem response with stable application code and request ID.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [status, timestamp]
+          properties:
+            status: { const: ok }
+            timestamp: { type: string, format: date-time }
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, locale]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
+        locale: { type: string, enum: [en, ru, kk] }
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 1, maxLength: 128, writeOnly: true }
+    RegistrationAccepted:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [status]
+          properties:
+            status: { const: verification_pending }
+    CurrentUserResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [id, email, locale, emailVerified]
+          properties:
+            id: { type: string, format: uuid }
+            email: { type: string, format: email }
+            name: { type: [string, 'null'], maxLength: 120 }
+            locale: { type: string, enum: [en, ru, kk] }
+            emailVerified: { type: boolean }
+    CreateProjectRequest:
+      type: object
+      additionalProperties: false
+      required: [workspaceId, name, startMode, locale]
+      properties:
+        workspaceId: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        summary: { type: string, maxLength: 4000 }
+        startMode: { type: string, enum: [build, improve, design_implementation, analysis_only] }
+        locale: { type: string, enum: [en, ru, kk] }
+    Project:
+      type: object
+      additionalProperties: false
+      required: [id, workspaceId, name, startMode, status, locale, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        name: { type: string }
+        summary: { type: [string, 'null'] }
+        startMode: { type: string, enum: [build, improve, design_implementation, analysis_only] }
+        status: { type: string, enum: [draft, active, paused, completed, archived] }
+        locale: { type: string, enum: [en, ru, kk] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ProjectResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Project' }
+    ProjectListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, meta]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Project' }
+        meta:
+          type: object
+          additionalProperties: false
+          required: [nextCursor]
+          properties:
+            nextCursor: { type: [string, 'null'] }
+    Problem:
+      type: object
+      additionalProperties: true
+      required: [type, title, status, code, requestId]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string }
+        instance: { type: string, format: uri-reference }
+        code: { type: string, pattern: '^[A-Z][A-Z0-9_]{1,63}$' }
+        requestId: { type: string, minLength: 1, maxLength: 128 }
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, code]
+            properties:
+              field: { type: string }
+              code: { type: string }
+              message: { type: string }
+ }
+    DesignUploadResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [assetId, uploadUrl, expiresAt, requiredHeaders]
+          properties:
+            assetId: { type: string, format: uuid }
+            uploadUrl: { type: string, format: uri }
+            expiresAt: { type: string, format: date-time }
+            requiredHeaders:
+              type: object
+              additionalProperties: { type: string }
+    DesignAssetResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [assetId, fileName, status, sha256]
+          properties:
+            assetId: { type: string, format: uuid }
+            fileName: { type: string }
+            status: { type: string, enum: [verified, rejected, scanning] }
+            sha256: { type: string }
+    DiscoverPagesRequest:
+      type: object
+      additionalProperties: false
+      required: [maxPages, maxDepth]
+      properties:
+        maxPages: { type: integer, minimum: 1, maximum: 100, default: 30 }
+        maxDepth: { type: integer, minimum: 0, maximum: 5, default: 3 }
+        includeSitemap: { type: boolean, default: true }
+    ReviewJobAccepted:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [jobId, status]
+          properties:
+            jobId: { type: string, format: uuid }
+            status: { type: string, enum: [queued, running] }
+    PageMappingRequest:
+      type: object
+      additionalProperties: false
+      required: [viewport, requirementIds]
+      properties:
+        designAssetId: { type: [string, 'null'], format: uuid }
+        figmaFileKey: { type: [string, 'null'], maxLength: 128, description: Reserved for a future explicitly authorized read-only Figma integration. }
+        figmaNodeId: { type: [string, 'null'], maxLength: 128 }
+        viewport:
+          $ref: '#/components/schemas/ReviewViewport'
+        requirementIds:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    ReviewViewport:
+      type: object
+      additionalProperties: false
+      required: [width, height, deviceScale]
+      properties:
+        width: { type: integer, minimum: 320, maximum: 3840 }
+        height: { type: integer, minimum: 568, maximum: 4320 }
+        deviceScale: { type: number, minimum: 1, maximum: 3 }
+    ReviewPage:
+      type: object
+      additionalProperties: false
+      required: [id, route, label, status, designAssetId, viewport, findingCount]
+      properties:
+        id: { type: string, format: uuid }
+        route: { type: string, maxLength: 2048 }
+        label: { type: string, maxLength: 120 }
+        status: { type: string, enum: [discovered, mapped, captured, needs_review, failed] }
+        designAssetId: { type: [string, 'null'], format: uuid }
+        viewport: { $ref: '#/components/schemas/ReviewViewport' }
+        findingCount: { type: integer, minimum: 0 }
+    ReviewPageResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ReviewPage' }
+    ReviewPageListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ReviewPage' }
+    CaptureReviewPageRequest:
+      type: object
+      additionalProperties: false
+      required: [pageId, viewport]
+      properties:
+        pageId: { type: string, format: uuid }
+        viewport: { $ref: '#/components/schemas/ReviewViewport' }
+        stateLabel: { type: string, maxLength: 100 }
+    ReviewReportResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [reviewId, version, status, coverage, findings, limitations, generatedAt]
+          properties:
+            reviewId: { type: string, format: uuid }
+            version: { type: integer, minimum: 1 }
+            status: { type: string, enum: [complete, partial, failed] }
+            coverage:
+              type: object
+              additionalProperties: false
+              required: [pagesTotal, pagesCaptured, requirementsTotal, requirementsVerified, requirementsUnknown]
+              properties:
+                pagesTotal: { type: integer, minimum: 0 }
+                pagesCaptured: { type: integer, minimum: 0 }
+                requirementsTotal: { type: integer, minimum: 0 }
+                requirementsVerified: { type: integer, minimum: 0 }
+                requirementsUnknown: { type: integer, minimum: 0 }
+            findings:
+              type: array
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, category, severity, status, summary, evidence, confidence]
+                properties:
+                  id: { type: string, format: uuid }
+                  pageId: { type: [string, 'null'], format: uuid }
+                  category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security] }
+                  severity: { type: string, enum: [critical, high, medium, low, info] }
+                  status: { type: string, enum: [open, accepted, dismissed, fixed, unknown] }
+                  summary: { type: string, maxLength: 500 }
+                  evidence: { type: array, items: { type: string, format: uri } }
+                  confidence: { type: string, enum: [high, medium, low] }
+            limitations:
+              type: array
+              items: { type: string, maxLength: 500 }
+            generatedAt: { type: string, format: date-time }
     Problem:
       description: RFC 9457 problem response with stable application code and request ID.
       content:
