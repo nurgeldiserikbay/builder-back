@@ -143,6 +143,7 @@ function isPublicIpv4(address: string): boolean {
     || (a === 192 && b === 0 && c === 0)
     || (a === 192 && b === 0 && c === 2)
     || (a === 192 && b === 88 && c === 99)
+    || (a === 192 && b === 88 && c === 99)
     || (a === 192 && b === 168)
     || (a === 198 && (b === 18 || b === 19))
     || (a === 198 && b === 51 && c === 100)
@@ -161,6 +162,7 @@ function isPublicIpv6(address: string): boolean {
 
   // Exclude documentation, protocol-assignment, Teredo, and 6to4 ranges.
   if (hasIpv6Prefix(value, 0x20010db8n, 32)) return false; // 2001:db8::/32
+  if (hasIpv6Prefix(value, 0x3fffn, 20)) return false; // 3fff::/20
   if (hasIpv6Prefix(value, 0x20010000n, 23)) return false; // 2001::/23
   if (hasIpv6Prefix(value, 0x2002000000000000n, 16)) return false; // 2002::/16
 
