@@ -945,7 +945,6 @@ components:
               field: { type: string }
               code: { type: string }
               message: { type: string }
- }
     DesignUploadResponse:
       type: object
       additionalProperties: false
