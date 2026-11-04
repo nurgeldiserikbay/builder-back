@@ -433,6 +433,95 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/findings:
+    post:
+      tags: [Reviews]
+      operationId: createReviewFinding
+      summary: Add a manual finding or annotation
+      description: Coordinates are relative to the immutable capture identified in the request; findings remain scoped to the current project.
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReviewFindingRequest'
+      responses:
+        '201':
+          description: Finding created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewFindingResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/findings/{findingId}:
+    patch:
+      tags: [Reviews]
+      operationId: updateReviewFinding
+      summary: Update finding status, assignment, or comment
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - in: path
+          name: findingId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReviewFindingRequest'
+      responses:
+        '200':
+          description: Updated finding with audit metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewFindingResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/exports:
+    post:
+      tags: [Reviews]
+      operationId: exportReviewReport
+      summary: Queue an authorized report export
+      description: Export includes only data the current user can access and uses a short-lived download URL once ready.
+      x-implementation-status: planned
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewExportRequest'
+      responses:
+        '202':
+          description: Export job queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewJobAccepted'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /reviews/{reviewId}/report:
     get:
       tags: [Reviews]
@@ -764,6 +853,55 @@ components:
         pageId: { type: string, format: uuid }
         viewport: { $ref: '#/components/schemas/ReviewViewport' }
         stateLabel: { type: string, maxLength: 100 }
+    CreateReviewFindingRequest:
+      type: object
+      additionalProperties: false
+      required: [category, severity, summary, evidenceCaptureId]
+      properties:
+        pageId: { type: [string, 'null'], format: uuid }
+        category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security] }
+        severity: { type: string, enum: [critical, high, medium, low, info] }
+        summary: { type: string, minLength: 1, maxLength: 500 }
+        evidenceCaptureId: { type: string, format: uuid }
+        coordinate:
+          type: [object, 'null']
+          additionalProperties: false
+          required: [x, y]
+          properties:
+            x: { type: number, minimum: 0, maximum: 1 }
+            y: { type: number, minimum: 0, maximum: 1 }
+    UpdateReviewFindingRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        status: { type: string, enum: [open, accepted, dismissed, fixed, unknown] }
+        assignedUserId: { type: [string, 'null'], format: uuid }
+        comment: { type: string, maxLength: 2000 }
+    ReviewFindingResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [id, category, severity, status, summary, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            pageId: { type: [string, 'null'], format: uuid }
+            category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security] }
+            severity: { type: string, enum: [critical, high, medium, low, info] }
+            status: { type: string, enum: [open, accepted, dismissed, fixed, unknown] }
+            summary: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    ReviewExportRequest:
+      type: object
+      additionalProperties: false
+      required: [format]
+      properties:
+        format: { type: string, enum: [pdf, html, json] }
     ReviewReportResponse:
       type: object
       additionalProperties: false
