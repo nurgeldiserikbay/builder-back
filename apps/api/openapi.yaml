@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
