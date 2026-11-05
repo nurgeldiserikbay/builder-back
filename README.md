@@ -6,7 +6,8 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 
 - Process health endpoint: `GET /api/v1/health`. This checks the HTTP process only; it does not assert database or provider readiness.
 - Global DTO validation settings: reject unknown properties and transform validated inputs.
-- Review target URL policy helper: accepts HTTP(S) URLs only, resolves all addresses, and rejects non-public address ranges. It does not fetch URLs; a future isolated worker must pin connections to the validated addresses and validate redirects.
+- Review target URL policy helper: accepts HTTP(S) URLs only, resolves all addresses, and rejects non-public address ranges.
+- Bounded same-origin discovery core for a future isolated worker: checks the root URL, reads `/sitemap.xml`, follows same-origin HTML links, pins requests to validated DNS addresses, revalidates redirects, and caps pages, depth, response bytes, and request time. It is not yet exposed as an API job or connected to a queue.
 
 ## Contract
 
