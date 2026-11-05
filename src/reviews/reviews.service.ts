@@ -123,7 +123,7 @@ export class ReviewsService {
       await this.prisma.designSource.update({ where: { id: asset.id }, data: { assetStatus: 'verified' } });
       return { data: { assetId: asset.id, status: 'verified' } };
     } catch (error) {
-      if (error instanceof ServiceUnavailableException) throw error;
+      if (error instanceof ServiceUnavailableException || error instanceof UnprocessableEntityException) throw error;
       await this.prisma.designSource.update({ where: { id: asset.id }, data: { assetStatus: 'pending' } });
       throw new ServiceUnavailableException('DESIGN_ASSET_VERIFICATION_UNAVAILABLE');
     }
@@ -172,7 +172,7 @@ export class ReviewsService {
 
   async savePageMapping(userId: string, reviewId: string, pageId: string, input: { designAssetId: string | null; viewportWidth: number; viewportHeight: number; deviceScale: number; requirementIds: string[] }) {
     await this.reviewForAsset(userId, reviewId, true);
-    const page = await this.prisma.reviewPage.findFirst({ where: { id: pageId, reviewRunId: reviewId }, select: { id: true, route: true, title: true, status: true } });
+    const page = await this.prisma.reviewPage.findFirst({ where: { id: pageId, reviewRunId: reviewId }, select: { id: true, route: true, title: true, status: true, _count: { select: { findings: true } } } });
     if (!page) throw new NotFoundException('REVIEW_PAGE_NOT_FOUND');
     if (input.designAssetId) {
       const asset = await this.prisma.designSource.findFirst({ where: { id: input.designAssetId, reviewRunId: reviewId, assetStatus: 'verified' }, select: { id: true } });
@@ -184,7 +184,7 @@ export class ReviewsService {
       update: { designSourceId: input.designAssetId, viewportWidth: input.viewportWidth, viewportHeight: input.viewportHeight, deviceScale: input.deviceScale, requirementIds: input.requirementIds, mappingAuthorUserId: userId },
       select: { designSourceId: true, viewportWidth: true, viewportHeight: true, deviceScale: true, requirementIds: true, updatedAt: true },
     });
-    return { data: { id: page.id, route: page.route, label: (page.title ?? page.route).slice(0, 120), status: 'mapped', designAssetId: mapping.designSourceId, viewport: { width: mapping.viewportWidth, height: mapping.viewportHeight, deviceScale: Number(mapping.deviceScale) }, requirementIds: mapping.requirementIds, findingCount: 0, updatedAt: mapping.updatedAt } };
+    return { data: { id: page.id, route: page.route, label: (page.title ?? page.route).slice(0, 120), status: 'mapped', designAssetId: mapping.designSourceId, viewport: { width: mapping.viewportWidth, height: mapping.viewportHeight, deviceScale: Number(mapping.deviceScale) }, requirementIds: mapping.requirementIds, findingCount: page._count.findings, updatedAt: mapping.updatedAt } };
   }
 
   async create(userId: string, projectId: string, input: {
