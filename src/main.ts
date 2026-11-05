@@ -1,7 +1,8 @@
+import 'dotenv/config';
 import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from './app.module';
+import { AppModule } from './app.module.js';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
@@ -19,6 +20,8 @@ async function bootstrap(): Promise<void> {
   if (origins.length > 0) {
     app.enableCors({ origin: origins, credentials: true });
   }
+
+  app.enableShutdownHooks();
 
   const port = Number(process.env.PORT ?? 4000);
   await app.listen(port, '0.0.0.0');
