@@ -325,7 +325,7 @@ paths:
       operationId: requestDesignUpload
       summary: Request a private signed upload for a page design
       description: Returns a short-lived upload target after validating file metadata. The client uploads bytes directly to private object storage, then calls the completion operation.
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
@@ -355,7 +355,7 @@ paths:
       operationId: completeDesignUpload
       summary: Verify an uploaded design asset
       description: Checks file signature, checksum, malware scan state, and project access before the asset can be mapped to a page.
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
@@ -375,6 +375,40 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+
+  /reviews/{reviewId}/sources/design-upload/{assetId}/url:
+    get:
+      tags: [Reviews]
+      operationId: getDesignAssetUrl
+      summary: Get a short-lived URL for a verified design image
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - in: path
+          name: assetId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Authorized temporary image URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [url, expiresInSeconds]
+                    properties:
+                      url: { type: string, format: uri }
+                      expiresInSeconds: { type: integer, enum: [300] }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+
   /reviews/{reviewId}/pages/discover:
     post:
       tags: [Reviews]
@@ -429,7 +463,7 @@ paths:
       tags: [Reviews]
       operationId: mapReviewPage
       summary: Map a website page to a design and project evidence
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
@@ -455,6 +489,8 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /reviews/{reviewId}/captures:
     post:
       tags: [Reviews]
@@ -676,8 +712,8 @@ components:
       additionalProperties: false
       required: [fileName, contentType, sizeBytes, sha256]
       properties:
-        fileName: { type: string, minLength: 1, maxLength: 180 }
-        contentType: { type: string, enum: [image/png, image/jpeg, application/pdf] }
+        fileName: { type: string, minLength: 1, maxLength: 255 }
+        contentType: { type: string, enum: [image/png, image/jpeg] }
         sizeBytes: { type: integer, minimum: 1, maximum: 20971520 }
         sha256: { type: string, pattern: "^[a-fA-F0-9]{64}$" }
     DesignUploadResponse:
@@ -688,12 +724,13 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [assetId, uploadUrl, expiresAt, requiredHeaders]
+          required: [assetId, uploadUrl, method, expiresAt, requiredFields]
           properties:
             assetId: { type: string, format: uuid }
             uploadUrl: { type: string, format: uri }
+            method: { type: string, enum: [POST] }
             expiresAt: { type: string, format: date-time }
-            requiredHeaders:
+            requiredFields:
               type: object
               additionalProperties: { type: string }
     DesignAssetResponse:
@@ -704,12 +741,10 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [assetId, fileName, status, sha256]
+          required: [assetId, status]
           properties:
             assetId: { type: string, format: uuid }
-            fileName: { type: string }
-            status: { type: string, enum: [verified, rejected, scanning] }
-            sha256: { type: string }
+            status: { type: string, enum: [verified] }
     DiscoverPagesRequest:
       type: object
       additionalProperties: false
