@@ -9,7 +9,7 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Shared Prisma 7 PostgreSQL client, graceful shutdown, schema validation, and deployable migrations.
 - Account registration with scrypt password hashing, email verification through Resend, HTTP-only cookie sessions, and logout revocation.
 - Private workspace/project listing and project creation with active membership/role checks.
-- Create and read project-bound review runs with idempotent request replay and membership authorization.\n- Validate public review URLs and persist discovery jobs. The isolated crawler worker is not yet connected, so queued jobs remain pending.
+- Create and read project-bound review runs with idempotent request replay and membership authorization.\n- Validate public review URLs, enqueue same-origin discovery jobs, and list discovered pages. Run the separate crawler process with `npm run start:worker`; the API does not fetch customer sites.
 - Global validation settings plus explicit request field and enum checks on implemented endpoints.
 - Review target URL policy helper and bounded same-origin discovery core for a future isolated worker. The crawler is not exposed as an API job or connected to a queue.
 
