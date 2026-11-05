@@ -17,7 +17,7 @@ The design review behavior and security requirements are in [DESIGN_CONFORMANCE.
 
 ## Review persistence foundation
 
-The Prisma schema and first PostgreSQL migration define review runs, discovered pages, design sources, page mappings, captures, jobs, findings, and immutable report versions. This is a data-model foundation only: review endpoints and workers are not connected yet. Project and user IDs remain scalar references until the account/project schema and its authorization rules are added; do not expose these tables through API handlers before that work.
+The Prisma schema and PostgreSQL migrations define users, hashed sessions and email-verification tokens, workspaces, memberships, projects, and review runs, pages, design sources, captures, jobs, findings, and immutable report versions. Review records now have foreign keys to projects and users. This remains a data-model foundation: API handlers, authorization checks, and workers are not connected yet; do not expose the review tables through API handlers before those controls exist.
 
 Start the local PostgreSQL container with `docker compose up -d postgres`. The development credentials in `.env.example` are for local use only.
 
