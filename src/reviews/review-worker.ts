@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { compareDesignToCapture } from './visual-diff.js';
 import { captureReviewPage } from './page-capture.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PrismaService } from '../database/prisma.service.js';
@@ -153,7 +154,9 @@ export class ReviewWorker implements OnModuleDestroy {
       } : {}),
     });
     let storageKey: string | null = null;
+    let diffStorageKey: string | null = null;
     let objectWritten = false;
+    let diffObjectWritten = false;
     try {
       const screenshot = await captureReviewPage({
         targetUrl,
@@ -163,10 +166,47 @@ export class ReviewWorker implements OnModuleDestroy {
       await storage.send(new PutObjectCommand({
         Bucket: bucket, Key: storageKey, Body: screenshot.bytes, ContentType: 'image/png', Metadata: { captureid: captureId, sha256: screenshot.sha256 },
       }));
+      objectWritten = true;
+
+      let visualDiff: Record<string, unknown> = { status: 'failed', safeErrorCode: 'VISUAL_DIFF_FAILED' };
+      try {
+        const capture = await this.prisma.reviewCapture.findUnique({
+          where: { id: captureId },
+          select: { designSource: { select: { storageKey: true, assetStatus: true } } },
+        });
+        const designKey = capture?.designSource?.assetStatus === 'verified' ? capture.designSource.storageKey : null;
+        if (!designKey) throw new Error('VISUAL_DIFF_DESIGN_NOT_FOUND');
+        const designObject = await storage.send(new GetObjectCommand({ Bucket: bucket, Key: designKey }));
+        if (!designObject.Body) throw new Error('VISUAL_DIFF_DESIGN_READ_FAILED');
+        const parts: Buffer[] = [];
+        let total = 0;
+        for await (const chunk of designObject.Body as AsyncIterable<Uint8Array>) {
+          const bytes = Buffer.from(chunk);
+          total += bytes.length;
+          if (total > 20 * 1024 * 1024) throw new Error('VISUAL_DIFF_DESIGN_TOO_LARGE');
+          parts.push(bytes);
+        }
+        const diff = await compareDesignToCapture(screenshot.bytes, Buffer.concat(parts));
+        diffStorageKey = `${reviewRunId}/captures/${captureId}-diff.png`;
+        await storage.send(new PutObjectCommand({
+          Bucket: bucket, Key: diffStorageKey, Body: diff.overlay, ContentType: 'image/png',
+          Metadata: { captureid: captureId, kind: 'visual-diff' },
+        }));
+        diffObjectWritten = true;
+        visualDiff = {
+          status: 'ready', diffStorageKey, changedPercent: diff.changedPercent, changedPixels: diff.changedPixels,
+          totalPixels: diff.totalPixels, width: diff.width, height: diff.height, threshold: diff.threshold, regions: diff.regions,
+        };
+      } catch (error) {
+        const reason = error instanceof Error && /^VISUAL_DIFF_[A-Z_]+$/.test(error.message) ? error.message : 'VISUAL_DIFF_FAILED';
+        visualDiff = { status: 'failed', safeErrorCode: reason };
+        this.logger.warn('Visual diff for capture ' + captureId + ' finished with ' + reason);
+      }
+
       await this.prisma.$transaction([
         this.prisma.reviewCapture.update({
           where: { id: captureId },
-          data: { status: 'captured', assetStorageKey: storageKey, sha256: screenshot.sha256, toolVersion: screenshot.toolVersion, capturedAt: new Date(), safeErrorCode: null },
+          data: { status: 'captured', assetStorageKey: storageKey, visualDiff, sha256: screenshot.sha256, toolVersion: screenshot.toolVersion, capturedAt: new Date(), safeErrorCode: null },
         }),
         this.prisma.reviewJob.update({
           where: { id: jobId },
@@ -175,6 +215,7 @@ export class ReviewWorker implements OnModuleDestroy {
       ]);
     } catch (error) {
       if (objectWritten && storageKey) await storage.send(new DeleteObjectCommand({ Bucket: bucket, Key: storageKey })).catch(() => undefined);
+      if (diffObjectWritten && diffStorageKey) await storage.send(new DeleteObjectCommand({ Bucket: bucket, Key: diffStorageKey })).catch(() => undefined);
       const message = error instanceof Error ? error.message : '';
       const code = /^CAPTURE_[A-Z_]+$/.test(message) ? message : 'CAPTURE_FAILED';
       await this.failCapture(jobId, captureId, code);
