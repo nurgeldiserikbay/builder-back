@@ -52,6 +52,24 @@ export class ReviewsController {
     }, idempotencyKey);
   }
 
+
+  @Post('reviews/:reviewId/sources/url')
+  async registerUrl(
+    @Req() request: AuthenticatedRequest,
+    @Param('reviewId') reviewId: string,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
+    @Body() raw: unknown,
+  ) {
+    if (!isUuid(reviewId)) throw new BadRequestException('INVALID_REVIEW_ID');
+    if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 128) {
+      throw new BadRequestException('INVALID_IDEMPOTENCY_KEY');
+    }
+    const body = parseBody(raw);
+    rejectUnknown(body, ['url']);
+    const url = requiredString(body, 'url', 1, 2048);
+    return this.reviews.registerUrl(request.user.id, reviewId, url, idempotencyKey);
+  }
+
   @Get('reviews/:reviewId')
   get(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string) {
     return this.reviews.get(request.user.id, reviewId);
