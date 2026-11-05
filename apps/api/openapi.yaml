@@ -293,8 +293,8 @@ paths:
       tags: [Reviews]
       operationId: registerReviewUrl
       summary: Add a website URL for analysis
-      description: Server validates the URL and every redirect against the SSRF policy before any fetch. Private, reserved, metadata, or cross-origin redirect targets are rejected. Use a user-authorized preview reference for non-public sites.
-      x-implementation-status: planned
+      description: Validates the initial target against the SSRF policy and persists a discovery job for a separate worker. The API does not fetch the site itself. Redirects must be revalidated by the worker.
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
@@ -308,7 +308,7 @@ paths:
               $ref: '#/components/schemas/RegisterReviewUrlRequest'
       responses:
         '202':
-          description: URL accepted for asynchronous validation
+          description: Target validated and a discovery job persisted
           content:
             application/json:
               schema:
@@ -666,10 +666,10 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [sourceId, status]
+          required: [jobId, status]
           properties:
-            sourceId: { type: string, format: uuid }
-            status: { type: string, enum: [queued, validating] }
+            jobId: { type: string, format: uuid }
+            status: { type: string, enum: [queued, running] }
     DesignUploadRequest:
       type: object
       additionalProperties: false
