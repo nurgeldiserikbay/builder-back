@@ -106,12 +106,14 @@ export class ReviewsController {
   async savePageMapping(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('pageId') pageId: string, @Body() raw: unknown) {
     if (!isUuid(reviewId) || !isUuid(pageId)) throw new BadRequestException('INVALID_PAGE_ID');
     const body = parseBody(raw);
-    rejectUnknown(body, ['designAssetId', 'viewportWidth', 'viewportHeight', 'deviceScale', 'requirementIds']);
+    rejectUnknown(body, ['designAssetId', 'viewport', 'requirementIds']);
     const designAssetId = body.designAssetId;
     if (designAssetId !== null && (typeof designAssetId !== 'string' || !isUuid(designAssetId))) throw new BadRequestException('INVALID_DESIGN_ASSET_ID');
-    const width = body.viewportWidth;
-    const height = body.viewportHeight;
-    const scale = body.deviceScale;
+    const viewport = parseBody(body.viewport);
+    rejectUnknown(viewport, ['width', 'height', 'deviceScale']);
+    const width = viewport.width;
+    const height = viewport.height;
+    const scale = viewport.deviceScale;
     const requirementIds = body.requirementIds;
     if (typeof width !== 'number' || !Number.isInteger(width) || width < 320 || width > 3840) throw new BadRequestException('INVALID_VIEWPORT_WIDTH');
     if (typeof height !== 'number' || !Number.isInteger(height) || height < 568 || height > 4320) throw new BadRequestException('INVALID_VIEWPORT_HEIGHT');
