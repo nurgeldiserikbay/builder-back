@@ -197,7 +197,7 @@ export class ReviewsService {
     }
     if (new URL(safeTarget.url).origin !== review.baseOrigin) throw new UnprocessableEntityException('CAPTURE_TARGET_ORIGIN_MISMATCH');
 
-    const requestHash = createHash('sha256').update(JSON.stringify({ pageId: page.id, targetUrl: safeTarget.url, ...input })).digest('hex');
+    const requestHash = createHash('sha256').update(JSON.stringify({ targetUrl: safeTarget.url, ...input })).digest('hex');
     const previous = await this.prisma.reviewJob.findUnique({
       where: { reviewRunId_idempotencyKey: { reviewRunId: review.id, idempotencyKey } },
       select: { id: true, jobType: true, status: true, result: true },
