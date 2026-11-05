@@ -77,7 +77,7 @@ export async function compareDesignToCapture(
     y: Math.floor(index / cols) / rows,
     width: 1 / cols,
     height: 1 / rows,
-    changedPercent: Number((count * 100 / (info.width * info.height / (cols * rows))).toFixed(1)),
+    changedPercent: Number(Math.min(100, count * 100 / (info.width * info.height / (cols * rows))).toFixed(1)),
   }))
     .filter((region) => region.changedPercent > 0)
     .sort((a, b) => b.changedPercent - a.changedPercent)
