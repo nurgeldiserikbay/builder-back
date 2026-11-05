@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { captureReviewPage } from './page-capture.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PrismaService } from '../database/prisma.service.js';
@@ -152,12 +152,14 @@ export class ReviewWorker implements OnModuleDestroy {
         credentials: { accessKeyId: process.env.DESIGN_ASSETS_ACCESS_KEY, secretAccessKey: process.env.DESIGN_ASSETS_SECRET_KEY },
       } : {}),
     });
+    let storageKey: string | null = null;
+    let objectWritten = false;
     try {
       const screenshot = await captureReviewPage({
         targetUrl,
         viewport: { width, height, deviceScale },
       });
-      const storageKey = `${reviewRunId}/captures/${captureId}.png`;
+      storageKey = `${reviewRunId}/captures/${captureId}.png`;
       await storage.send(new PutObjectCommand({
         Bucket: bucket, Key: storageKey, Body: screenshot.bytes, ContentType: 'image/png', Metadata: { captureid: captureId, sha256: screenshot.sha256 },
       }));
@@ -172,6 +174,7 @@ export class ReviewWorker implements OnModuleDestroy {
         }),
       ]);
     } catch (error) {
+      if (objectWritten && storageKey) await storage.send(new DeleteObjectCommand({ Bucket: bucket, Key: storageKey })).catch(() => undefined);
       const message = error instanceof Error ? error.message : '';
       const code = /^CAPTURE_[A-Z_]+$/.test(message) ? message : 'CAPTURE_FAILED';
       await this.failCapture(jobId, captureId, code);
