@@ -14,10 +14,11 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Global validation settings plus explicit request field and enum checks on implemented endpoints.
 - Same-origin discovery runs in the standalone worker with page/depth caps, response-size limits, timeouts, redirect checks, and pinned public-address requests.
 - Private PNG/JPEG design uploads use short-lived S3-compatible POST forms, project authorization, checksum and magic-byte checks, ClamAV scanning, and verified page-to-design mappings. Verified assets can be opened through short-lived authorized download URLs.
+- Mapped pages can queue disposable Chromium captures at the saved viewport. HTTP resources are limited to pinned, public, same-origin GET requests; service workers, WebSockets, downloads, and browser credentials are disabled. Captures are stored privately with a checksum and short-lived preview URLs.
 
 ## Contract
 
-The OpenAPI source of truth is [apps/api/openapi.yaml](apps/api/openapi.yaml). Account/project management, review-run creation, URL validation and queueing, page discovery/listing, private PNG/JPEG design uploads, page mappings, and temporary asset reads are implemented. Figma import, browser captures, visual and AI comparison, findings, and report generation remain planned.
+The OpenAPI source of truth is [apps/api/openapi.yaml](apps/api/openapi.yaml). Account/project management, review-run creation, URL validation and queueing, page discovery/listing, private PNG/JPEG design uploads, page mappings, and temporary asset reads are implemented. Figma import, automated visual/AI findings, requirement evaluation, and report generation remain planned.
 
 The design review behavior and security requirements are in [DESIGN_CONFORMANCE.md](https://github.com/nurgeldiserikbay/builder-docs/blob/main/docs/DESIGN_CONFORMANCE.md). Product requirements, architecture, and implementation order live in [builder-docs](https://github.com/nurgeldiserikbay/builder-docs).
 
@@ -51,4 +52,4 @@ npm run db:migrate:deploy
 npm run start:dev
 ```
 
-The API listens on port 4000 by default. `/health` reports process status; `/health/ready` reports whether PostgreSQL is reachable. The Compose stack starts PostgreSQL, a private MinIO bucket, and ClamAV for local design uploads. `minio-init` creates the bucket and applies local frontend CORS rules. Copy `.env.example` to `.env` to use the local endpoints. For a deployed API, configure a private S3-compatible bucket and reachable ClamAV daemon with `DESIGN_ASSETS_*` and `CLAMAV_*`; allow POST and GET from the frontend origin. The example MinIO credentials are development-only.
+The API listens on port 4000 by default. `/health` reports process status; `/health/ready` reports whether PostgreSQL is reachable. The Compose stack starts PostgreSQL, a private MinIO bucket, and ClamAV for local design uploads. `minio-init` creates the bucket and applies local frontend CORS rules. To run capture jobs, install Chromium, set `CAPTURE_CHROMIUM_EXECUTABLE_PATH` to its executable, and run the worker as a non-root account with restricted network egress. The worker blocks non-same-origin web resources, so pages that depend on third-party assets may look incomplete. Copy `.env.example` to `.env` to use the local endpoints. For a deployed API, configure a private S3-compatible bucket and reachable ClamAV daemon with `DESIGN_ASSETS_*` and `CLAMAV_*`; allow POST and GET from the frontend origin. The example MinIO credentials are development-only.
