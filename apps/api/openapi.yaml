@@ -531,7 +531,7 @@ paths:
     get:
       tags: [Reviews]
       operationId: getReviewCapture
-      summary: Get capture status and a short-lived screenshot URL
+      summary: Get capture status, screenshot, and pixel-difference preview
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -554,7 +554,7 @@ paths:
                   data:
                     type: object
                     additionalProperties: false
-                    required: [captureId, status, screenshotUrl, sha256, viewport, safeErrorCode, capturedAt]
+                    required: [captureId, status, screenshotUrl, sha256, visualDiff, viewport, safeErrorCode, capturedAt]
                     properties:
                       captureId: { type: string, format: uuid }
                       status: { type: string, enum: [queued, captured, failed] }
@@ -563,6 +563,35 @@ paths:
                       viewport: { $ref: '#/components/schemas/ReviewViewport' }
                       safeErrorCode: { type: [string, 'null'], maxLength: 64 }
                       capturedAt: { type: [string, 'null'], format: date-time }
+                      visualDiff:
+                        oneOf:
+                          - type: 'null'
+                          - type: object
+                            additionalProperties: false
+                            required: [status, diffOverlayUrl]
+                            properties:
+                              status: { type: string, enum: [ready, failed] }
+                              diffOverlayUrl: { type: [string, 'null'], format: uri }
+                              changedPercent: { type: number, minimum: 0, maximum: 100 }
+                              changedPixels: { type: integer, minimum: 0 }
+                              totalPixels: { type: integer, minimum: 1 }
+                              width: { type: integer, minimum: 1 }
+                              height: { type: integer, minimum: 1 }
+                              threshold: { type: integer, minimum: 0, maximum: 255 }
+                              safeErrorCode: { type: string, maxLength: 64 }
+                              regions:
+                                type: array
+                                maxItems: 50
+                                items:
+                                  type: object
+                                  additionalProperties: false
+                                  required: [x, y, width, height, changedPercent]
+                                  properties:
+                                    x: { type: number, minimum: 0, maximum: 1 }
+                                    y: { type: number, minimum: 0, maximum: 1 }
+                                    width: { type: number, minimum: 0, maximum: 1 }
+                                    height: { type: number, minimum: 0, maximum: 1 }
+                                    changedPercent: { type: number, minimum: 0, maximum: 100 }
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
