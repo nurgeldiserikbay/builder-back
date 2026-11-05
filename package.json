@@ -12,7 +12,9 @@
     "start:dev": "npm run db:generate && tsx watch src/main.ts",
     "db:validate": "prisma validate",
     "db:generate": "prisma generate",
-    "db:migrate:deploy": "prisma migrate deploy"
+    "db:migrate:deploy": "prisma migrate deploy",
+    "start:worker": "node dist/worker.js",
+    "start:worker:dev": "npm run db:generate && tsx watch src/worker.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
