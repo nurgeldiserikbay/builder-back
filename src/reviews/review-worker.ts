@@ -4,6 +4,7 @@ import { compareDesignToCapture } from './visual-diff.js';
 import { captureReviewPage } from './page-capture.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PrismaService } from '../database/prisma.service.js';
+import type { Prisma } from '@prisma/client';
 import { discoverSameOriginPages } from './same-origin-discovery.js';
 
 interface DiscoveryPayload {
@@ -206,7 +207,7 @@ export class ReviewWorker implements OnModuleDestroy {
       await this.prisma.$transaction([
         this.prisma.reviewCapture.update({
           where: { id: captureId },
-          data: { status: 'captured', assetStorageKey: storageKey, visualDiff, sha256: screenshot.sha256, toolVersion: screenshot.toolVersion, capturedAt: new Date(), safeErrorCode: null },
+          data: { status: 'captured', assetStorageKey: storageKey, visualDiff: visualDiff as Prisma.InputJsonValue, sha256: screenshot.sha256, toolVersion: screenshot.toolVersion, capturedAt: new Date(), safeErrorCode: null },
         }),
         this.prisma.reviewJob.update({
           where: { id: jobId },
