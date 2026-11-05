@@ -1,5 +1,4 @@
 import {
-  ConflictException,
   Injectable,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -80,8 +79,15 @@ export class AuthService {
       });
       if (!response.ok) throw new Error('EMAIL_PROVIDER_REJECTED');
     } catch {
-      await this.prisma.emailVerificationToken.deleteMany({ where: { tokenHash } });
-      await this.prisma.user.deleteMany({ where: { emailNormalized: normalized, emailVerifiedAt: null } });
+      const failedUser = await this.prisma.user.findUnique({ where: { emailNormalized: normalized }, select: { id: true } });
+      if (failedUser) {
+        await this.prisma.$transaction([
+          this.prisma.emailVerificationToken.deleteMany({ where: { userId: failedUser.id } }),
+          this.prisma.workspaceMember.deleteMany({ where: { userId: failedUser.id } }),
+          this.prisma.workspace.deleteMany({ where: { ownerUserId: failedUser.id } }),
+          this.prisma.user.deleteMany({ where: { id: failedUser.id, emailVerifiedAt: null } }),
+        ]);
+      }
       throw new ServiceUnavailableException('EMAIL_DELIVERY_UNAVAILABLE');
     }
     return { status: 'verification_pending' as const };
