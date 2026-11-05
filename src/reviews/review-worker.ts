@@ -4,7 +4,7 @@ import { compareDesignToCapture } from './visual-diff.js';
 import { captureReviewPage } from './page-capture.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { PrismaService } from '../database/prisma.service.js';
-import type { Prisma } from '@prisma/client';
+import type { Prisma } from '../generated/prisma/client.js';
 import { discoverSameOriginPages } from './same-origin-discovery.js';
 
 interface DiscoveryPayload {
