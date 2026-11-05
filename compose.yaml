@@ -26,12 +26,6 @@ services:
       - "9001:9001"
     volumes:
       - buildpath_minio_data:/data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   minio-init:
     image: minio/mc:latest
     depends_on:
