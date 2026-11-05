@@ -11,6 +11,7 @@ servers:
 tags:
   - name: Health
   - name: Authentication
+  - name: Workspaces
   - name: Projects
   - name: Reviews
 paths:
@@ -53,8 +54,8 @@ paths:
       tags: [Authentication]
       operationId: register
       summary: Create an account and begin email verification
-      description: Rate limited. Does not create a session until email is verified.
-      x-implementation-status: planned
+      description: Requires configured Resend email delivery. Does not create a session until email is verified.
+      x-implementation-status: implemented
       security: []
       requestBody:
         required: true
@@ -73,12 +74,29 @@ paths:
           $ref: '#/components/responses/Problem'
         '429':
           $ref: '#/components/responses/Problem'
+  /auth/verify-email:
+    post:
+      tags: [Authentication]
+      operationId: verifyEmail
+      summary: Verify an account email address
+      x-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyEmailRequest'
+      responses:
+        '204': { description: Email verified }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
   /auth/login:
     post:
       tags: [Authentication]
       operationId: login
       summary: Sign in to a verified account
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security: []
       requestBody:
         required: true
@@ -108,7 +126,7 @@ paths:
       tags: [Authentication]
       operationId: logout
       summary: Revoke the current session
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       responses:
@@ -119,7 +137,7 @@ paths:
       tags: [Authentication]
       operationId: getCurrentUser
       summary: Get the signed-in account
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       responses:
@@ -131,12 +149,28 @@ paths:
                 $ref: '#/components/schemas/CurrentUserResponse'
         '401':
           $ref: '#/components/responses/Problem'
+  /workspaces:
+    get:
+      tags: [Workspaces]
+      operationId: listWorkspaces
+      summary: List workspaces available to the current account
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: Active workspace memberships
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceListResponse'
+        '401': { $ref: '#/components/responses/Problem' }
   /projects:
     get:
       tags: [Projects]
       operationId: listProjects
       summary: List projects available to the current account
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
@@ -163,12 +197,10 @@ paths:
       tags: [Projects]
       operationId: createProject
       summary: Create a private project in a workspace
-      description: Requires active workspace membership with project creation permission. Emits an audit event.
-      x-implementation-status: planned
+      description: Requires active workspace owner, admin, or operator membership. Creator becomes project owner.
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
@@ -191,7 +223,7 @@ paths:
       tags: [Projects]
       operationId: getProject
       summary: Get a project the current account may access
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
@@ -286,7 +318,6 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
-        '429': { $ref: '#/components/responses/Problem' }
   /reviews/{reviewId}/sources/design-upload:
     post:
       tags: [Reviews]
@@ -871,14 +902,21 @@ components:
             status: { const: ready }
             database: { const: ok }
             timestamp: { type: string, format: date-time }
+    VerifyEmailRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token: { type: string, minLength: 32, maxLength: 128 }
     RegisterRequest:
       type: object
       additionalProperties: false
-      required: [email, password, locale]
+      required: [email, password]
       properties:
         email: { type: string, format: email, maxLength: 254 }
         password: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
-        locale: { type: string, enum: [en, ru, kk] }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        locale: { type: string, enum: [en, ru, kk], default: en }
     LoginRequest:
       type: object
       additionalProperties: false
@@ -912,6 +950,23 @@ components:
             name: { type: [string, 'null'], maxLength: 120 }
             locale: { type: string, enum: [en, ru, kk] }
             emailVerified: { type: boolean }
+    WorkspaceListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, name, role, createdAt, updatedAt]
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string, maxLength: 120 }
+              role: { type: string, enum: [owner, admin, operator, auditor] }
+              createdAt: { type: string, format: date-time }
+              updatedAt: { type: string, format: date-time }
     CreateProjectRequest:
       type: object
       additionalProperties: false
