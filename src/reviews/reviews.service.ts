@@ -200,12 +200,12 @@ export class ReviewsService {
     const requestHash = createHash('sha256').update(JSON.stringify({ pageId: page.id, targetUrl: safeTarget.url, ...input })).digest('hex');
     const previous = await this.prisma.reviewJob.findUnique({
       where: { reviewRunId_idempotencyKey: { reviewRunId: review.id, idempotencyKey } },
-      select: { id: true, jobType: true, result: true },
+      select: { id: true, jobType: true, status: true, result: true },
     });
     if (previous) {
       const result = previous.result && typeof previous.result === 'object' && !Array.isArray(previous.result) ? previous.result as Record<string, unknown> : {};
       if (previous.jobType !== 'capture_page' || result.requestHash !== requestHash) throw new ConflictException('IDEMPOTENCY_KEY_REUSED');
-      return { data: { jobId: previous.id, captureId: result.captureId, status: 'queued' } };
+      return { data: { jobId: previous.id, captureId: result.captureId, status: previous.status } };
     }
 
     const captureId = randomUUID();
@@ -226,10 +226,10 @@ export class ReviewsService {
       return { data: { jobId: job.id, captureId, status: 'queued' } };
     } catch (error) {
       if (!this.isUniqueViolation(error)) throw error;
-      const raced = await this.prisma.reviewJob.findUnique({ where: { reviewRunId_idempotencyKey: { reviewRunId: review.id, idempotencyKey } }, select: { id: true, jobType: true, result: true } });
+      const raced = await this.prisma.reviewJob.findUnique({ where: { reviewRunId_idempotencyKey: { reviewRunId: review.id, idempotencyKey } }, select: { id: true, jobType: true, status: true, result: true } });
       const result = raced?.result && typeof raced.result === 'object' && !Array.isArray(raced.result) ? raced.result as Record<string, unknown> : {};
       if (!raced || raced.jobType !== 'capture_page' || result.requestHash !== requestHash) throw new ConflictException('IDEMPOTENCY_KEY_REUSED');
-      return { data: { jobId: raced.id, captureId: result.captureId, status: 'queued' } };
+      return { data: { jobId: raced.id, captureId: result.captureId, status: raced.status } };
     }
   }
 
