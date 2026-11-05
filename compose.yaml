@@ -22,8 +22,8 @@ services:
       MINIO_ROOT_USER: buildpath
       MINIO_ROOT_PASSWORD: buildpathsecret
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - buildpath_minio_data:/data
   minio-init:
@@ -43,7 +43,7 @@ services:
   clamav:
     image: clamav/clamav:stable
     ports:
-      - "3310:3310"
+      - "127.0.0.1:3310:3310"
     volumes:
       - buildpath_clamav_data:/var/lib/clamav
 
