@@ -181,7 +181,10 @@ async function handleResponse(
   }
 
   const contentType = response.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase();
-  if (contentType !== 'text/html' && contentType !== 'application/xhtml+xml') {
+  const isXmlDocument = requestedUrl.pathname.toLowerCase().endsWith('.xml');
+  const isHtml = contentType === 'text/html' || contentType === 'application/xhtml+xml';
+  const isXml = isXmlDocument && (contentType === 'application/xml' || contentType === 'text/xml');
+  if (!isHtml && !isXml) {
     response.resume();
     reject(new Error('UNSUPPORTED_CONTENT_TYPE'));
     return;
