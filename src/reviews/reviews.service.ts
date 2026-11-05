@@ -184,7 +184,7 @@ export class ReviewsService {
       update: { designSourceId: input.designAssetId, viewportWidth: input.viewportWidth, viewportHeight: input.viewportHeight, deviceScale: input.deviceScale, requirementIds: input.requirementIds, mappingAuthorUserId: userId },
       select: { designSourceId: true, viewportWidth: true, viewportHeight: true, deviceScale: true, requirementIds: true, updatedAt: true },
     });
-    return { data: { id: page.id, route: page.route, label: (page.title ?? page.route).slice(0, 120), status: 'mapped', designAssetId: mapping.designSourceId, viewport: { width: mapping.viewportWidth, height: mapping.viewportHeight, deviceScale: Number(mapping.deviceScale) }, requirementIds: mapping.requirementIds, findingCount: page._count.findings, updatedAt: mapping.updatedAt } };
+    return { data: { id: page.id, route: page.route, label: (page.title ?? page.route).slice(0, 120), status: 'mapped', designAssetId: mapping.designSourceId, viewport: { width: mapping.viewportWidth, height: mapping.viewportHeight, deviceScale: Number(mapping.deviceScale) }, findingCount: page._count.findings } };
   }
 
   async create(userId: string, projectId: string, input: {
