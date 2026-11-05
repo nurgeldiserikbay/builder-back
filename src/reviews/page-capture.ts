@@ -1,4 +1,5 @@
 import { chromium } from 'playwright-core';
+import { access, constants } from 'node:fs/promises';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { LookupFunction } from 'node:net';
@@ -39,6 +40,7 @@ interface SafeResource {
 export async function captureReviewPage(input: ReviewPageCaptureInput): Promise<ReviewPageCaptureResult> {
   const executablePath = process.env.CAPTURE_CHROMIUM_EXECUTABLE_PATH;
   if (!executablePath) throw new Error('CAPTURE_BROWSER_NOT_CONFIGURED');
+  try { await access(executablePath, constants.X_OK); } catch { throw new Error('CAPTURE_BROWSER_EXECUTABLE_NOT_FOUND'); }
 
   const initial = await resolveAndValidateReviewTarget(input.targetUrl);
   const allowedOrigin = new URL(initial.url).origin;
