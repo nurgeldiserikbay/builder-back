@@ -5,10 +5,15 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
-import { promisify } from 'node:util';
 import { PrismaService } from '../database/prisma.service.js';
 
-const scrypt = promisify(scryptCallback);
+const scrypt = (password: string, salt: Buffer, length: number, options: { N: number; r: number; p: number; maxmem: number }): Promise<Buffer> =>
+  new Promise((resolve, reject) => {
+    scryptCallback(password, salt, length, options, (error, key) => {
+      if (error) reject(error);
+      else resolve(key);
+    });
+  });
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
 
