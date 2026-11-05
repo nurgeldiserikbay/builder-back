@@ -22,4 +22,7 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run build
+      - run: npm run db:validate
+        env:
+          DATABASE_URL: postgresql://buildpath:buildpath@localhost:5432/buildpath?schema=public
       - run: npx --yes @redocly/cli@1.34.5 lint apps/api/openapi.yaml
