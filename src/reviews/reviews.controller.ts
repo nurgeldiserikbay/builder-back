@@ -107,7 +107,7 @@ export class ReviewsController {
     if (!isUuid(reviewId) || !isUuid(pageId)) throw new BadRequestException('INVALID_PAGE_ID');
     const body = parseBody(raw);
     rejectUnknown(body, ['designAssetId', 'viewport', 'requirementIds']);
-    const designAssetId = body.designAssetId;
+    const designAssetId = body.designAssetId ?? null;
     if (designAssetId !== null && (typeof designAssetId !== 'string' || !isUuid(designAssetId))) throw new BadRequestException('INVALID_DESIGN_ASSET_ID');
     const viewport = parseBody(body.viewport);
     rejectUnknown(viewport, ['width', 'height', 'deviceScale']);
