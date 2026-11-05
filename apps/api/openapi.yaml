@@ -408,7 +408,7 @@ paths:
       tags: [Reviews]
       operationId: listReviewPages
       summary: List discovered or manually added pages
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
