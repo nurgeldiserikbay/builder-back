@@ -4,27 +4,34 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 
 ## Implemented
 
-- Process health endpoint: `GET /api/v1/health`. This checks the HTTP process only; it does not assert database or provider readiness.
+- `GET /api/v1/health` checks that the HTTP process is responding.
+- `GET /api/v1/health/ready` checks PostgreSQL readiness without returning connection details.
+- Shared Prisma 7 PostgreSQL client, graceful shutdown, schema validation, and deployable migrations.
 - Global DTO validation settings: reject unknown properties and transform validated inputs.
-- Review target URL policy helper: accepts HTTP(S) URLs only, resolves all addresses, and rejects non-public address ranges.
-- Bounded same-origin discovery core for a future isolated worker: checks the root URL, reads `/sitemap.xml`, follows same-origin HTML links, pins requests to validated DNS addresses, revalidates redirects, and caps pages, depth, response bytes, and request time. It is not yet exposed as an API job or connected to a queue.
+- Review target URL policy helper and bounded same-origin discovery core for a future isolated worker. The crawler is not exposed as an API job or connected to a queue.
 
 ## Contract
 
-The initial OpenAPI source of truth is [apps/api/openapi.yaml](apps/api/openapi.yaml). It defines health, account/project operations, and the planned read-only design review workflow (site sources, page discovery, design upload, page mapping, captures, findings, and report export). Only the health operation is implemented; all other operations are explicitly marked planned.
+The OpenAPI source of truth is [apps/api/openapi.yaml](apps/api/openapi.yaml). Health and database readiness are implemented. Account/project operations and the read-only design review workflow are still planned.
 
 The design review behavior and security requirements are in [DESIGN_CONFORMANCE.md](https://github.com/nurgeldiserikbay/builder-docs/blob/main/docs/DESIGN_CONFORMANCE.md). Product requirements, architecture, and implementation order live in [builder-docs](https://github.com/nurgeldiserikbay/builder-docs).
 
-## Review persistence foundation
+## Persistence foundation
 
-The Prisma schema and PostgreSQL migrations define users, hashed sessions and email-verification tokens, workspaces, memberships, projects, and review runs, pages, design sources, captures, jobs, findings, and immutable report versions. Review records now have foreign keys to projects and users. This remains a data-model foundation: API handlers, authorization checks, and workers are not connected yet; do not expose the review tables through API handlers before those controls exist.
+The Prisma schema and PostgreSQL migrations define users, hashed sessions and email-verification tokens, workspaces, memberships, projects, and review runs, pages, design sources, captures, jobs, findings, and immutable report versions. Review records have foreign keys to projects and users. Authentication, authorization, and review API handlers are not connected yet.
 
-Start the local PostgreSQL container with `docker compose up -d postgres`. The development credentials in `.env.example` are for local use only.
+The local Compose service uses development-only credentials. Start it with `docker compose up -d postgres`.
 
 Validate the Prisma schema with:
 
 ```sh
 npm run db:validate
+```
+
+Apply the committed PostgreSQL migrations with:
+
+```sh
+npm run db:migrate:deploy
 ```
 
 ## Local development
@@ -33,8 +40,10 @@ Requires Node.js 22.12+.
 
 ```sh
 cp .env.example .env
+docker compose up -d postgres
 npm install
+npm run db:migrate:deploy
 npm run start:dev
 ```
 
-The API listens on port 4000 by default. No credentials are needed for the health endpoint.
+The API listens on port 4000 by default. `/health` reports process status; `/health/ready` reports whether PostgreSQL is reachable.
