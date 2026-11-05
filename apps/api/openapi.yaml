@@ -243,8 +243,8 @@ paths:
       tags: [Reviews]
       operationId: createReview
       summary: Create a read-only site review
-      description: Creates a review in the current project. A review never changes the source site, project requirements, backend data, or deployment state.
-      x-implementation-status: planned
+      description: Creates a review in the current project. Replaying the same idempotency key and request returns the original review for 30 days.
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
@@ -273,7 +273,7 @@ paths:
       tags: [Reviews]
       operationId: getReview
       summary: Get review progress and configuration
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
