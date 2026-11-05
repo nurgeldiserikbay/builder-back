@@ -211,7 +211,7 @@ export class ReviewWorker implements OnModuleDestroy {
         }),
         this.prisma.reviewJob.update({
           where: { id: jobId },
-          data: { status: 'succeeded', progressPercent: 100, finishedAt: new Date(), safeErrorCode: null, result: { ...result, finalUrl: screenshot.finalUrl, screenshotSha256: screenshot.sha256 } },
+          data: { status: 'succeeded', progressPercent: 100, finishedAt: new Date(), safeErrorCode: null, result: { ...result, finalUrl: screenshot.finalUrl, screenshotSha256: screenshot.sha256 } as Prisma.InputJsonValue },
         }),
       ]);
     } catch (error) {
