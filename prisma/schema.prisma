@@ -1,0 +1,291 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ReviewMode {
+  site_only
+  site_and_design
+  design_only
+}
+
+enum ReviewStatus {
+  draft
+  queued
+  discovering
+  ready
+  failed
+  cancelled
+}
+
+enum ReviewLocale {
+  en
+  ru
+  kk
+}
+
+enum ReviewPageStatus {
+  discovered
+  mapped
+  capture_queued
+  captured
+  failed
+  excluded
+}
+
+enum DesignSourceType {
+  upload
+  figma
+}
+
+enum DesignAssetStatus {
+  pending
+  scanning
+  verified
+  rejected
+  failed
+}
+
+enum ReviewCaptureStatus {
+  queued
+  captured
+  failed
+}
+
+enum ReviewFindingCategory {
+  requirement
+  design
+  backend
+  accessibility
+  performance
+  seo
+  security
+}
+
+enum ReviewFindingSeverity {
+  critical
+  high
+  medium
+  low
+  info
+}
+
+enum ReviewFindingStatus {
+  open
+  accepted
+  dismissed
+  fixed
+  unknown
+}
+
+enum ReviewConfidence {
+  high
+  medium
+  low
+}
+
+enum ReviewJobType {
+  discover_pages
+  capture_page
+  compare_page
+  generate_report
+  export_report
+}
+
+enum ReviewJobStatus {
+  queued
+  running
+  succeeded
+  partial
+  failed
+  cancelled
+}
+
+enum ReviewReportStatus {
+  generating
+  ready
+  failed
+}
+
+model ReviewRun {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Project and owner relations are attached when the account/project schema lands.
+  projectId         String       @map("project_id") @db.Uuid
+  ownerUserId       String       @map("owner_user_id") @db.Uuid
+  title             String       @db.VarChar(120)
+  mode              ReviewMode
+  status            ReviewStatus @default(draft)
+  locale            ReviewLocale
+  baseOrigin        String?      @map("base_origin") @db.VarChar(512)
+  sourceSnapshotId  String?      @map("source_snapshot_id") @db.Uuid
+  sourceSnapshot    Json?        @map("source_snapshot") @db.JsonB
+  configuration     Json?        @db.JsonB
+  startedAt         DateTime?    @map("started_at") @db.Timestamptz(3)
+  finishedAt        DateTime?    @map("finished_at") @db.Timestamptz(3)
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  pages             ReviewPage[]
+  designSources     DesignSource[]
+  jobs              ReviewJob[]
+  findings          ReviewFinding[]
+  reports           ReviewReport[]
+
+  @@index([projectId, createdAt(sort: Desc)], map: "review_runs_project_created_idx")
+  @@index([ownerUserId, createdAt(sort: Desc)], map: "review_runs_owner_created_idx")
+  @@index([status, createdAt], map: "review_runs_status_created_idx")
+  @@map("review_runs")
+}
+
+model ReviewPage {
+  id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewRunId     String           @map("review_run_id") @db.Uuid
+  route           String           @db.VarChar(2048)
+  title           String?          @db.VarChar(200)
+  discoveryDepth  Int              @default(0) @map("discovery_depth")
+  status          ReviewPageStatus @default(discovered)
+  discoveredAt    DateTime         @default(now()) @map("discovered_at") @db.Timestamptz(3)
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  reviewRun       ReviewRun        @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+  mapping         PageDesignMapping?
+  captures        ReviewCapture[]
+  findings        ReviewFinding[]
+
+  @@unique([reviewRunId, route], map: "review_pages_run_route_key")
+  @@index([reviewRunId, status], map: "review_pages_run_status_idx")
+  @@map("review_pages")
+}
+
+model DesignSource {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewRunId      String           @map("review_run_id") @db.Uuid
+  sourceType       DesignSourceType @map("source_type")
+  fileName         String?          @map("file_name") @db.VarChar(255)
+  mimeType         String?          @map("mime_type") @db.VarChar(128)
+  sizeBytes        BigInt?          @map("size_bytes")
+  sha256           String?          @db.Char(64)
+  storageKey       String?          @map("storage_key") @db.VarChar(1024)
+  version          String?          @db.VarChar(255)
+  assetStatus      DesignAssetStatus @default(pending) @map("asset_status")
+  figmaFileKey     String?          @map("figma_file_key") @db.VarChar(128)
+  figmaNodeId      String?          @map("figma_node_id") @db.VarChar(128)
+  metadata         Json?             @db.JsonB
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  reviewRun        ReviewRun         @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+  mappings         PageDesignMapping[]
+  captures         ReviewCapture[]
+
+  @@index([reviewRunId, sourceType, assetStatus], map: "design_sources_run_type_status_idx")
+  @@map("design_sources")
+}
+
+model PageDesignMapping {
+  id                  String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pageId              String       @unique @map("page_id") @db.Uuid
+  designSourceId      String?      @map("design_source_id") @db.Uuid
+  viewportWidth       Int          @map("viewport_width")
+  viewportHeight      Int          @map("viewport_height")
+  deviceScale         Decimal      @default(1) @map("device_scale") @db.Decimal(4, 2)
+  stateRecipe         Json?        @map("state_recipe") @db.JsonB
+  requirementIds      String[]     @default([]) @map("requirement_ids") @db.Uuid
+  apiOperationIds     String[]     @default([]) @map("api_operation_ids")
+  mappingAuthorUserId String       @map("mapping_author_user_id") @db.Uuid
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  page                ReviewPage   @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  designSource        DesignSource? @relation(fields: [designSourceId], references: [id], onDelete: SetNull)
+
+  @@index([designSourceId], map: "page_design_mappings_source_idx")
+  @@map("page_design_mappings")
+}
+
+model ReviewCapture {
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pageId           String              @map("page_id") @db.Uuid
+  designSourceId   String?             @map("design_source_id") @db.Uuid
+  status           ReviewCaptureStatus @default(queued)
+  viewportWidth    Int                 @map("viewport_width")
+  viewportHeight   Int                 @map("viewport_height")
+  deviceScale      Decimal             @default(1) @map("device_scale") @db.Decimal(4, 2)
+  assetStorageKey  String?             @map("asset_storage_key") @db.VarChar(1024)
+  sha256           String?             @db.Char(64)
+  browserProfile   String              @map("browser_profile") @db.VarChar(128)
+  toolVersion      String?             @map("tool_version") @db.VarChar(128)
+  safeErrorCode    String?             @map("safe_error_code") @db.VarChar(64)
+  capturedAt       DateTime?           @map("captured_at") @db.Timestamptz(3)
+  createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  page             ReviewPage          @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  designSource     DesignSource?       @relation(fields: [designSourceId], references: [id], onDelete: SetNull)
+
+  @@index([pageId, createdAt(sort: Desc)], map: "review_captures_page_created_idx")
+  @@index([status, createdAt], map: "review_captures_status_created_idx")
+  @@map("review_captures")
+}
+
+model ReviewJob {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewRunId     String          @map("review_run_id") @db.Uuid
+  jobType         ReviewJobType   @map("job_type")
+  status          ReviewJobStatus @default(queued)
+  idempotencyKey  String          @map("idempotency_key") @db.VarChar(128)
+  correlationId   String          @map("correlation_id") @db.VarChar(128)
+  attemptCount    Int             @default(0) @map("attempt_count")
+  progressPercent Int             @default(0) @map("progress_percent")
+  safeErrorCode   String?         @map("safe_error_code") @db.VarChar(64)
+  result           Json?          @db.JsonB
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt        DateTime?      @map("started_at") @db.Timestamptz(3)
+  finishedAt       DateTime?      @map("finished_at") @db.Timestamptz(3)
+  reviewRun        ReviewRun      @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewRunId, idempotencyKey], map: "review_jobs_run_idempotency_key")
+  @@index([status, createdAt], map: "review_jobs_status_created_idx")
+  @@index([reviewRunId, createdAt(sort: Desc)], map: "review_jobs_run_created_idx")
+  @@map("review_jobs")
+}
+
+model ReviewFinding {
+  id               String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewRunId      String                 @map("review_run_id") @db.Uuid
+  pageId           String?                @map("page_id") @db.Uuid
+  category         ReviewFindingCategory
+  severity         ReviewFindingSeverity
+  status           ReviewFindingStatus    @default(open)
+  confidence       ReviewConfidence
+  summary          String                 @db.VarChar(500)
+  explanation      String                 @db.Text
+  evidence         Json                   @db.JsonB
+  coordinates      Json?                  @db.JsonB
+  authorUserId     String                 @map("author_user_id") @db.Uuid
+  assignedUserId   String?                @map("assigned_user_id") @db.Uuid
+  createdAt        DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+  reviewRun        ReviewRun              @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+  page             ReviewPage?            @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@index([reviewRunId, status, severity], map: "review_findings_run_status_severity_idx")
+  @@index([pageId, createdAt], map: "review_findings_page_created_idx")
+  @@map("review_findings")
+}
+
+model ReviewReport {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewRunId     String             @map("review_run_id") @db.Uuid
+  version         Int
+  status          ReviewReportStatus @default(generating)
+  summary         Json               @db.JsonB
+  limitations     Json               @db.JsonB
+  exporterVersion String             @map("exporter_version") @db.VarChar(128)
+  generatedAt     DateTime?          @map("generated_at") @db.Timestamptz(3)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  reviewRun       ReviewRun          @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewRunId, version], map: "review_reports_run_version_key")
+  @@index([reviewRunId, createdAt(sort: Desc)], map: "review_reports_run_created_idx")
+  @@map("review_reports")
+}
