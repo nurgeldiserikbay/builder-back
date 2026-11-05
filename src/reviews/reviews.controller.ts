@@ -53,6 +53,11 @@ export class ReviewsController {
   }
 
 
+  @Get('reviews/:reviewId/pages')
+  listPages(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string) {
+    return this.reviews.listPages(request.user.id, reviewId);
+  }
+
   @Post('reviews/:reviewId/sources/url')
   async registerUrl(
     @Req() request: AuthenticatedRequest,
