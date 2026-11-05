@@ -123,7 +123,7 @@ export class ReviewsService {
       data: pages.map((page) => ({
         id: page.id,
         route: page.route,
-        label: page.title ?? page.route,
+        label: (page.title ?? page.route).slice(0, 120),
         status: page.mapping ? 'mapped' : page.status === 'captured' ? 'captured' : page.status === 'failed' ? 'failed' : 'discovered',
         designAssetId: page.mapping?.designSourceId ?? null,
         viewport: {
