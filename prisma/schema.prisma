@@ -417,6 +417,7 @@ model ReviewCapture {
   viewportHeight   Int                 @map("viewport_height")
   deviceScale      Decimal             @default(1) @map("device_scale") @db.Decimal(4, 2)
   assetStorageKey  String?             @map("asset_storage_key") @db.VarChar(1024)
+  visualDiff       Json?               @map("visual_diff") @db.JsonB
   sha256           String?             @db.Char(64)
   browserProfile   String              @map("browser_profile") @db.VarChar(128)
   toolVersion      String?             @map("tool_version") @db.VarChar(128)
