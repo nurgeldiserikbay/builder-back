@@ -7,23 +7,29 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "npm run db:generate && tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
-    "start:dev": "ts-node-dev --respawn --transpile-only src/main.ts",
-    "db:validate": "prisma validate"
+    "start:dev": "npm run db:generate && tsx watch src/main.ts",
+    "db:validate": "prisma validate",
+    "db:generate": "prisma generate"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
     "@nestjs/core": "^11.0.0",
     "@nestjs/platform-express": "^11.0.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "@prisma/client": "7.10.0",
+    "@prisma/adapter-pg": "7.10.0",
+    "pg": "^8.16.3",
+    "dotenv": "^17.2.3"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
-    "ts-node": "^10.9.2",
-    "ts-node-dev": "^2.0.0",
     "typescript": "^5.8.2",
-    "prisma": "7.10.0"
-  }
+    "prisma": "7.10.0",
+    "tsx": "^4.20.6",
+    "@types/pg": "^8.15.5"
+  },
+  "type": "module"
 }
