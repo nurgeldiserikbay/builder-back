@@ -175,6 +175,7 @@ model User {
   authoredFindings          ReviewFinding[]           @relation("FindingAuthor")
   assignedFindings          ReviewFinding[]           @relation("FindingAssignee")
   authoredPageMappings      PageDesignMapping[]      @relation("MappingAuthor")
+  idempotencyRecords        IdempotencyRecord[]
 
   @@index([createdAt], map: "users_created_idx")
   @@map("users")
@@ -294,6 +295,22 @@ model ProjectMember {
   @@index([userId, status], map: "project_members_user_status_idx")
   @@index([projectId, role, status], map: "project_members_project_role_status_idx")
   @@map("project_members")
+}
+
+model IdempotencyRecord {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  scope       String   @db.VarChar(120)
+  key         String   @db.VarChar(128)
+  requestHash String   @map("request_hash") @db.Char(64)
+  resourceId  String   @map("resource_id") @db.Uuid
+  expiresAt   DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, scope, key], map: "idempotency_records_user_scope_key")
+  @@index([expiresAt], map: "idempotency_records_expires_idx")
+  @@map("idempotency_records")
 }
 
 model ReviewRun {
