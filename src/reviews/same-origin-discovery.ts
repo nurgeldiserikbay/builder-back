@@ -1,6 +1,6 @@
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import type { LookupFunction, LookupFunctionOptions } from 'node:net';
+import type { LookupFunction } from 'node:net';
 import { URL } from 'node:url';
 import { resolveAndValidateReviewTarget } from './url-target-policy';
 
@@ -219,13 +219,22 @@ function createPinnedLookup(addresses: readonly string[]): LookupFunction {
   const address = addresses[0];
   if (!address) throw new Error('NO_PUBLIC_ADDRESS');
   const family = address.includes(':') ? 6 : 4;
-  return (_hostname: string, options: LookupFunctionOptions, callback: Parameters<LookupFunction>[2]) => {
+  type PinnedLookupCallback = {
+    (error: NodeJS.ErrnoException | null, address: string, family: number): void;
+    (error: NodeJS.ErrnoException | null, addresses: { address: string; family: number }[]): void;
+  };
+  const lookup = ((
+    _hostname: string,
+    options: number | { all?: boolean },
+    callback: PinnedLookupCallback,
+  ) => {
     if (typeof options === 'object' && options.all) {
       callback(null, [{ address, family }]);
     } else {
       callback(null, address, family);
     }
-  };
+  }) as LookupFunction;
+  return lookup;
 }
 
 function extractSameOriginLinks(html: string, pageUrl: string, allowedOrigin: string): readonly string[] {
