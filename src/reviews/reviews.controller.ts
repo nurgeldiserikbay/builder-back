@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Headers, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { ReviewsService } from './reviews.service.js';
@@ -73,6 +73,54 @@ export class ReviewsController {
     rejectUnknown(body, ['url']);
     const url = requiredString(body, 'url', 1, 2048);
     return this.reviews.registerUrl(request.user.id, reviewId, url, idempotencyKey);
+  }
+
+  @Post('reviews/:reviewId/sources/design-upload')
+  async reserveDesignUpload(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Headers('idempotency-key') idempotencyKey: string | undefined, @Body() raw: unknown) {
+    if (!isUuid(reviewId)) throw new BadRequestException('INVALID_REVIEW_ID');
+    if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 128) throw new BadRequestException('INVALID_IDEMPOTENCY_KEY');
+    const body = parseBody(raw);
+    rejectUnknown(body, ['fileName', 'contentType', 'sizeBytes', 'sha256']);
+    return this.reviews.reserveDesignUpload(request.user.id, reviewId, {
+      fileName: requiredString(body, 'fileName', 1, 255),
+      contentType: requiredString(body, 'contentType', 1, 128),
+      sizeBytes: typeof body.sizeBytes === 'number' ? body.sizeBytes : Number.NaN,
+      sha256: requiredString(body, 'sha256', 64, 64),
+    }, idempotencyKey);
+  }
+
+  @Post('reviews/:reviewId/sources/design-upload/:assetId/complete')
+  @HttpCode(HttpStatus.OK)
+  async completeDesignUpload(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('assetId') assetId: string) {
+    if (!isUuid(reviewId) || !isUuid(assetId)) throw new BadRequestException('INVALID_DESIGN_ASSET_ID');
+    return this.reviews.completeDesignUpload(request.user.id, reviewId, assetId);
+  }
+
+  @Get('reviews/:reviewId/sources/design-upload/:assetId/url')
+  async getDesignAssetUrl(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('assetId') assetId: string) {
+    if (!isUuid(reviewId) || !isUuid(assetId)) throw new BadRequestException('INVALID_DESIGN_ASSET_ID');
+    return this.reviews.getDesignAssetUrl(request.user.id, reviewId, assetId);
+  }
+
+  @Put('reviews/:reviewId/page-mappings/:pageId')
+  async savePageMapping(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('pageId') pageId: string, @Body() raw: unknown) {
+    if (!isUuid(reviewId) || !isUuid(pageId)) throw new BadRequestException('INVALID_PAGE_ID');
+    const body = parseBody(raw);
+    rejectUnknown(body, ['designAssetId', 'viewportWidth', 'viewportHeight', 'deviceScale', 'requirementIds']);
+    const designAssetId = body.designAssetId;
+    if (designAssetId !== null && (typeof designAssetId !== 'string' || !isUuid(designAssetId))) throw new BadRequestException('INVALID_DESIGN_ASSET_ID');
+    const width = body.viewportWidth;
+    const height = body.viewportHeight;
+    const scale = body.deviceScale;
+    const requirementIds = body.requirementIds;
+    if (typeof width !== 'number' || !Number.isInteger(width) || width < 320 || width > 3840) throw new BadRequestException('INVALID_VIEWPORT_WIDTH');
+    if (typeof height !== 'number' || !Number.isInteger(height) || height < 568 || height > 4320) throw new BadRequestException('INVALID_VIEWPORT_HEIGHT');
+    if (typeof scale !== 'number' || !Number.isFinite(scale) || scale < 1 || scale > 3) throw new BadRequestException('INVALID_DEVICE_SCALE');
+    if (!Array.isArray(requirementIds) || requirementIds.length > 100 || requirementIds.some((id) => typeof id !== 'string' || !isUuid(id))) throw new BadRequestException('INVALID_REQUIREMENT_IDS');
+    return this.reviews.savePageMapping(request.user.id, reviewId, pageId, {
+      designAssetId: designAssetId as string | null,
+      viewportWidth: width, viewportHeight: height, deviceScale: scale, requirementIds: requirementIds as string[],
+    });
   }
 
   @Get('reviews/:reviewId')
