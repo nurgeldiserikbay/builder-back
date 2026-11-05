@@ -97,6 +97,45 @@ export class ReviewsService {
   }
 
 
+
+  async listPages(userId: string, reviewId: string) {
+    if (!this.isUuid(reviewId)) throw new NotFoundException('REVIEW_NOT_FOUND');
+    const review = await this.prisma.reviewRun.findFirst({
+      where: { id: reviewId, project: { members: { some: { userId, status: 'active' } } } },
+      select: { id: true },
+    });
+    if (!review) throw new NotFoundException('REVIEW_NOT_FOUND');
+
+    const pages = await this.prisma.reviewPage.findMany({
+      where: { reviewRunId: review.id, status: { not: 'excluded' } },
+      orderBy: [{ discoveryDepth: 'asc' }, { route: 'asc' }],
+      take: 100,
+      select: {
+        id: true,
+        route: true,
+        title: true,
+        status: true,
+        mapping: { select: { designSourceId: true, viewportWidth: true, viewportHeight: true, deviceScale: true } },
+        _count: { select: { findings: true } },
+      },
+    });
+    return {
+      data: pages.map((page) => ({
+        id: page.id,
+        route: page.route,
+        label: page.title ?? page.route,
+        status: page.mapping ? 'mapped' : page.status === 'captured' ? 'captured' : page.status === 'failed' ? 'failed' : 'discovered',
+        designAssetId: page.mapping?.designSourceId ?? null,
+        viewport: {
+          width: page.mapping?.viewportWidth ?? 1440,
+          height: page.mapping?.viewportHeight ?? 900,
+          deviceScale: page.mapping ? Number(page.mapping.deviceScale) : 1,
+        },
+        findingCount: page._count.findings,
+      })),
+    };
+  }
+
   async registerUrl(userId: string, reviewId: string, rawUrl: string, idempotencyKey: string) {
     const review = await this.prisma.reviewRun.findFirst({
       where: { id: reviewId, project: { members: { some: { userId, status: 'active', role: { not: 'viewer' } } } } },
