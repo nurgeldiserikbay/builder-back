@@ -125,6 +125,32 @@ export class ReviewsController {
     });
   }
 
+  @Post('reviews/:reviewId/captures')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async queueCapture(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Headers('idempotency-key') idempotencyKey: string | undefined, @Body() raw: unknown) {
+    if (!isUuid(reviewId)) throw new BadRequestException('INVALID_REVIEW_ID');
+    if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 128) throw new BadRequestException('INVALID_IDEMPOTENCY_KEY');
+    const body = parseBody(raw);
+    rejectUnknown(body, ['pageId', 'viewport']);
+    const pageId = requiredString(body, 'pageId', 36, 36);
+    if (!isUuid(pageId)) throw new BadRequestException('INVALID_PAGE_ID');
+    const viewport = parseBody(body.viewport);
+    rejectUnknown(viewport, ['width', 'height', 'deviceScale']);
+    const width = viewport.width;
+    const height = viewport.height;
+    const deviceScale = viewport.deviceScale;
+    if (typeof width !== 'number' || !Number.isInteger(width) || width < 320 || width > 3840) throw new BadRequestException('INVALID_VIEWPORT_WIDTH');
+    if (typeof height !== 'number' || !Number.isInteger(height) || height < 568 || height > 4320) throw new BadRequestException('INVALID_VIEWPORT_HEIGHT');
+    if (typeof deviceScale !== 'number' || !Number.isFinite(deviceScale) || deviceScale < 1 || deviceScale > 3) throw new BadRequestException('INVALID_DEVICE_SCALE');
+    return this.reviews.queueCapture(request.user.id, reviewId, { pageId, viewportWidth: width, viewportHeight: height, deviceScale }, idempotencyKey);
+  }
+
+  @Get('reviews/:reviewId/captures/:captureId')
+  async getCapture(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('captureId') captureId: string) {
+    if (!isUuid(reviewId) || !isUuid(captureId)) throw new BadRequestException('INVALID_CAPTURE_ID');
+    return this.reviews.getCapture(request.user.id, reviewId, captureId);
+  }
+
   @Get('reviews/:reviewId')
   get(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string) {
     return this.reviews.get(request.user.id, reviewId);
