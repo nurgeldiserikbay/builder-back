@@ -237,18 +237,42 @@ export class ReviewsService {
     await this.reviewForAsset(userId, reviewId);
     const capture = await this.prisma.reviewCapture.findFirst({
       where: { id: captureId, page: { reviewRunId: reviewId } },
-      select: { id: true, status: true, viewportWidth: true, viewportHeight: true, deviceScale: true, assetStorageKey: true, sha256: true, safeErrorCode: true, capturedAt: true },
+      select: { id: true, status: true, viewportWidth: true, viewportHeight: true, deviceScale: true, assetStorageKey: true, visualDiff: true, sha256: true, safeErrorCode: true, capturedAt: true },
     });
     if (!capture) throw new NotFoundException('REVIEW_CAPTURE_NOT_FOUND');
     let screenshotUrl: string | null = null;
-    if (capture.status === 'captured' && capture.assetStorageKey) {
+    let diffOverlayUrl: string | null = null;
+    const storedDiff = capture.visualDiff && typeof capture.visualDiff === 'object' && !Array.isArray(capture.visualDiff)
+      ? capture.visualDiff as Record<string, unknown>
+      : null;
+    if (capture.status === 'captured' && (capture.assetStorageKey || typeof storedDiff?.diffStorageKey === 'string')) {
       const { bucket, client } = this.storageConfig();
-      screenshotUrl = await getSignedUrl(client, new GetObjectCommand({
-        Bucket: bucket, Key: capture.assetStorageKey, ResponseContentType: 'image/png', ResponseContentDisposition: 'inline',
-      }), { expiresIn: 300 });
+      if (capture.assetStorageKey) {
+        screenshotUrl = await getSignedUrl(client, new GetObjectCommand({
+          Bucket: bucket, Key: capture.assetStorageKey, ResponseContentType: 'image/png', ResponseContentDisposition: 'inline',
+        }), { expiresIn: 300 });
+      }
+      if (typeof storedDiff?.diffStorageKey === 'string') {
+        diffOverlayUrl = await getSignedUrl(client, new GetObjectCommand({
+          Bucket: bucket, Key: storedDiff.diffStorageKey, ResponseContentType: 'image/png', ResponseContentDisposition: 'inline',
+        }), { expiresIn: 300 });
+      }
+      await client.destroy();
     }
+    const visualDiff = storedDiff ? {
+      status: storedDiff.status === 'ready' ? 'ready' : 'failed',
+      ...(typeof storedDiff.changedPercent === 'number' ? { changedPercent: storedDiff.changedPercent } : {}),
+      ...(typeof storedDiff.changedPixels === 'number' ? { changedPixels: storedDiff.changedPixels } : {}),
+      ...(typeof storedDiff.totalPixels === 'number' ? { totalPixels: storedDiff.totalPixels } : {}),
+      ...(typeof storedDiff.width === 'number' ? { width: storedDiff.width } : {}),
+      ...(typeof storedDiff.height === 'number' ? { height: storedDiff.height } : {}),
+      ...(typeof storedDiff.threshold === 'number' ? { threshold: storedDiff.threshold } : {}),
+      ...(Array.isArray(storedDiff.regions) ? { regions: storedDiff.regions } : {}),
+      ...(typeof storedDiff.safeErrorCode === 'string' ? { safeErrorCode: storedDiff.safeErrorCode } : {}),
+      diffOverlayUrl,
+    } : null;
     return { data: {
-      captureId: capture.id, status: capture.status, screenshotUrl, sha256: capture.sha256,
+      captureId: capture.id, status: capture.status, screenshotUrl, sha256: capture.sha256, visualDiff,
       viewport: { width: capture.viewportWidth, height: capture.viewportHeight, deviceScale: Number(capture.deviceScale) },
       safeErrorCode: capture.safeErrorCode, capturedAt: capture.capturedAt,
     } };
