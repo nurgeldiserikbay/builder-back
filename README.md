@@ -8,7 +8,7 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - `GET /api/v1/health/ready` checks PostgreSQL readiness without returning connection details.
 - Shared Prisma 7 PostgreSQL client, graceful shutdown, schema validation, and deployable migrations.
 - Account registration with scrypt password hashing, email verification through Resend, HTTP-only cookie sessions, and logout revocation.
-- Private workspace/project listing and project creation with active membership/role checks.
+- Private workspace/project listing and project creation with active membership/role checks.\n- Create and read project-bound review runs with idempotent request replay and membership authorization.
 - Global validation settings plus explicit request field and enum checks on implemented endpoints.
 - Review target URL policy helper and bounded same-origin discovery core for a future isolated worker. The crawler is not exposed as an API job or connected to a queue.
 
