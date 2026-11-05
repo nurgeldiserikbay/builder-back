@@ -14,6 +14,17 @@ export class ProjectsService {
     const rows = await this.prisma.project.findMany({
       where: { workspaceId, members: { some: { userId, status: 'active' } } },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: {
+        id: true,
+        workspaceId: true,
+        name: true,
+        summary: true,
+        startMode: true,
+        status: true,
+        locale: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
@@ -50,6 +61,17 @@ export class ProjectsService {
           startMode: input.startMode,
           locale: input.locale,
         },
+        select: {
+        id: true,
+        workspaceId: true,
+        name: true,
+        summary: true,
+        startMode: true,
+        status: true,
+        locale: true,
+        createdAt: true,
+        updatedAt: true,
+      },
       });
       await tx.projectMember.create({
         data: { projectId: created.id, userId, role: 'owner', status: 'active' },
@@ -65,6 +87,17 @@ export class ProjectsService {
       where: {
         id: projectId,
         members: { some: { userId, status: 'active' } },
+      },
+      select: {
+        id: true,
+        workspaceId: true,
+        name: true,
+        summary: true,
+        startMode: true,
+        status: true,
+        locale: true,
+        createdAt: true,
+        updatedAt: true,
       },
     });
     if (!project) throw new NotFoundException('PROJECT_NOT_FOUND');
