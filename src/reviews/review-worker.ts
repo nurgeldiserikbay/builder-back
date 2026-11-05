@@ -159,8 +159,7 @@ export class ReviewWorker implements OnModuleDestroy {
       });
       const storageKey = `${reviewRunId}/captures/${captureId}.png`;
       await storage.send(new PutObjectCommand({
-        Bucket: bucket, Key: storageKey, Body: screenshot.bytes, ContentType: 'image/png',
-        ServerSideEncryption: 'AES256', Metadata: { captureid: captureId, sha256: screenshot.sha256 },
+        Bucket: bucket, Key: storageKey, Body: screenshot.bytes, ContentType: 'image/png', Metadata: { captureid: captureId, sha256: screenshot.sha256 },
       }));
       await this.prisma.$transaction([
         this.prisma.reviewCapture.update({
