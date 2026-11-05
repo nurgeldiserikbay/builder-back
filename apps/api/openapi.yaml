@@ -28,6 +28,26 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Check whether the API can access required database state
+      x-implementation-status: implemented
+      security: []
+      responses:
+        '200':
+          description: API process and PostgreSQL are ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatabaseReadinessResponse'
+        '503':
+          description: PostgreSQL is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /auth/register:
     post:
       tags: [Authentication]
@@ -837,6 +857,19 @@ components:
           required: [status, timestamp]
           properties:
             status: { const: ok }
+            timestamp: { type: string, format: date-time }
+    DatabaseReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [status, database, timestamp]
+          properties:
+            status: { const: ready }
+            database: { const: ok }
             timestamp: { type: string, format: date-time }
     RegisterRequest:
       type: object
