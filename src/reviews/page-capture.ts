@@ -1,5 +1,6 @@
 import { chromium } from 'playwright-core';
-import { access, constants } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access } from 'node:fs/promises';
 import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { LookupFunction } from 'node:net';
