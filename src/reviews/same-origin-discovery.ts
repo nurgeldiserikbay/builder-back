@@ -2,7 +2,7 @@ import { request as httpRequest, type IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { LookupFunction } from 'node:net';
 import { URL } from 'node:url';
-import { resolveAndValidateReviewTarget } from './url-target-policy';
+import { resolveAndValidateReviewTarget } from './url-target-policy.js';
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
