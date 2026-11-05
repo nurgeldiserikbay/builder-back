@@ -502,7 +502,7 @@ paths:
       operationId: captureReviewPage
       summary: Queue an immutable page capture
       description: Captures a mapped route at the requested viewport using an isolated browser worker. Captures are read-only and tied to a source snapshot.
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
@@ -520,12 +520,53 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ReviewJobAccepted'
+                $ref: '#/components/schemas/CaptureJobAccepted'
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+
+  /reviews/{reviewId}/captures/{captureId}:
+    get:
+      tags: [Reviews]
+      operationId: getReviewCapture
+      summary: Get capture status and a short-lived screenshot URL
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - in: path
+          name: captureId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Capture state and authorized preview URL
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: false
+                    required: [captureId, status, screenshotUrl, sha256, viewport, safeErrorCode, capturedAt]
+                    properties:
+                      captureId: { type: string, format: uuid }
+                      status: { type: string, enum: [queued, captured, failed] }
+                      screenshotUrl: { type: [string, 'null'], format: uri }
+                      sha256: { type: [string, 'null'], pattern: "^[a-f0-9]{64}$" }
+                      viewport: { $ref: '#/components/schemas/ReviewViewport' }
+                      safeErrorCode: { type: [string, 'null'], maxLength: 64 }
+                      capturedAt: { type: [string, 'null'], format: date-time }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+
   /reviews/{reviewId}/findings:
     post:
       tags: [Reviews]
@@ -770,6 +811,20 @@ components:
           properties:
             jobId: { type: string, format: uuid }
             status: { type: string, enum: [queued, running] }
+
+    CaptureJobAccepted:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [jobId, captureId, status]
+          properties:
+            jobId: { type: string, format: uuid }
+            captureId: { type: string, format: uuid }
+            status: { type: string, enum: [queued] }
     PageMappingRequest:
       type: object
       additionalProperties: false
