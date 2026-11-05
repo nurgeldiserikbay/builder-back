@@ -23,7 +23,7 @@ The design review behavior and security requirements are in [DESIGN_CONFORMANCE.
 
 ## Persistence foundation
 
-The Prisma schema and PostgreSQL migrations define users, hashed sessions and email-verification tokens, workspaces, memberships, projects, and review runs, pages, design sources, captures, jobs, findings, and immutable report versions. Review records have foreign keys to projects and users. Review API handlers are not connected yet. Registration requires `RESEND_API_KEY`, `EMAIL_FROM`, and `PUBLIC_APP_URL`.
+The Prisma schema and PostgreSQL migrations define users, hashed sessions and email-verification tokens, workspaces, memberships, projects, and review runs, pages, design sources, captures, jobs, findings, and immutable report versions. Review records have foreign keys to projects and users. Registration requires `RESEND_API_KEY`, `EMAIL_FROM`, and `PUBLIC_APP_URL`.
 
 The local Compose services use development-only credentials. ClamAV downloads its signature database on first startup, so scanning can take a little while to become ready.
 
@@ -45,7 +45,7 @@ Requires Node.js 22.12+.
 
 ```sh
 cp .env.example .env
-docker compose up -d postgres
+docker compose up -d
 npm install
 npm run db:migrate:deploy
 npm run start:dev
