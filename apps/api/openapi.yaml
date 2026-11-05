@@ -824,7 +824,7 @@ components:
           properties:
             jobId: { type: string, format: uuid }
             captureId: { type: string, format: uuid }
-            status: { type: string, enum: [queued] }
+            status: { type: string, enum: [queued, running, succeeded, failed] }
     PageMappingRequest:
       type: object
       additionalProperties: false
