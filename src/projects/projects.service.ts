@@ -32,6 +32,7 @@ export class ProjectsService {
     startMode: 'build' | 'improve' | 'design_implementation' | 'analysis_only';
     locale: 'en' | 'ru' | 'kk';
   }) {
+    if (!this.isUuid(input.workspaceId)) throw new NotFoundException('WORKSPACE_NOT_FOUND');
     const membership = await this.prisma.workspaceMember.findUnique({
       where: { workspaceId_userId: { workspaceId: input.workspaceId, userId } },
       select: { role: true, status: true },
