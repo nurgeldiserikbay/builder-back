@@ -25,7 +25,7 @@ The design review behavior and security requirements are in [DESIGN_CONFORMANCE.
 
 The Prisma schema and PostgreSQL migrations define users, hashed sessions and email-verification tokens, workspaces, memberships, projects, and review runs, pages, design sources, captures, jobs, findings, and immutable report versions. Review records have foreign keys to projects and users. Review API handlers are not connected yet. Registration requires `RESEND_API_KEY`, `EMAIL_FROM`, and `PUBLIC_APP_URL`.
 
-The local Compose service uses development-only credentials. Start it with `docker compose up -d postgres`.
+The local Compose services use development-only credentials. ClamAV downloads its signature database on first startup, so scanning can take a little while to become ready.
 
 Validate the Prisma schema with:
 
@@ -51,4 +51,4 @@ npm run db:migrate:deploy
 npm run start:dev
 ```
 
-The API listens on port 4000 by default. `/health` reports process status; `/health/ready` reports whether PostgreSQL is reachable. To use design uploads, configure a private S3-compatible bucket and reachable ClamAV daemon with the `DESIGN_ASSETS_*` and `CLAMAV_*` variables. Configure the bucket CORS policy to allow POST and GET from the frontend origin. Upload verification stays unavailable until both providers are configured.
+The API listens on port 4000 by default. `/health` reports process status; `/health/ready` reports whether PostgreSQL is reachable. The Compose stack starts PostgreSQL, a private MinIO bucket, and ClamAV for local design uploads. `minio-init` creates the bucket and applies local frontend CORS rules. Copy `.env.example` to `.env` to use the local endpoints. For a deployed API, configure a private S3-compatible bucket and reachable ClamAV daemon with `DESIGN_ASSETS_*` and `CLAMAV_*`; allow POST and GET from the frontend origin. The example MinIO credentials are development-only.
