@@ -9,13 +9,14 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Shared Prisma 7 PostgreSQL client, graceful shutdown, schema validation, and deployable migrations.
 - Account registration with scrypt password hashing, email verification through Resend, HTTP-only cookie sessions, and logout revocation.
 - Private workspace/project listing and project creation with active membership/role checks.
-- Create and read project-bound review runs with idempotent request replay and membership authorization.\n- Validate public review URLs, enqueue same-origin discovery jobs, and list discovered pages. Run the separate crawler process with `npm run start:worker`; the API does not fetch customer sites.
+- Create and read project-bound review runs with idempotent request replay and membership authorization.
+- Validate public review URLs, enqueue same-origin discovery jobs, and list discovered pages. Run the separate crawler process with `npm run start:worker`; the API does not fetch customer sites.
 - Global validation settings plus explicit request field and enum checks on implemented endpoints.
-- Review target URL policy helper and bounded same-origin discovery core for a future isolated worker. The crawler is not exposed as an API job or connected to a queue.
+- Same-origin discovery runs in the standalone worker with page/depth caps, response-size limits, timeouts, redirect checks, and pinned public-address requests.
 
 ## Contract
 
-The OpenAPI source of truth is [apps/api/openapi.yaml](apps/api/openapi.yaml). Health and database readiness are implemented. Design review creation, private upload lifecycle, page discovery jobs, visual comparison, AI findings, and report operations are still planned.
+The OpenAPI source of truth is [apps/api/openapi.yaml](apps/api/openapi.yaml). Account/project management, review-run creation, URL validation and queueing, page discovery, and page listing are implemented. Private design uploads/Figma import, browser captures, visual and AI comparison, findings, and report generation remain planned.
 
 The design review behavior and security requirements are in [DESIGN_CONFORMANCE.md](https://github.com/nurgeldiserikbay/builder-docs/blob/main/docs/DESIGN_CONFORMANCE.md). Product requirements, architecture, and implementation order live in [builder-docs](https://github.com/nurgeldiserikbay/builder-docs).
 
