@@ -150,7 +150,7 @@ export class ReviewsService {
       socket.on('error', () => done('unavailable'));
       socket.on('data', (chunk) => { response += chunk.toString('utf8'); if (response.includes('OK')) done('clean'); else if (response.includes('FOUND')) done('infected'); else if (response.includes('ERROR')) done('unavailable'); });
       socket.on('connect', () => {
-        socket.write(Buffer.from('zINSTREAM\\0', 'binary'));
+        socket.write(Buffer.from([122, 73, 78, 83, 84, 82, 69, 65, 77, 0]));
         for (let offset = 0; offset < bytes.length; offset += 64 * 1024) {
           const part = bytes.subarray(offset, Math.min(offset + 64 * 1024, bytes.length));
           const header = Buffer.alloc(4); header.writeUInt32BE(part.length); socket.write(header); socket.write(part);
