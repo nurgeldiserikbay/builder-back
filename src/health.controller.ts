@@ -5,6 +5,7 @@ import { PrismaService } from './database/prisma.service.js';
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
+  @Get()
   getHealth(): { data: { status: 'ok'; timestamp: string } } {
     return { data: { status: 'ok', timestamp: new Date().toISOString() } };
   }
