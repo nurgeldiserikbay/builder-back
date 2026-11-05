@@ -170,6 +170,90 @@ export class ReviewsService {
     return { data: { url: await getSignedUrl(client, command, { expiresIn: 300 }), expiresInSeconds: 300 } };
   }
 
+  async queueCapture(userId: string, reviewId: string, input: { pageId: string; viewportWidth: number; viewportHeight: number; deviceScale: number }, idempotencyKey: string) {
+    const review = await this.prisma.reviewRun.findFirst({
+      where: { id: reviewId, project: { members: { some: { userId, status: 'active', role: { not: 'viewer' } } } } },
+      select: { id: true, baseOrigin: true },
+    });
+    if (!review) throw new NotFoundException('REVIEW_NOT_FOUND');
+    if (!review.baseOrigin) throw new ConflictException('REVIEW_SITE_URL_NOT_SET');
+    const page = await this.prisma.reviewPage.findFirst({
+      where: { id: input.pageId, reviewRunId: review.id },
+      select: { id: true, route: true, mapping: { select: { designSourceId: true } } },
+    });
+    if (!page) throw new NotFoundException('REVIEW_PAGE_NOT_FOUND');
+    if (!page.mapping?.designSourceId) throw new ConflictException('PAGE_DESIGN_NOT_MAPPED');
+    const design = await this.prisma.designSource.findFirst({
+      where: { id: page.mapping.designSourceId, reviewRunId: review.id, assetStatus: 'verified' },
+      select: { id: true },
+    });
+    if (!design) throw new ConflictException('PAGE_DESIGN_NOT_VERIFIED');
+    let safeTarget: Awaited<ReturnType<typeof resolveAndValidateReviewTarget>>;
+    try {
+      safeTarget = await resolveAndValidateReviewTarget(page.route);
+    } catch (error) {
+      if (error instanceof ReviewTargetPolicyError) throw new UnprocessableEntityException({ code: error.code });
+      throw error;
+    }
+    if (new URL(safeTarget.url).origin !== review.baseOrigin) throw new UnprocessableEntityException('CAPTURE_TARGET_ORIGIN_MISMATCH');
+
+    const requestHash = createHash('sha256').update(JSON.stringify({ pageId: page.id, targetUrl: safeTarget.url, ...input })).digest('hex');
+    const previous = await this.prisma.reviewJob.findUnique({
+      where: { reviewRunId_idempotencyKey: { reviewRunId: review.id, idempotencyKey } },
+      select: { id: true, jobType: true, result: true },
+    });
+    if (previous) {
+      const result = previous.result && typeof previous.result === 'object' && !Array.isArray(previous.result) ? previous.result as Record<string, unknown> : {};
+      if (previous.jobType !== 'capture_page' || result.requestHash !== requestHash) throw new ConflictException('IDEMPOTENCY_KEY_REUSED');
+      return { data: { jobId: previous.id, captureId: result.captureId, status: 'queued' } };
+    }
+
+    const captureId = randomUUID();
+    const now = new Date();
+    try {
+      const job = await this.prisma.$transaction(async (tx) => {
+        await tx.reviewCapture.create({ data: {
+          id: captureId, pageId: page.id, designSourceId: design.id, status: 'queued',
+          viewportWidth: input.viewportWidth, viewportHeight: input.viewportHeight, deviceScale: input.deviceScale,
+          browserProfile: 'chromium-public-same-origin',
+        } });
+        return tx.reviewJob.create({ data: {
+          reviewRunId: review.id, jobType: 'capture_page', idempotencyKey, correlationId: randomUUID(),
+          result: { captureId, pageId: page.id, targetUrl: safeTarget.url, resolvedAddresses: safeTarget.resolvedAddresses, viewport: input, requestHash },
+          createdAt: now,
+        }, select: { id: true } });
+      });
+      return { data: { jobId: job.id, captureId, status: 'queued' } };
+    } catch (error) {
+      if (!this.isUniqueViolation(error)) throw error;
+      const raced = await this.prisma.reviewJob.findUnique({ where: { reviewRunId_idempotencyKey: { reviewRunId: review.id, idempotencyKey } }, select: { id: true, jobType: true, result: true } });
+      const result = raced?.result && typeof raced.result === 'object' && !Array.isArray(raced.result) ? raced.result as Record<string, unknown> : {};
+      if (!raced || raced.jobType !== 'capture_page' || result.requestHash !== requestHash) throw new ConflictException('IDEMPOTENCY_KEY_REUSED');
+      return { data: { jobId: raced.id, captureId: result.captureId, status: 'queued' } };
+    }
+  }
+
+  async getCapture(userId: string, reviewId: string, captureId: string) {
+    await this.reviewForAsset(userId, reviewId);
+    const capture = await this.prisma.reviewCapture.findFirst({
+      where: { id: captureId, page: { reviewRunId: reviewId } },
+      select: { id: true, status: true, viewportWidth: true, viewportHeight: true, deviceScale: true, assetStorageKey: true, sha256: true, safeErrorCode: true, capturedAt: true },
+    });
+    if (!capture) throw new NotFoundException('REVIEW_CAPTURE_NOT_FOUND');
+    let screenshotUrl: string | null = null;
+    if (capture.status === 'captured' && capture.assetStorageKey) {
+      const { bucket, client } = this.storageConfig();
+      screenshotUrl = await getSignedUrl(client, new GetObjectCommand({
+        Bucket: bucket, Key: capture.assetStorageKey, ResponseContentType: 'image/png', ResponseContentDisposition: 'inline',
+      }), { expiresIn: 300 });
+    }
+    return { data: {
+      captureId: capture.id, status: capture.status, screenshotUrl, sha256: capture.sha256,
+      viewport: { width: capture.viewportWidth, height: capture.viewportHeight, deviceScale: Number(capture.deviceScale) },
+      safeErrorCode: capture.safeErrorCode, capturedAt: capture.capturedAt,
+    } };
+  }
+
   async savePageMapping(userId: string, reviewId: string, pageId: string, input: { designAssetId: string | null; viewportWidth: number; viewportHeight: number; deviceScale: number; requirementIds: string[] }) {
     await this.reviewForAsset(userId, reviewId, true);
     const page = await this.prisma.reviewPage.findFirst({ where: { id: pageId, reviewRunId: reviewId }, select: { id: true, route: true, title: true, status: true, _count: { select: { findings: true } } } });
