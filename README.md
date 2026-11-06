@@ -18,7 +18,8 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Captures are compared with their mapped PNG/JPEG using a bounded deterministic pixel threshold. A private red overlay, changed-pixel percentage, and highest-change regions are saved per capture. This is a visual signal only; it does not determine whether requirements, backend behavior, or the design specification pass.
 - Reviewers can record page findings against a successful capture, with category, severity, note, and optional normalized coordinates; page-scoped finding lists are access-controlled and capped.
 - Each page can keep a manual requirements checklist. Verification status and optional evidence capture are stored together; marking a requirement satisfied requires a successful capture. This does not infer compliance automatically.
-- Authorized users can download a current JSON review report with page coverage, latest capture status, requirement statuses, findings, and explicit limits. The report is a live summary and does not claim AI or backend verification.
+- Authorized users can download a current JSON review report with page coverage, latest capture status, pixel-difference percentages, requirement statuses, findings, and explicit limits. The report is a live summary and does not claim AI or backend verification.
+- Users can connect their own Figma account with OAuth 2.0 and PKCE, import a frame by Figma URL, scan the rendered PNG with ClamAV, and map it to a review page. OAuth tokens are encrypted at rest.
 
 ## Contract
 
@@ -26,9 +27,13 @@ The OpenAPI source of truth is [apps/api/openapi.yaml](apps/api/openapi.yaml). A
 
 The design review behavior and security requirements are in [DESIGN_CONFORMANCE.md](https://github.com/nurgeldiserikbay/builder-docs/blob/main/docs/DESIGN_CONFORMANCE.md). Product requirements, architecture, and implementation order live in [builder-docs](https://github.com/nurgeldiserikbay/builder-docs).
 
+## Figma OAuth setup
+
+Create a Figma OAuth app with the `file_content:read` scope and register the exact frontend callback URL, for example `http://localhost:3000/integrations/figma/callback`. Set `FIGMA_CLIENT_ID`, `FIGMA_CLIENT_SECRET`, and `FIGMA_REDIRECT_URI` on the API. Generate a dedicated 32-byte encryption key with `openssl rand -base64 32` and store it as `FIGMA_TOKEN_ENCRYPTION_KEY`. Keep the OAuth secret and encryption key in the deployment secret manager; do not commit them. Apply the `20261106020000_figma_oauth` migration before enabling the integration.
+
 ## Persistence foundation
 
-The Prisma schema and PostgreSQL migrations define users, hashed sessions and email-verification tokens, workspaces, memberships, projects, and review runs, pages, design sources, captures, jobs, findings, and immutable report versions. Review records have foreign keys to projects and users. Registration requires `RESEND_API_KEY`, `EMAIL_FROM`, and `PUBLIC_APP_URL`.
+The Prisma schema and PostgreSQL migrations define users, hashed sessions and email-verification tokens, encrypted per-user Figma OAuth connections and short-lived OAuth states, workspaces, memberships, projects, review runs, pages, design sources, captures, jobs, findings, and report versions. Review records have foreign keys to projects and users. Registration requires `RESEND_API_KEY`, `EMAIL_FROM`, and `PUBLIC_APP_URL`.
 
 The local Compose services use development-only credentials. ClamAV downloads its signature database on first startup, so scanning can take a little while to become ready.
 
