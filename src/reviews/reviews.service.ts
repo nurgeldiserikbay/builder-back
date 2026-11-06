@@ -21,6 +21,8 @@ const reviewSelect = {
 
 @Injectable()
 export class ReviewsService {
+  private readonly figmaRefreshes = new Map<string, Promise<string>>();
+
   constructor(private readonly prisma: PrismaService) {}
 
   private storageConfig() {
@@ -601,6 +603,100 @@ export class ReviewsService {
     }
   }
 
+  private async getUsableFigmaAccessToken(userId: string): Promise<string> {
+    const connection = await this.prisma.figmaConnection.findUnique({
+      where: { userId },
+      select: { accessTokenEncrypted: true, refreshTokenEncrypted: true, accessTokenExpiresAt: true },
+    });
+    if (!connection) throw new ConflictException('FIGMA_NOT_CONNECTED');
+    const config = this.figmaConfig();
+    if (connection.accessTokenExpiresAt.getTime() > Date.now() + 30_000) {
+      return this.decryptFigmaToken(connection.accessTokenEncrypted, config.key);
+    }
+
+    const pending = this.figmaRefreshes.get(userId);
+    if (pending) return pending;
+    const refresh = this.refreshFigmaAccessToken(userId, connection, config);
+    this.figmaRefreshes.set(userId, refresh);
+    try {
+      return await refresh;
+    } finally {
+      if (this.figmaRefreshes.get(userId) === refresh) this.figmaRefreshes.delete(userId);
+    }
+  }
+
+  private async refreshFigmaAccessToken(
+    userId: string,
+    previous: { accessTokenEncrypted: string; refreshTokenEncrypted: string; accessTokenExpiresAt: Date },
+    config: ReturnType<ReviewsService['figmaConfig']>,
+  ): Promise<string> {
+    let refreshToken: string;
+    try {
+      refreshToken = this.decryptFigmaToken(previous.refreshTokenEncrypted, config.key);
+    } catch {
+      throw new ConflictException('FIGMA_RECONNECT_REQUIRED');
+    }
+
+    let response: Response;
+    try {
+      response = await fetch('https://api.figma.com/v1/oauth/token', {
+        method: 'POST',
+        headers: {
+          Authorization: 'Basic ' + Buffer.from(config.clientId + ':' + config.clientSecret).toString('base64'),
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+        },
+        body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(20_000),
+      });
+    } catch {
+      throw new ServiceUnavailableException('FIGMA_TOKEN_REFRESH_UNAVAILABLE');
+    }
+
+    if (!response.ok) {
+      if (response.status === 429 || response.status >= 500) {
+        throw new ServiceUnavailableException('FIGMA_TOKEN_REFRESH_UNAVAILABLE');
+      }
+      throw new ConflictException('FIGMA_RECONNECT_REQUIRED');
+    }
+    const body: unknown = await response.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      throw new ServiceUnavailableException('FIGMA_TOKEN_REFRESH_UNAVAILABLE');
+    }
+    const tokens = body as Record<string, unknown>;
+    const accessToken = tokens.access_token;
+    const expiresIn = tokens.expires_in;
+    if (typeof accessToken !== 'string' || !accessToken || typeof expiresIn !== 'number'
+      || !Number.isFinite(expiresIn) || expiresIn < 60 || expiresIn > 31_536_000) {
+      throw new ServiceUnavailableException('FIGMA_TOKEN_REFRESH_UNAVAILABLE');
+    }
+    const newRefreshToken = typeof tokens.refresh_token === 'string' && tokens.refresh_token
+      ? tokens.refresh_token
+      : refreshToken;
+    const expiresAt = new Date(Date.now() + expiresIn * 1000);
+    const updated = await this.prisma.figmaConnection.updateMany({
+      where: { userId, accessTokenEncrypted: previous.accessTokenEncrypted },
+      data: {
+        accessTokenEncrypted: this.encryptFigmaToken(accessToken, config.key),
+        refreshTokenEncrypted: this.encryptFigmaToken(newRefreshToken, config.key),
+        accessTokenExpiresAt: expiresAt,
+      },
+    });
+    if (updated.count === 1) return accessToken;
+
+    // Another API instance refreshed this connection while this request was in flight.
+    const current = await this.prisma.figmaConnection.findUnique({
+      where: { userId },
+      select: { accessTokenEncrypted: true, accessTokenExpiresAt: true },
+    });
+    if (!current) throw new ConflictException('FIGMA_NOT_CONNECTED');
+    if (current.accessTokenExpiresAt.getTime() <= Date.now() + 30_000) {
+      throw new ServiceUnavailableException('FIGMA_TOKEN_REFRESH_UNAVAILABLE');
+    }
+    return this.decryptFigmaToken(current.accessTokenEncrypted, config.key);
+  }
+
   async startFigmaConnection(userId: string) {
     const config = this.figmaConfig();
     const state = randomBytes(32).toString('base64url');
@@ -752,14 +848,7 @@ export class ReviewsService {
       return { data: { assetId: existing.id, status: 'verified', fileKey, nodeId } };
     }
 
-    const connection = await this.prisma.figmaConnection.findUnique({
-      where: { userId },
-      select: { accessTokenEncrypted: true, accessTokenExpiresAt: true },
-    });
-    if (!connection) throw new ConflictException('FIGMA_NOT_CONNECTED');
-    if (connection.accessTokenExpiresAt.getTime() <= Date.now() + 30_000) throw new ConflictException('FIGMA_RECONNECT_REQUIRED');
-    const config = this.figmaConfig();
-    const accessToken = this.decryptFigmaToken(connection.accessTokenEncrypted, config.key);
+    const accessToken = await this.getUsableFigmaAccessToken(userId);
 
     let exportResponse: Response;
     try {
