@@ -913,7 +913,7 @@ export class ReviewsService {
     const sha256 = createHash('sha256').update(imageBytes).digest('hex');
     const storageKey = `${reviewId}/figma/${randomUUID()}.png`;
     const { bucket, client } = this.storageConfig();
-    let source: { id: string };
+    let source: { id: string } | undefined;
     try {
       source = await this.prisma.designSource.create({
         data: {
@@ -928,6 +928,10 @@ export class ReviewsService {
         Metadata: { sha256, source: 'figma-import' },
       }));
     } catch (error) {
+      if (source) {
+        await this.prisma.designSource.deleteMany({ where: { id: source.id, assetStatus: 'pending' } }).catch(() => undefined);
+      }
+      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: storageKey })).catch(() => undefined);
       await client.destroy();
       throw error;
     }
@@ -935,15 +939,27 @@ export class ReviewsService {
 
     try {
       await this.completeDesignUpload(userId, reviewId, source.id);
-      await this.savePageMapping(userId, reviewId, page.id, {
-        designAssetId: source.id, viewportWidth: input.viewportWidth, viewportHeight: input.viewportHeight,
-        deviceScale: input.deviceScale, requirementIds: page.mapping?.requirementIds ?? [],
-      });
-      return { data: { assetId: source.id, status: 'verified', fileKey, nodeId } };
     } catch (error) {
-      if (error instanceof ServiceUnavailableException || error instanceof UnprocessableEntityException || error instanceof ConflictException) throw error;
+      const asset = await this.prisma.designSource.findUnique({
+        where: { id: source.id },
+        select: { assetStatus: true },
+      }).catch(() => null);
+      if (asset?.assetStatus === 'pending' || asset?.assetStatus === 'scanning') {
+        await this.prisma.designSource.deleteMany({
+          where: { id: source.id, assetStatus: { in: ['pending', 'scanning'] } },
+        }).catch(() => undefined);
+        const cleanup = this.storageConfig();
+        await cleanup.client.send(new DeleteObjectCommand({ Bucket: cleanup.bucket, Key: storageKey })).catch(() => undefined);
+        await cleanup.client.destroy();
+      }
       throw error;
     }
+
+    await this.savePageMapping(userId, reviewId, page.id, {
+      designAssetId: source.id, viewportWidth: input.viewportWidth, viewportHeight: input.viewportHeight,
+      deviceScale: input.deviceScale, requirementIds: page.mapping?.requirementIds ?? [],
+    });
+    return { data: { assetId: source.id, status: 'verified', fileKey, nodeId } };
   }
 
   async getReport(userId: string, reviewId: string) {
