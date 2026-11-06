@@ -1314,8 +1314,7 @@ components:
             assetId: { type: string, format: uuid }
             status: { const: verified }
             fileKey: { type: string, maxLength: 128 }
-            nodeId: { type: string, pattern: '^\\d+:\\d+
-      type: object
+            nodeId: { type: string, pattern: '^[0-9]+:[0-9]+$' }
       additionalProperties: false
       required: [data]
       properties:
