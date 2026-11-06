@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, HttpStatus, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { ReviewsService } from './reviews.service.js';
@@ -75,6 +75,53 @@ export class ReviewsController {
     rejectUnknown(body, ['url']);
     const url = requiredString(body, 'url', 1, 2048);
     return this.reviews.registerUrl(request.user.id, reviewId, url, idempotencyKey);
+  }
+
+  @Get('integrations/figma/status')
+  getFigmaStatus(@Req() request: AuthenticatedRequest) {
+    return this.reviews.getFigmaConnectionStatus(request.user.id);
+  }
+
+  @Post('integrations/figma/connect')
+  startFigmaConnection(@Req() request: AuthenticatedRequest) {
+    return this.reviews.startFigmaConnection(request.user.id);
+  }
+
+  @Post('integrations/figma/callback')
+  async completeFigmaConnection(@Req() request: AuthenticatedRequest, @Body() raw: unknown) {
+    const body = parseBody(raw);
+    rejectUnknown(body, ['code', 'state']);
+    return this.reviews.completeFigmaConnection(
+      request.user.id,
+      requiredString(body, 'code', 1, 4096),
+      requiredString(body, 'state', 32, 128),
+    );
+  }
+
+  @Delete('integrations/figma/connection')
+  disconnectFigma(@Req() request: AuthenticatedRequest) {
+    return this.reviews.disconnectFigma(request.user.id);
+  }
+
+  @Post('reviews/:reviewId/sources/figma-import')
+  async importFigmaFrame(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Body() raw: unknown) {
+    if (!isUuid(reviewId)) throw new BadRequestException('INVALID_REVIEW_ID');
+    const body = parseBody(raw);
+    rejectUnknown(body, ['pageId', 'figmaUrl', 'viewport']);
+    const pageId = requiredString(body, 'pageId', 36, 36);
+    if (!isUuid(pageId)) throw new BadRequestException('INVALID_PAGE_ID');
+    const figmaUrl = requiredString(body, 'figmaUrl', 1, 2048);
+    const viewport = parseBody(body.viewport);
+    rejectUnknown(viewport, ['width', 'height', 'deviceScale']);
+    const width = viewport.width;
+    const height = viewport.height;
+    const deviceScale = viewport.deviceScale;
+    if (typeof width !== 'number' || !Number.isInteger(width) || width < 320 || width > 3840) throw new BadRequestException('INVALID_VIEWPORT_WIDTH');
+    if (typeof height !== 'number' || !Number.isInteger(height) || height < 568 || height > 4320) throw new BadRequestException('INVALID_VIEWPORT_HEIGHT');
+    if (typeof deviceScale !== 'number' || !Number.isFinite(deviceScale) || deviceScale < 1 || deviceScale > 3) throw new BadRequestException('INVALID_DEVICE_SCALE');
+    return this.reviews.importFigmaFrame(request.user.id, reviewId, {
+      pageId, figmaUrl, viewportWidth: width, viewportHeight: height, deviceScale,
+    });
   }
 
   @Post('reviews/:reviewId/sources/design-upload')
