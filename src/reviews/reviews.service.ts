@@ -578,7 +578,7 @@ export class ReviewsService {
           select: {
             id: true, route: true, title: true, status: true,
             mapping: { select: { designSourceId: true } },
-            captures: { orderBy: [{ createdAt: 'desc' }], take: 1, select: { status: true, capturedAt: true } },
+            captures: { orderBy: [{ createdAt: 'desc' }], take: 1, select: { status: true, capturedAt: true, visualDiff: true } },
             requirements: {
               orderBy: [{ createdAt: 'asc' }],
               take: 200,
@@ -602,16 +602,37 @@ export class ReviewsService {
       }, {});
     const requirements = review.pages.flatMap((page) => page.requirements);
     const findings = review.pages.flatMap((page) => page.findings);
-    const pages = review.pages.map((page) => ({
-      id: page.id,
-      route: page.route,
-      title: page.title,
-      status: page.status,
-      designMapped: Boolean(page.mapping?.designSourceId),
-      latestCapture: page.captures[0] ?? null,
-      requirements: page.requirements,
-      findings: page.findings,
-    }));
+    const pages = review.pages.map((page) => {
+      const capture = page.captures[0] ?? null;
+      let visualDiff: { status: 'ready' | 'failed'; changedPercent: number | null } | null = null;
+      if (capture?.visualDiff && typeof capture.visualDiff === 'object' && !Array.isArray(capture.visualDiff)) {
+        const storedDiff = capture.visualDiff as Record<string, unknown>;
+        if (storedDiff.status === 'ready' || storedDiff.status === 'failed') {
+          const rawPercent = storedDiff.changedPercent;
+          visualDiff = {
+            status: storedDiff.status,
+            changedPercent: typeof rawPercent === 'number' && Number.isFinite(rawPercent)
+              ? Math.round(Math.max(0, Math.min(100, rawPercent)) * 10) / 10
+              : null,
+          };
+        }
+      }
+      return {
+        id: page.id,
+        route: page.route,
+        title: page.title,
+        status: page.status,
+        designMapped: Boolean(page.mapping?.designSourceId),
+        latestCapture: capture ? { status: capture.status, capturedAt: capture.capturedAt, visualDiff } : null,
+        requirements: page.requirements,
+        findings: page.findings,
+      };
+    });
+    const comparedPages = pages.filter((page) => page.latestCapture?.visualDiff?.status === 'ready'
+      && page.latestCapture.visualDiff.changedPercent !== null);
+    const averageChangedPercent = comparedPages.length > 0
+      ? Math.round(comparedPages.reduce((sum, page) => sum + (page.latestCapture?.visualDiff?.changedPercent ?? 0), 0) / comparedPages.length * 10) / 10
+      : null;
 
     return {
       data: {
@@ -634,6 +655,7 @@ export class ReviewsService {
             mapped: pages.filter((page) => page.designMapped).length,
             captured: pages.filter((page) => page.latestCapture?.status === 'captured').length,
           },
+          visualDiff: { compared: comparedPages.length, averageChangedPercent },
           requirements: { total: requirements.length, byStatus: countStatuses(requirements) },
           findings: { total: findings.length, byStatus: countStatuses(findings) },
         },
