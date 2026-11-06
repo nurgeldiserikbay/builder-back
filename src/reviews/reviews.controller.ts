@@ -240,6 +240,12 @@ export class ReviewsController {
     return this.reviews.getCapture(request.user.id, reviewId, captureId);
   }
 
+  @Get('reviews/:reviewId/report')
+  async getReport(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string) {
+    if (!isUuid(reviewId)) throw new BadRequestException('INVALID_REVIEW_ID');
+    return this.reviews.getReport(request.user.id, reviewId);
+  }
+
   @Get('reviews/:reviewId')
   get(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string) {
     return this.reviews.get(request.user.id, reviewId);
