@@ -17,6 +17,7 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Mapped pages can queue disposable Chromium captures at the saved viewport. HTTP resources are limited to pinned, public, same-origin GET requests; service workers, WebSockets, downloads, and browser credentials are disabled. Captures are stored privately with a checksum and short-lived preview URLs.
 - Captures are compared with their mapped PNG/JPEG using a bounded deterministic pixel threshold. A private red overlay, changed-pixel percentage, and highest-change regions are saved per capture. This is a visual signal only; it does not determine whether requirements, backend behavior, or the design specification pass.
 - Reviewers can record page findings against a successful capture, with category, severity, note, and optional normalized coordinates; page-scoped finding lists are access-controlled and capped.
+- Each page can keep a manual requirements checklist. Verification status and optional evidence capture are stored together; marking a requirement satisfied requires a successful capture. This does not infer compliance automatically.
 
 ## Contract
 
