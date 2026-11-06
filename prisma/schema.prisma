@@ -82,6 +82,14 @@ enum ReviewFindingStatus {
   unknown
 }
 
+enum ReviewRequirementStatus {
+  pending
+  satisfied
+  failed
+  blocked
+  unknown
+}
+
 enum ReviewConfidence {
   high
   medium
@@ -173,6 +181,7 @@ model User {
   projectMemberships        ProjectMember[]
   ownedReviewRuns           ReviewRun[]               @relation("ReviewRunOwner")
   authoredFindings          ReviewFinding[]           @relation("FindingAuthor")
+  authoredRequirements      ReviewRequirement[]       @relation("RequirementAuthor")
   assignedFindings          ReviewFinding[]           @relation("FindingAssignee")
   authoredPageMappings      PageDesignMapping[]      @relation("MappingAuthor")
   idempotencyRecords        IdempotencyRecord[]
@@ -333,6 +342,7 @@ model ReviewRun {
   designSources     DesignSource[]
   jobs              ReviewJob[]
   findings          ReviewFinding[]
+  requirements      ReviewRequirement[]
   reports           ReviewReport[]
   project           Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
   owner             User         @relation("ReviewRunOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
@@ -357,6 +367,7 @@ model ReviewPage {
   mapping         PageDesignMapping?
   captures        ReviewCapture[]
   findings        ReviewFinding[]
+  requirements    ReviewRequirement[]
 
   @@unique([reviewRunId, route], map: "review_pages_run_route_key")
   @@index([reviewRunId, status], map: "review_pages_run_status_idx")
@@ -426,6 +437,7 @@ model ReviewCapture {
   createdAt        DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   page             ReviewPage          @relation(fields: [pageId], references: [id], onDelete: Cascade)
   designSource     DesignSource?       @relation(fields: [designSourceId], references: [id], onDelete: SetNull)
+  requirementEvidence ReviewRequirement[]
 
   @@index([pageId, createdAt(sort: Desc)], map: "review_captures_page_created_idx")
   @@index([status, createdAt], map: "review_captures_status_created_idx")
@@ -478,6 +490,29 @@ model ReviewFinding {
   @@index([reviewRunId, status, severity], map: "review_findings_run_status_severity_idx")
   @@index([pageId, createdAt], map: "review_findings_page_created_idx")
   @@map("review_findings")
+}
+
+model ReviewRequirement {
+  id                String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewRunId       String                   @map("review_run_id") @db.Uuid
+  pageId            String?                  @map("page_id") @db.Uuid
+  category          ReviewFindingCategory     @default(requirement)
+  title             String                   @db.VarChar(500)
+  details           String?                  @db.Text
+  status            ReviewRequirementStatus  @default(pending)
+  verificationNote  String?                  @map("verification_note") @db.VarChar(2000)
+  evidenceCaptureId String?                  @map("evidence_capture_id") @db.Uuid
+  authorUserId      String                   @map("author_user_id") @db.Uuid
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime                 @updatedAt @map("updated_at") @db.Timestamptz(3)
+  reviewRun         ReviewRun               @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+  page              ReviewPage?             @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  evidenceCapture   ReviewCapture?          @relation(fields: [evidenceCaptureId], references: [id], onDelete: SetNull)
+  author            User                    @relation("RequirementAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+
+  @@index([reviewRunId, pageId, status], map: "review_requirements_run_page_status_idx")
+  @@index([evidenceCaptureId], map: "review_requirements_capture_idx")
+  @@map("review_requirements")
 }
 
 model ReviewReport {
