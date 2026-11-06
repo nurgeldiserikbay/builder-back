@@ -341,6 +341,21 @@ export class ReviewsService {
     }
   }
 
+  async updateFindingStatus(userId: string, reviewId: string, findingId: string, status: 'open' | 'accepted' | 'dismissed' | 'fixed' | 'unknown') {
+    await this.reviewForAsset(userId, reviewId, true);
+    const finding = await this.prisma.reviewFinding.findFirst({
+      where: { id: findingId, reviewRunId: reviewId },
+      select: { id: true },
+    });
+    if (!finding) throw new NotFoundException('REVIEW_FINDING_NOT_FOUND');
+    const updated = await this.prisma.reviewFinding.update({
+      where: { id: finding.id },
+      data: { status },
+      select: { id: true, pageId: true, category: true, severity: true, status: true, confidence: true, summary: true, coordinates: true, evidence: true, createdAt: true, updatedAt: true },
+    });
+    return { data: updated };
+  }
+
   async listFindings(userId: string, reviewId: string, pageId: string) {
     await this.reviewForAsset(userId, reviewId);
     const page = await this.prisma.reviewPage.findFirst({ where: { id: pageId, reviewRunId: reviewId }, select: { id: true } });
