@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { ReviewsService } from './reviews.service.js';
@@ -182,6 +182,16 @@ export class ReviewsController {
       summary,
       coordinate,
     });
+  }
+
+  @Patch('reviews/:reviewId/findings/:findingId')
+  async updateFinding(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('findingId') findingId: string, @Body() raw: unknown) {
+    if (!isUuid(reviewId) || !isUuid(findingId)) throw new BadRequestException('INVALID_FINDING_ID');
+    const body = parseBody(raw);
+    rejectUnknown(body, ['status']);
+    const statuses = ['open', 'accepted', 'dismissed', 'fixed', 'unknown'] as const;
+    if (!statuses.includes(body.status as (typeof statuses)[number])) throw new BadRequestException('INVALID_FINDING_STATUS');
+    return this.reviews.updateFindingStatus(request.user.id, reviewId, findingId, body.status as (typeof statuses)[number]);
   }
 
   @Get('reviews/:reviewId/captures/:captureId')
