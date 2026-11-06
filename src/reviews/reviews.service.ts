@@ -564,6 +564,90 @@ export class ReviewsService {
 
 
 
+  async getReport(userId: string, reviewId: string) {
+    if (!this.isUuid(reviewId)) throw new NotFoundException('REVIEW_NOT_FOUND');
+    const review = await this.prisma.reviewRun.findFirst({
+      where: { id: reviewId, project: { members: { some: { userId, status: 'active' } } } },
+      select: {
+        id: true, projectId: true, title: true, mode: true, status: true, locale: true,
+        baseOrigin: true, createdAt: true, updatedAt: true,
+        pages: {
+          where: { status: { not: 'excluded' } },
+          orderBy: [{ route: 'asc' }],
+          take: 100,
+          select: {
+            id: true, route: true, title: true, status: true,
+            mapping: { select: { designSourceId: true } },
+            captures: { orderBy: [{ createdAt: 'desc' }], take: 1, select: { status: true, capturedAt: true } },
+            requirements: {
+              orderBy: [{ createdAt: 'asc' }],
+              take: 200,
+              select: { id: true, category: true, title: true, status: true, verificationNote: true, evidenceCaptureId: true },
+            },
+            findings: {
+              orderBy: [{ createdAt: 'desc' }],
+              take: 100,
+              select: { id: true, category: true, severity: true, status: true, summary: true, createdAt: true },
+            },
+          },
+        },
+      },
+    });
+    if (!review) throw new NotFoundException('REVIEW_NOT_FOUND');
+
+    const countStatuses = (items: Array<{ status: string }>) =>
+      items.reduce<Record<string, number>>((counts, item) => {
+        counts[item.status] = (counts[item.status] ?? 0) + 1;
+        return counts;
+      }, {});
+    const requirements = review.pages.flatMap((page) => page.requirements);
+    const findings = review.pages.flatMap((page) => page.findings);
+    const pages = review.pages.map((page) => ({
+      id: page.id,
+      route: page.route,
+      title: page.title,
+      status: page.status,
+      designMapped: Boolean(page.mapping?.designSourceId),
+      latestCapture: page.captures[0] ?? null,
+      requirements: page.requirements,
+      findings: page.findings,
+    }));
+
+    return {
+      data: {
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        review: {
+          id: review.id,
+          projectId: review.projectId,
+          title: review.title,
+          mode: review.mode,
+          status: review.status,
+          locale: review.locale,
+          siteOrigin: review.baseOrigin,
+          createdAt: review.createdAt,
+          updatedAt: review.updatedAt,
+        },
+        summary: {
+          pages: {
+            total: pages.length,
+            mapped: pages.filter((page) => page.designMapped).length,
+            captured: pages.filter((page) => page.latestCapture?.status === 'captured').length,
+          },
+          requirements: { total: requirements.length, byStatus: countStatuses(requirements) },
+          findings: { total: findings.length, byStatus: countStatuses(findings) },
+        },
+        pages,
+        limitations: [
+          'Visual comparison reports pixel differences only; it does not determine semantic design compliance.',
+          'Requirement statuses are reviewer-entered and are not inferred automatically.',
+          'Backend/API behavior and AI analysis are not evaluated by this report.',
+          'Page, requirement, and finding lists are capped at 100, 200 per page, and 100 per page respectively.',
+        ],
+      },
+    };
+  }
+
   async listPages(userId: string, reviewId: string) {
     if (!this.isUuid(reviewId)) throw new NotFoundException('REVIEW_NOT_FOUND');
     const review = await this.prisma.reviewRun.findFirst({
