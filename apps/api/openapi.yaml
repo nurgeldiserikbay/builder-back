@@ -596,13 +596,37 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
 
+  /reviews/{reviewId}/pages/{pageId}/findings:
+    get:
+      tags: [Reviews]
+      operationId: listReviewPageFindings
+      summary: List manual findings for a page
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - in: path
+          name: pageId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Page findings with captured evidence references
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewFindingListResponse'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /reviews/{reviewId}/findings:
     post:
       tags: [Reviews]
       operationId: createReviewFinding
       summary: Add a manual finding or annotation
       description: Coordinates are relative to the immutable capture identified in the request; findings remain scoped to the current project.
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
@@ -944,16 +968,40 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [id, category, severity, status, summary, createdAt, updatedAt]
+          required: [id, pageId, category, severity, status, confidence, summary, coordinates, evidence, createdAt, updatedAt]
           properties:
             id: { type: string, format: uuid }
             pageId: { type: [string, 'null'], format: uuid }
             category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security] }
             severity: { type: string, enum: [critical, high, medium, low, info] }
             status: { type: string, enum: [open, accepted, dismissed, fixed, unknown] }
-            summary: { type: string }
+            confidence: { type: string, enum: [high, medium, low] }
+            summary: { type: string, maxLength: 500 }
+            coordinates:
+              type: [object, 'null']
+              additionalProperties: false
+              required: [x, y]
+              properties:
+                x: { type: number, minimum: 0, maximum: 1 }
+                y: { type: number, minimum: 0, maximum: 1 }
+            evidence:
+              type: object
+              additionalProperties: false
+              required: [captureId]
+              properties:
+                captureId: { type: string, format: uuid }
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
+    ReviewFindingListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ReviewFindingResponse/properties/data'
     ReviewExportRequest:
       type: object
       additionalProperties: false
