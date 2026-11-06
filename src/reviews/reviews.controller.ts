@@ -147,6 +147,46 @@ export class ReviewsController {
     return this.reviews.queueCapture(request.user.id, reviewId, { pageId, viewportWidth: width, viewportHeight: height, deviceScale }, idempotencyKey);
   }
 
+  @Post('reviews/:reviewId/requirements')
+  async createRequirement(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Headers('idempotency-key') idempotencyKey: string | undefined, @Body() raw: unknown) {
+    if (!isUuid(reviewId)) throw new BadRequestException('INVALID_REVIEW_ID');
+    if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 128) throw new BadRequestException('INVALID_IDEMPOTENCY_KEY');
+    const body = parseBody(raw);
+    rejectUnknown(body, ['pageId', 'title', 'category', 'details']);
+    const pageId = requiredString(body, 'pageId', 36, 36);
+    if (!isUuid(pageId)) throw new BadRequestException('INVALID_PAGE_ID');
+    const title = requiredString(body, 'title', 1, 500).trim();
+    if (!title) throw new BadRequestException('INVALID_REQUIREMENT_TITLE');
+    const categories = ['requirement', 'design', 'backend', 'accessibility', 'performance', 'seo', 'security'] as const;
+    const category = body.category ?? 'requirement';
+    if (!categories.includes(category as (typeof categories)[number])) throw new BadRequestException('INVALID_REQUIREMENT_CATEGORY');
+    const details = body.details === undefined || body.details === null ? null : requiredString(body, 'details', 0, 4000);
+    return this.reviews.createRequirement(request.user.id, reviewId, idempotencyKey, {
+      pageId, title, category: category as (typeof categories)[number], details,
+    });
+  }
+
+  @Get('reviews/:reviewId/pages/:pageId/requirements')
+  async listRequirements(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('pageId') pageId: string) {
+    if (!isUuid(reviewId) || !isUuid(pageId)) throw new BadRequestException('INVALID_REVIEW_PAGE_ID');
+    return this.reviews.listRequirements(request.user.id, reviewId, pageId);
+  }
+
+  @Patch('reviews/:reviewId/requirements/:requirementId')
+  async updateRequirement(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('requirementId') requirementId: string, @Body() raw: unknown) {
+    if (!isUuid(reviewId) || !isUuid(requirementId)) throw new BadRequestException('INVALID_REQUIREMENT_ID');
+    const body = parseBody(raw);
+    rejectUnknown(body, ['status', 'verificationNote', 'evidenceCaptureId']);
+    const statuses = ['pending', 'satisfied', 'failed', 'blocked', 'unknown'] as const;
+    if (!statuses.includes(body.status as (typeof statuses)[number])) throw new BadRequestException('INVALID_REQUIREMENT_STATUS');
+    const verificationNote = body.verificationNote === undefined || body.verificationNote === null ? null : requiredString(body, 'verificationNote', 0, 2000);
+    const evidenceCaptureId = body.evidenceCaptureId ?? null;
+    if (evidenceCaptureId !== null && (typeof evidenceCaptureId !== 'string' || !isUuid(evidenceCaptureId))) throw new BadRequestException('INVALID_EVIDENCE_CAPTURE_ID');
+    return this.reviews.updateRequirement(request.user.id, reviewId, requirementId, {
+      status: body.status as (typeof statuses)[number], verificationNote, evidenceCaptureId: evidenceCaptureId as string | null,
+    });
+  }
+
   @Get('reviews/:reviewId/pages/:pageId/findings')
   async listFindings(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('pageId') pageId: string) {
     if (!isUuid(reviewId) || !isUuid(pageId)) throw new BadRequestException('INVALID_REVIEW_PAGE_ID');
