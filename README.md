@@ -29,7 +29,7 @@ The design review behavior and security requirements are in [DESIGN_CONFORMANCE.
 
 ## Figma OAuth setup
 
-Create a Figma OAuth app with the `file_content:read` scope and register the exact frontend callback URL, for example `http://localhost:3000/integrations/figma/callback`. Set `FIGMA_CLIENT_ID`, `FIGMA_CLIENT_SECRET`, and `FIGMA_REDIRECT_URI` on the API. Generate a dedicated 32-byte encryption key with `openssl rand -base64 32` and store it as `FIGMA_TOKEN_ENCRYPTION_KEY`. Keep the OAuth secret and encryption key in the deployment secret manager; do not commit them. Apply the `20261106020000_figma_oauth` migration before enabling the integration.
+Create a Figma OAuth app with the `file_content:read` scope and register the exact frontend callback URL, for example `http://localhost:3000/integrations/figma/callback`. Set `FIGMA_CLIENT_ID`, `FIGMA_CLIENT_SECRET`, and `FIGMA_REDIRECT_URI` on the API. Generate a dedicated 32-byte encryption key with `openssl rand -base64 32` and store it as `FIGMA_TOKEN_ENCRYPTION_KEY`. Keep the OAuth secret and encryption key in the deployment secret manager; do not commit them. Apply the `20261106020000_figma_oauth` migration before enabling the integration. The API refreshes expired access tokens automatically during imports and stores replacement tokens encrypted; if Figma revokes the grant, the user must reconnect.
 
 ## Persistence foundation
 
