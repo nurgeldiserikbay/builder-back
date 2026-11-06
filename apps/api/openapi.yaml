@@ -596,6 +596,92 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
 
+  /reviews/{reviewId}/requirements:
+    post:
+      tags: [Reviews]
+      operationId: createReviewRequirement
+      summary: Add a requirement to a page checklist
+      description: Requirements are manually entered and remain unverified until a reviewer attaches captured evidence and marks them satisfied.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReviewRequirementRequest'
+      responses:
+        '201':
+          description: Requirement created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewRequirementResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/pages/{pageId}/requirements:
+    get:
+      tags: [Reviews]
+      operationId: listPageRequirements
+      summary: List page requirements and evidence status
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - in: path
+          name: pageId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Page requirements
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewRequirementListResponse'
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/requirements/{requirementId}:
+    patch:
+      tags: [Reviews]
+      operationId: updateReviewRequirement
+      summary: Set requirement status and captured evidence
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - in: path
+          name: requirementId
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReviewRequirementRequest'
+      responses:
+        '200':
+          description: Requirement and evidence status updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewRequirementResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /reviews/{reviewId}/pages/{pageId}/findings:
     get:
       tags: [Reviews]
@@ -958,6 +1044,53 @@ components:
       required: [status]
       properties:
         status: { type: string, enum: [open, accepted, dismissed, fixed, unknown] }
+    CreateReviewRequirementRequest:
+      type: object
+      additionalProperties: false
+      required: [pageId, title]
+      properties:
+        pageId: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 500 }
+        category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security], default: requirement }
+        details: { type: [string, 'null'], maxLength: 4000 }
+    UpdateReviewRequirementRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [pending, satisfied, failed, blocked, unknown] }
+        verificationNote: { type: [string, 'null'], maxLength: 2000 }
+        evidenceCaptureId: { type: [string, 'null'], format: uuid }
+    ReviewRequirementResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [id, pageId, category, title, details, status, verificationNote, evidenceCaptureId, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            pageId: { type: [string, 'null'], format: uuid }
+            category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security] }
+            title: { type: string, maxLength: 500 }
+            details: { type: [string, 'null'] }
+            status: { type: string, enum: [pending, satisfied, failed, blocked, unknown] }
+            verificationNote: { type: [string, 'null'], maxLength: 2000 }
+            evidenceCaptureId: { type: [string, 'null'], format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    ReviewRequirementListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/ReviewRequirementResponse/properties/data'
     ReviewFindingResponse:
       type: object
       additionalProperties: false
