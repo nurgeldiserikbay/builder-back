@@ -341,6 +341,104 @@ export class ReviewsService {
     }
   }
 
+  async createRequirement(userId: string, reviewId: string, idempotencyKey: string, input: {
+    pageId: string;
+    title: string;
+    category: 'requirement' | 'design' | 'backend' | 'accessibility' | 'performance' | 'seo' | 'security';
+    details?: string | null;
+  }) {
+    await this.reviewForAsset(userId, reviewId, true);
+    const page = await this.prisma.reviewPage.findFirst({
+      where: { id: input.pageId, reviewRunId: reviewId },
+      select: { id: true },
+    });
+    if (!page) throw new NotFoundException('REVIEW_PAGE_NOT_FOUND');
+    const normalized = { ...input, title: input.title.trim(), details: input.details?.trim() || null };
+    const requestHash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+    const scope = `requirement:create:${reviewId}`;
+    const now = new Date();
+    const select = { id: true, pageId: true, category: true, title: true, details: true, status: true, verificationNote: true, evidenceCaptureId: true, createdAt: true, updatedAt: true } as const;
+    const persist = () => this.prisma.$transaction(async (tx) => {
+      const previous = await tx.idempotencyRecord.findUnique({
+        where: { userId_scope_key: { userId, scope, key: idempotencyKey } },
+      });
+      if (previous && previous.expiresAt > now) {
+        if (previous.requestHash !== requestHash) throw new ConflictException('IDEMPOTENCY_KEY_REUSED');
+        const existing = await tx.reviewRequirement.findFirst({ where: { id: previous.resourceId, reviewRunId: reviewId }, select });
+        if (existing) return existing;
+      }
+      if (previous) await tx.idempotencyRecord.delete({ where: { id: previous.id } });
+      const requirement = await tx.reviewRequirement.create({
+        data: {
+          reviewRunId: reviewId, pageId: page.id, category: normalized.category, title: normalized.title.slice(0, 500),
+          ...(normalized.details ? { details: normalized.details.slice(0, 4000) } : {}), authorUserId: userId,
+        },
+        select,
+      });
+      await tx.idempotencyRecord.create({
+        data: { userId, scope, key: idempotencyKey, requestHash, resourceId: requirement.id, expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000) },
+      });
+      return requirement;
+    });
+    try {
+      return { data: await persist() };
+    } catch (error) {
+      if (!this.isUniqueViolation(error)) throw error;
+      const previous = await this.prisma.idempotencyRecord.findUnique({
+        where: { userId_scope_key: { userId, scope, key: idempotencyKey } },
+      });
+      if (!previous || previous.requestHash !== requestHash) throw new ConflictException('IDEMPOTENCY_KEY_REUSED');
+      const requirement = await this.prisma.reviewRequirement.findFirst({ where: { id: previous.resourceId, reviewRunId: reviewId }, select });
+      if (!requirement) throw error;
+      return { data: requirement };
+    }
+  }
+
+  async listRequirements(userId: string, reviewId: string, pageId: string) {
+    await this.reviewForAsset(userId, reviewId);
+    const page = await this.prisma.reviewPage.findFirst({ where: { id: pageId, reviewRunId: reviewId }, select: { id: true } });
+    if (!page) throw new NotFoundException('REVIEW_PAGE_NOT_FOUND');
+    const data = await this.prisma.reviewRequirement.findMany({
+      where: { reviewRunId: reviewId, pageId: page.id },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: 200,
+      select: { id: true, pageId: true, category: true, title: true, details: true, status: true, verificationNote: true, evidenceCaptureId: true, createdAt: true, updatedAt: true },
+    });
+    return { data };
+  }
+
+  async updateRequirement(userId: string, reviewId: string, requirementId: string, input: {
+    status: 'pending' | 'satisfied' | 'failed' | 'blocked' | 'unknown';
+    verificationNote?: string | null;
+    evidenceCaptureId?: string | null;
+  }) {
+    await this.reviewForAsset(userId, reviewId, true);
+    const requirement = await this.prisma.reviewRequirement.findFirst({
+      where: { id: requirementId, reviewRunId: reviewId },
+      select: { id: true, pageId: true, evidenceCaptureId: true },
+    });
+    if (!requirement) throw new NotFoundException('REVIEW_REQUIREMENT_NOT_FOUND');
+    const evidenceCaptureId = input.evidenceCaptureId === undefined ? requirement.evidenceCaptureId : input.evidenceCaptureId;
+    if (input.status === 'satisfied' && !evidenceCaptureId) throw new UnprocessableEntityException('REQUIREMENT_EVIDENCE_REQUIRED');
+    if (evidenceCaptureId) {
+      const capture = await this.prisma.reviewCapture.findFirst({
+        where: { id: evidenceCaptureId, status: 'captured', page: { reviewRunId: reviewId } },
+        select: { id: true, pageId: true },
+      });
+      if (!capture || (requirement.pageId && capture.pageId !== requirement.pageId)) throw new UnprocessableEntityException('REQUIREMENT_EVIDENCE_NOT_AVAILABLE');
+    }
+    const updated = await this.prisma.reviewRequirement.update({
+      where: { id: requirement.id },
+      data: {
+        status: input.status,
+        verificationNote: input.verificationNote === undefined ? undefined : input.verificationNote?.trim().slice(0, 2000) || null,
+        evidenceCaptureId,
+      },
+      select: { id: true, pageId: true, category: true, title: true, details: true, status: true, verificationNote: true, evidenceCaptureId: true, createdAt: true, updatedAt: true },
+    });
+    return { data: updated };
+  }
+
   async updateFindingStatus(userId: string, reviewId: string, findingId: string, status: 'open' | 'accepted' | 'dismissed' | 'fixed' | 'unknown') {
     await this.reviewForAsset(userId, reviewId, true);
     const finding = await this.prisma.reviewFinding.findFirst({
