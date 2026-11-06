@@ -5,6 +5,8 @@ import { ReviewsService } from './reviews.service.js';
 
 const modes = ['site_only', 'site_and_design', 'design_only'] as const;
 const locales = ['en', 'ru', 'kk'] as const;
+const findingCategories = ['requirement', 'design', 'backend', 'accessibility', 'performance', 'seo', 'security'] as const;
+const findingSeverities = ['critical', 'high', 'medium', 'low', 'info'] as const;
 
 function parseBody(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('INVALID_REQUEST_BODY');
@@ -143,6 +145,43 @@ export class ReviewsController {
     if (typeof height !== 'number' || !Number.isInteger(height) || height < 568 || height > 4320) throw new BadRequestException('INVALID_VIEWPORT_HEIGHT');
     if (typeof deviceScale !== 'number' || !Number.isFinite(deviceScale) || deviceScale < 1 || deviceScale > 3) throw new BadRequestException('INVALID_DEVICE_SCALE');
     return this.reviews.queueCapture(request.user.id, reviewId, { pageId, viewportWidth: width, viewportHeight: height, deviceScale }, idempotencyKey);
+  }
+
+  @Get('reviews/:reviewId/pages/:pageId/findings')
+  async listFindings(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('pageId') pageId: string) {
+    if (!isUuid(reviewId) || !isUuid(pageId)) throw new BadRequestException('INVALID_REVIEW_PAGE_ID');
+    return this.reviews.listFindings(request.user.id, reviewId, pageId);
+  }
+
+  @Post('reviews/:reviewId/findings')
+  async createFinding(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Headers('idempotency-key') idempotencyKey: string | undefined, @Body() raw: unknown) {
+    if (!isUuid(reviewId)) throw new BadRequestException('INVALID_REVIEW_ID');
+    if (!idempotencyKey || idempotencyKey.length < 16 || idempotencyKey.length > 128) throw new BadRequestException('INVALID_IDEMPOTENCY_KEY');
+    const body = parseBody(raw);
+    rejectUnknown(body, ['evidenceCaptureId', 'category', 'severity', 'summary', 'coordinate']);
+    const captureId = requiredString(body, 'evidenceCaptureId', 36, 36);
+    if (!isUuid(captureId)) throw new BadRequestException('INVALID_EVIDENCE_CAPTURE_ID');
+    const category = body.category;
+    const severity = body.severity;
+    if (!findingCategories.includes(category as (typeof findingCategories)[number])) throw new BadRequestException('INVALID_FINDING_CATEGORY');
+    if (!findingSeverities.includes(severity as (typeof findingSeverities)[number])) throw new BadRequestException('INVALID_FINDING_SEVERITY');
+    const summary = requiredString(body, 'summary', 1, 500).trim();
+    if (!summary) throw new BadRequestException('INVALID_SUMMARY');
+    let coordinate: { x: number; y: number } | null = null;
+    if (body.coordinate !== undefined && body.coordinate !== null) {
+      const point = parseBody(body.coordinate);
+      rejectUnknown(point, ['x', 'y']);
+      if (typeof point.x !== 'number' || !Number.isFinite(point.x) || point.x < 0 || point.x > 1) throw new BadRequestException('INVALID_COORDINATE_X');
+      if (typeof point.y !== 'number' || !Number.isFinite(point.y) || point.y < 0 || point.y > 1) throw new BadRequestException('INVALID_COORDINATE_Y');
+      coordinate = { x: point.x, y: point.y };
+    }
+    return this.reviews.createFinding(request.user.id, reviewId, idempotencyKey, {
+      evidenceCaptureId: captureId,
+      category: category as (typeof findingCategories)[number],
+      severity: severity as (typeof findingSeverities)[number],
+      summary,
+      coordinate,
+    });
   }
 
   @Get('reviews/:reviewId/captures/:captureId')
