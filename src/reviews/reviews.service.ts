@@ -313,7 +313,7 @@ export class ReviewsService {
           reviewRunId: reviewId, pageId: capture.pageId, category: normalized.category, severity: normalized.severity,
           status: 'open', confidence: 'low', summary: normalized.summary.slice(0, 500),
           explanation: 'Recorded manually by a reviewer; verify against the approved requirements and design.',
-          evidence: { captureId: capture.id }, coordinates: normalized.coordinate,
+          evidence: { captureId: capture.id }, ...(normalized.coordinate ? { coordinates: normalized.coordinate } : {}),
           authorUserId: userId,
         },
         select: { id: true, pageId: true, category: true, severity: true, status: true, confidence: true, summary: true, coordinates: true, evidence: true, createdAt: true, updatedAt: true },
