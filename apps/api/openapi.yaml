@@ -1168,7 +1168,7 @@ components:
             summary:
               type: object
               additionalProperties: false
-              required: [pages, requirements, findings]
+              required: [pages, visualDiff, requirements, findings]
               properties:
                 pages:
                   type: object
@@ -1185,6 +1185,13 @@ components:
                   properties:
                     total: { type: integer, minimum: 0 }
                     byStatus: { type: object, additionalProperties: { type: integer, minimum: 0 } }
+                visualDiff:
+                  type: object
+                  additionalProperties: false
+                  required: [compared, averageChangedPercent]
+                  properties:
+                    compared: { type: integer, minimum: 0 }
+                    averageChangedPercent: { type: [number, 'null'], minimum: 0, maximum: 100 }
                 findings:
                   type: object
                   additionalProperties: false
@@ -1209,10 +1216,19 @@ components:
                       - type: 'null'
                       - type: object
                         additionalProperties: false
-                        required: [status, capturedAt]
+                        required: [status, capturedAt, visualDiff]
                         properties:
                           status: { type: string, enum: [queued, captured, failed] }
                           capturedAt: { type: [string, 'null'], format: date-time }
+                          visualDiff:
+                            oneOf:
+                              - type: 'null'
+                              - type: object
+                                additionalProperties: false
+                                required: [status, changedPercent]
+                                properties:
+                                  status: { type: string, enum: [ready, failed] }
+                                  changedPercent: { type: [number, 'null'], minimum: 0, maximum: 100 }
                   requirements:
                     type: array
                     items:
