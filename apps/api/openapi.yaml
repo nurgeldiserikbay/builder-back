@@ -800,14 +800,14 @@ paths:
       tags: [Reviews]
       operationId: getReviewReport
       summary: Get the latest versioned evidence report
-      x-implementation-status: planned
+      x-implementation-status: implemented
       security:
         - sessionCookie: []
       parameters:
         - $ref: '#/components/parameters/ReviewId'
       responses:
         '200':
-          description: Review report with explicit coverage and unknown states
+          description: Current review summary with pages, checklist statuses, and findings
           content:
             application/json:
               schema:
@@ -1147,40 +1147,101 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [reviewId, version, status, coverage, findings, limitations, generatedAt]
+          required: [schemaVersion, generatedAt, review, summary, pages, limitations]
           properties:
-            reviewId: { type: string, format: uuid }
-            version: { type: integer, minimum: 1 }
-            status: { type: string, enum: [complete, partial, failed] }
-            coverage:
+            schemaVersion: { const: 1 }
+            generatedAt: { type: string, format: date-time }
+            review:
               type: object
               additionalProperties: false
-              required: [pagesTotal, pagesCaptured, requirementsTotal, requirementsVerified, requirementsUnknown]
+              required: [id, projectId, title, mode, status, locale, siteOrigin, createdAt, updatedAt]
               properties:
-                pagesTotal: { type: integer, minimum: 0 }
-                pagesCaptured: { type: integer, minimum: 0 }
-                requirementsTotal: { type: integer, minimum: 0 }
-                requirementsVerified: { type: integer, minimum: 0 }
-                requirementsUnknown: { type: integer, minimum: 0 }
-            findings:
+                id: { type: string, format: uuid }
+                projectId: { type: string, format: uuid }
+                title: { type: string, maxLength: 120 }
+                mode: { type: string, enum: [site_only, site_and_design, design_only] }
+                status: { type: string, enum: [draft, queued, discovering, ready, failed, cancelled] }
+                locale: { type: string, enum: [en, ru, kk] }
+                siteOrigin: { type: [string, 'null'], maxLength: 512 }
+                createdAt: { type: string, format: date-time }
+                updatedAt: { type: string, format: date-time }
+            summary:
+              type: object
+              additionalProperties: false
+              required: [pages, requirements, findings]
+              properties:
+                pages:
+                  type: object
+                  additionalProperties: false
+                  required: [total, mapped, captured]
+                  properties:
+                    total: { type: integer, minimum: 0 }
+                    mapped: { type: integer, minimum: 0 }
+                    captured: { type: integer, minimum: 0 }
+                requirements:
+                  type: object
+                  additionalProperties: false
+                  required: [total, byStatus]
+                  properties:
+                    total: { type: integer, minimum: 0 }
+                    byStatus: { type: object, additionalProperties: { type: integer, minimum: 0 } }
+                findings:
+                  type: object
+                  additionalProperties: false
+                  required: [total, byStatus]
+                  properties:
+                    total: { type: integer, minimum: 0 }
+                    byStatus: { type: object, additionalProperties: { type: integer, minimum: 0 } }
+            pages:
               type: array
               items:
                 type: object
                 additionalProperties: false
-                required: [id, category, severity, status, summary, evidence, confidence]
+                required: [id, route, title, status, designMapped, latestCapture, requirements, findings]
                 properties:
                   id: { type: string, format: uuid }
-                  pageId: { type: [string, 'null'], format: uuid }
-                  category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security] }
-                  severity: { type: string, enum: [critical, high, medium, low, info] }
-                  status: { type: string, enum: [open, accepted, dismissed, fixed, unknown] }
-                  summary: { type: string, maxLength: 500 }
-                  evidence: { type: array, items: { type: string, format: uri } }
-                  confidence: { type: string, enum: [high, medium, low] }
+                  route: { type: string, maxLength: 2048 }
+                  title: { type: [string, 'null'], maxLength: 200 }
+                  status: { type: string }
+                  designMapped: { type: boolean }
+                  latestCapture:
+                    oneOf:
+                      - type: 'null'
+                      - type: object
+                        additionalProperties: false
+                        required: [status, capturedAt]
+                        properties:
+                          status: { type: string, enum: [queued, captured, failed] }
+                          capturedAt: { type: [string, 'null'], format: date-time }
+                  requirements:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, category, title, status, verificationNote, evidenceCaptureId]
+                      properties:
+                        id: { type: string, format: uuid }
+                        category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security] }
+                        title: { type: string, maxLength: 500 }
+                        status: { type: string, enum: [pending, satisfied, failed, blocked, unknown] }
+                        verificationNote: { type: [string, 'null'], maxLength: 2000 }
+                        evidenceCaptureId: { type: [string, 'null'], format: uuid }
+                  findings:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, category, severity, status, summary, createdAt]
+                      properties:
+                        id: { type: string, format: uuid }
+                        category: { type: string, enum: [requirement, design, backend, accessibility, performance, seo, security] }
+                        severity: { type: string, enum: [critical, high, medium, low, info] }
+                        status: { type: string, enum: [open, accepted, dismissed, fixed, unknown] }
+                        summary: { type: string, maxLength: 500 }
+                        createdAt: { type: string, format: date-time }
             limitations:
               type: array
               items: { type: string, maxLength: 500 }
-            generatedAt: { type: string, format: date-time }
     HealthResponse:
       type: object
       additionalProperties: false
