@@ -278,6 +278,83 @@ export class ReviewsService {
     } };
   }
 
+  async createFinding(userId: string, reviewId: string, idempotencyKey: string, input: {
+    evidenceCaptureId: string;
+    category: 'requirement' | 'design' | 'backend' | 'accessibility' | 'performance' | 'seo' | 'security';
+    severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+    summary: string;
+    coordinate: { x: number; y: number } | null;
+  }) {
+    await this.reviewForAsset(userId, reviewId, true);
+    const capture = await this.prisma.reviewCapture.findFirst({
+      where: { id: input.evidenceCaptureId, status: 'captured', page: { reviewRunId: reviewId } },
+      select: { id: true, pageId: true },
+    });
+    if (!capture) throw new UnprocessableEntityException('FINDING_CAPTURE_NOT_AVAILABLE');
+    const normalized = { ...input, summary: input.summary.trim(), coordinate: input.coordinate ?? null };
+    const requestHash = createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+    const scope = `finding:create:${reviewId}`;
+    const now = new Date();
+    const persist = () => this.prisma.$transaction(async (tx) => {
+      const previous = await tx.idempotencyRecord.findUnique({
+        where: { userId_scope_key: { userId, scope, key: idempotencyKey } },
+      });
+      if (previous && previous.expiresAt > now) {
+        if (previous.requestHash !== requestHash) throw new ConflictException('IDEMPOTENCY_KEY_REUSED');
+        const existing = await tx.reviewFinding.findFirst({
+          where: { id: previous.resourceId, reviewRunId: reviewId },
+          select: { id: true, pageId: true, category: true, severity: true, status: true, confidence: true, summary: true, coordinates: true, evidence: true, createdAt: true, updatedAt: true },
+        });
+        if (existing) return existing;
+      }
+      if (previous) await tx.idempotencyRecord.delete({ where: { id: previous.id } });
+      const finding = await tx.reviewFinding.create({
+        data: {
+          reviewRunId: reviewId, pageId: capture.pageId, category: normalized.category, severity: normalized.severity,
+          status: 'open', confidence: 'low', summary: normalized.summary.slice(0, 500),
+          explanation: 'Recorded manually by a reviewer; verify against the approved requirements and design.',
+          evidence: { captureId: capture.id }, coordinates: normalized.coordinate,
+          authorUserId: userId,
+        },
+        select: { id: true, pageId: true, category: true, severity: true, status: true, confidence: true, summary: true, coordinates: true, evidence: true, createdAt: true, updatedAt: true },
+      });
+      await tx.idempotencyRecord.create({
+        data: { userId, scope, key: idempotencyKey, requestHash, resourceId: finding.id, expiresAt: new Date(now.getTime() + 24 * 60 * 60 * 1000) },
+      });
+      return finding;
+    });
+    try {
+      const finding = await persist();
+      return { data: finding };
+    } catch (error) {
+      if (!this.isUniqueViolation(error)) throw error;
+      const previous = await this.prisma.idempotencyRecord.findUnique({
+        where: { userId_scope_key: { userId, scope, key: idempotencyKey } },
+      });
+      if (!previous || previous.requestHash !== requestHash) throw new ConflictException('IDEMPOTENCY_KEY_REUSED');
+      const finding = await this.prisma.reviewFinding.findFirst({
+        where: { id: previous.resourceId, reviewRunId: reviewId },
+        select: { id: true, pageId: true, category: true, severity: true, status: true, confidence: true, summary: true, coordinates: true, evidence: true, createdAt: true, updatedAt: true },
+      });
+      if (!finding) throw error;
+      return { data: finding };
+    }
+  }
+
+  async listFindings(userId: string, reviewId: string, pageId: string) {
+    await this.reviewForAsset(userId, reviewId);
+    const page = await this.prisma.reviewPage.findFirst({ where: { id: pageId, reviewRunId: reviewId }, select: { id: true } });
+    if (!page) throw new NotFoundException('REVIEW_PAGE_NOT_FOUND');
+    const findings = await this.prisma.reviewFinding.findMany({
+      where: { reviewRunId: reviewId, pageId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 100,
+      select: { id: true, pageId: true, category: true, severity: true, status: true, confidence: true, summary: true, coordinates: true, evidence: true, createdAt: true, updatedAt: true },
+    });
+    return { data: findings };
+  }
+
+
   async savePageMapping(userId: string, reviewId: string, pageId: string, input: { designAssetId: string | null; viewportWidth: number; viewportHeight: number; deviceScale: number; requirementIds: string[] }) {
     await this.reviewForAsset(userId, reviewId, true);
     const page = await this.prisma.reviewPage.findFirst({ where: { id: pageId, reviewRunId: reviewId }, select: { id: true, route: true, title: true, status: true, _count: { select: { findings: true } } } });
