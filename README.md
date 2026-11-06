@@ -16,6 +16,7 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Private PNG/JPEG design uploads use short-lived S3-compatible POST forms, project authorization, checksum and magic-byte checks, ClamAV scanning, and verified page-to-design mappings. Verified assets can be opened through short-lived authorized download URLs.
 - Mapped pages can queue disposable Chromium captures at the saved viewport. HTTP resources are limited to pinned, public, same-origin GET requests; service workers, WebSockets, downloads, and browser credentials are disabled. Captures are stored privately with a checksum and short-lived preview URLs.
 - Captures are compared with their mapped PNG/JPEG using a bounded deterministic pixel threshold. A private red overlay, changed-pixel percentage, and highest-change regions are saved per capture. This is a visual signal only; it does not determine whether requirements, backend behavior, or the design specification pass.
+- Reviewers can record page findings against a successful capture, with category, severity, note, and optional normalized coordinates; page-scoped finding lists are access-controlled and capped.
 
 ## Contract
 
