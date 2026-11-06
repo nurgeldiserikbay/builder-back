@@ -18,6 +18,7 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Captures are compared with their mapped PNG/JPEG using a bounded deterministic pixel threshold. A private red overlay, changed-pixel percentage, and highest-change regions are saved per capture. This is a visual signal only; it does not determine whether requirements, backend behavior, or the design specification pass.
 - Reviewers can record page findings against a successful capture, with category, severity, note, and optional normalized coordinates; page-scoped finding lists are access-controlled and capped.
 - Each page can keep a manual requirements checklist. Verification status and optional evidence capture are stored together; marking a requirement satisfied requires a successful capture. This does not infer compliance automatically.
+- Authorized users can download a current JSON review report with page coverage, latest capture status, requirement statuses, findings, and explicit limits. The report is a live summary and does not claim AI or backend verification.
 
 ## Contract
 
