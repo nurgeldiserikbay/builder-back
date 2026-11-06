@@ -1315,6 +1315,7 @@ components:
             status: { const: verified }
             fileKey: { type: string, maxLength: 128 }
             nodeId: { type: string, pattern: '^[0-9]+:[0-9]+$' }
+    ReviewReportResponse:
       additionalProperties: false
       required: [data]
       properties:
