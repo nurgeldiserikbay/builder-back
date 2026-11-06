@@ -185,6 +185,8 @@ model User {
   assignedFindings          ReviewFinding[]           @relation("FindingAssignee")
   authoredPageMappings      PageDesignMapping[]      @relation("MappingAuthor")
   idempotencyRecords        IdempotencyRecord[]
+  figmaConnection           FigmaConnection?
+  figmaOAuthStates          FigmaOAuthState[]
 
   @@index([createdAt], map: "users_created_idx")
   @@map("users")
@@ -530,4 +532,33 @@ model ReviewReport {
   @@unique([reviewRunId, version], map: "review_reports_run_version_key")
   @@index([reviewRunId, createdAt(sort: Desc)], map: "review_reports_run_created_idx")
   @@map("review_reports")
+}
+
+
+model FigmaOAuthState {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  stateHash    String   @unique @map("state_hash") @db.Char(64)
+  codeVerifier String   @map("code_verifier") @db.VarChar(128)
+  expiresAt    DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt], map: "figma_oauth_states_user_expires_idx")
+  @@map("figma_oauth_states")
+}
+
+model FigmaConnection {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                String   @unique @map("user_id") @db.Uuid
+  figmaUserId           String?  @map("figma_user_id") @db.VarChar(128)
+  accessTokenEncrypted  String   @map("access_token_encrypted") @db.Text
+  refreshTokenEncrypted String   @map("refresh_token_encrypted") @db.Text
+  accessTokenExpiresAt  DateTime @map("access_token_expires_at") @db.Timestamptz(3)
+  scopes                String[] @default([])
+  connectedAt           DateTime @default(now()) @map("connected_at") @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("figma_connections")
 }
