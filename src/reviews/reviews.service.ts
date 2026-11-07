@@ -1089,7 +1089,7 @@ export class ReviewsService {
     });
     const signals: Array<{ id: string; code: string; severity: 'high' | 'medium' | 'info'; pageId: string; requirementId: string | null; title: string; details: string }> = [];
     const addSignal = (pageId: string, code: string, severity: 'high' | 'medium' | 'info', requirementId: string | null, title: string, details: string) => {
-      if (signals.length < 500) signals.push({ id: [code, pageId, requirementId ?? 'page'].join(':'), code, severity, pageId, requirementId, title, details });
+      signals.push({ id: [code, pageId, requirementId ?? 'page'].join(':'), code, severity, pageId, requirementId, title, details });
     };
     for (const page of pages) {
       if (review.mode === 'site_and_design' && !page.designMapped) {
@@ -1126,6 +1126,7 @@ export class ReviewsService {
       }
     }
     signals.sort((a, b) => ({ high: 0, medium: 1, info: 2 }[a.severity] - { high: 0, medium: 1, info: 2 }[b.severity]));
+    signals.splice(500);
     const signalCounts = signals.reduce<Record<string, number>>((counts, signal) => {
       counts[signal.severity] = (counts[signal.severity] ?? 0) + 1;
       return counts;
