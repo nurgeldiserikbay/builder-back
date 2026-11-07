@@ -1199,6 +1199,7 @@ export class ReviewsService {
         limitations: [
           'Visual comparison reports pixel differences only; it does not determine semantic design compliance.',
           'Rule-based signals summarize missing evidence and recorded outcomes; they do not infer semantic design compliance or replace AI/reviewer analysis.',
+          'Page structure and accessibility checks are heuristic DOM counts; they are not a complete WCAG audit.',
           'API checks are user-run GET/HEAD probes; they do not replace full backend integration or security testing.',
           'Page, requirement, finding, and API-check lists are capped at 100, 200 per page, 100 per page, and 50 recent checks per page respectively; rule-based signals are capped at 500 per report.',
         ],
