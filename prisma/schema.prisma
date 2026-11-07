@@ -514,6 +514,7 @@ model ReviewRequirement {
   page              ReviewPage?             @relation(fields: [pageId], references: [id], onDelete: Cascade)
   evidenceCapture   ReviewCapture?          @relation(fields: [evidenceCaptureId], references: [id], onDelete: SetNull)
   author            User                    @relation("RequirementAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+  apiChecks         ReviewApiCheck[]
 
   @@index([reviewRunId, pageId, status], map: "review_requirements_run_page_status_idx")
   @@index([evidenceCaptureId], map: "review_requirements_capture_idx")
@@ -571,6 +572,7 @@ model ReviewApiCheck {
   id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   reviewRunId     String     @map("review_run_id") @db.Uuid
   pageId          String     @map("page_id") @db.Uuid
+  requirementId   String?    @map("requirement_id") @db.Uuid
   authorUserId    String     @map("author_user_id") @db.Uuid
   method          String     @db.VarChar(4)
   endpoint        String     @db.VarChar(2048)
@@ -585,9 +587,11 @@ model ReviewApiCheck {
   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   reviewRun       ReviewRun  @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
   page            ReviewPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  requirement     ReviewRequirement? @relation(fields: [requirementId], references: [id], onDelete: SetNull)
   author          User       @relation("ApiCheckAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
 
   @@index([reviewRunId, pageId, createdAt(sort: Desc)], map: "review_api_checks_run_page_created_idx")
   @@index([authorUserId, createdAt(sort: Desc)], map: "review_api_checks_author_created_idx")
+  @@index([requirementId, createdAt(sort: Desc)], map: "review_api_checks_requirement_created_idx")
   @@map("review_api_checks")
 }
