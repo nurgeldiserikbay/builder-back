@@ -1030,7 +1030,7 @@ export class ReviewsService {
           select: {
             id: true, route: true, title: true, status: true,
             mapping: { select: { designSourceId: true } },
-            captures: { orderBy: [{ createdAt: 'desc' }], take: 1, select: { status: true, capturedAt: true, visualDiff: true } },
+            captures: { orderBy: [{ createdAt: 'desc' }], take: 1, select: { status: true, capturedAt: true, visualDiff: true, qualityAudit: true } },
             requirements: {
               orderBy: [{ createdAt: 'asc' }],
               take: 200,
@@ -1075,13 +1075,31 @@ export class ReviewsService {
           };
         }
       }
+      let qualityAudit: {
+        checkedAt: string | null; pageTitlePresent: boolean; languagePresent: boolean; h1Count: number;
+        imagesMissingAlt: number; linksMissingName: number; buttonsMissingName: number; formControlsMissingLabel: number;
+      } | null = null;
+      if (capture?.qualityAudit && typeof capture.qualityAudit === 'object' && !Array.isArray(capture.qualityAudit)) {
+        const audit = capture.qualityAudit as Record<string, unknown>;
+        const safeCount = (value: unknown) => typeof value === 'number' && Number.isInteger(value) ? Math.max(0, Math.min(100000, value)) : 0;
+        qualityAudit = {
+          checkedAt: typeof audit.checkedAt === 'string' ? audit.checkedAt : null,
+          pageTitlePresent: audit.pageTitlePresent === true,
+          languagePresent: audit.languagePresent === true,
+          h1Count: safeCount(audit.h1Count),
+          imagesMissingAlt: safeCount(audit.imagesMissingAlt),
+          linksMissingName: safeCount(audit.linksMissingName),
+          buttonsMissingName: safeCount(audit.buttonsMissingName),
+          formControlsMissingLabel: safeCount(audit.formControlsMissingLabel),
+        };
+      }
       return {
         id: page.id,
         route: page.route,
         title: page.title,
         status: page.status,
         designMapped: Boolean(page.mapping?.designSourceId),
-        latestCapture: capture ? { status: capture.status, capturedAt: capture.capturedAt, visualDiff } : null,
+        latestCapture: capture ? { status: capture.status, capturedAt: capture.capturedAt, visualDiff, qualityAudit } : null,
         requirements: page.requirements,
         findings: page.findings,
         apiChecks: page.apiChecks,
@@ -1099,6 +1117,16 @@ export class ReviewsService {
         addSignal(page.id, 'SITE_NOT_CAPTURED', 'medium', null, 'Нет снимка рабочей страницы', 'Запустите захват страницы перед оценкой сайта и сравнением с макетом.');
       } else if (page.latestCapture.status === 'failed') {
         addSignal(page.id, 'CAPTURE_FAILED', 'high', null, 'Не удалось получить снимок страницы', 'Проверьте доступность URL и повторите захват.');
+      }
+      const audit = page.latestCapture?.qualityAudit;
+      if (audit) {
+        if (!audit.pageTitlePresent) addSignal(page.id, 'PAGE_TITLE_MISSING', 'medium', null, 'У страницы нет заголовка вкладки', 'Добавьте осмысленный элемент <title>.');
+        if (!audit.languagePresent) addSignal(page.id, 'PAGE_LANGUAGE_MISSING', 'medium', null, 'Не указан язык документа', 'Задайте атрибут lang у корневого элемента HTML.');
+        if (audit.h1Count === 0) addSignal(page.id, 'PRIMARY_HEADING_MISSING', 'medium', null, 'Не найден заголовок первого уровня', 'Проверьте структуру заголовков и добавьте основной заголовок, если он нужен странице.');
+        if (audit.imagesMissingAlt > 0) addSignal(page.id, 'IMAGES_MISSING_ALT', 'medium', null, 'У изображений отсутствует alt', `Изображений без атрибута alt: ${audit.imagesMissingAlt}. Проверьте, какие изображения несут смысл.`);
+        if (audit.linksMissingName > 0) addSignal(page.id, 'LINKS_MISSING_NAME', 'high', null, 'Есть ссылки без доступного названия', `Ссылок без текста или доступной подписи: ${audit.linksMissingName}.`);
+        if (audit.buttonsMissingName > 0) addSignal(page.id, 'BUTTONS_MISSING_NAME', 'high', null, 'Есть кнопки без доступного названия', `Кнопок без текста или доступной подписи: ${audit.buttonsMissingName}.`);
+        if (audit.formControlsMissingLabel > 0) addSignal(page.id, 'FORM_LABELS_MISSING', 'medium', null, 'У полей формы отсутствуют подписи', `Полей без связанной подписи: ${audit.formControlsMissingLabel}.`);
       }
       const changedPercent = page.latestCapture?.visualDiff?.changedPercent;
       if (page.latestCapture?.visualDiff?.status === 'ready' && changedPercent !== null && changedPercent !== undefined && changedPercent >= 20) {
