@@ -899,6 +899,50 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /reviews/{reviewId}/pages/{pageId}/api-checks:
+    get:
+      tags: [Reviews]
+      operationId: listPageApiChecks
+      summary: List recent sanitized API check metadata for a review page
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - $ref: '#/components/parameters/PageId'
+      responses:
+        '200':
+          description: Up to 50 recent checks; secrets, query parameters, and response bodies are excluded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewApiCheckListResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Reviews]
+      operationId: savePageApiCheck
+      summary: Save sanitized metadata from a browser-run API check
+      description: Tokens, headers, query parameters, expected values, and response bodies are never accepted.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - $ref: '#/components/parameters/PageId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveReviewApiCheckRequest' }
+      responses:
+        '201':
+          description: Sanitized metadata saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReviewApiCheckResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /reviews/{reviewId}/report:
     get:
       tags: [Reviews]
@@ -934,6 +978,11 @@ components:
     ReviewId:
       in: path
       name: reviewId
+      required: true
+      schema: { type: string, format: uuid }
+    PageId:
+      in: path
+      name: pageId
       required: true
       schema: { type: string, format: uuid }
     IdempotencyKey:
@@ -1315,6 +1364,52 @@ components:
             status: { const: verified }
             fileKey: { type: string, maxLength: 128 }
             nodeId: { type: string, pattern: '^[0-9]+:[0-9]+$' }
+    SaveReviewApiCheckRequest:
+      type: object
+      additionalProperties: false
+      required: [method, endpoint, expectedStatus, actualStatus, durationMs, jsonPath, jsonMatches, safeErrorCode, checkedAt]
+      properties:
+        method: { type: string, enum: [GET, HEAD] }
+        endpoint: { type: string, format: uri, maxLength: 2048, description: HTTPS URL without query or fragment; HTTP only for localhost }
+        expectedStatus: { type: integer, minimum: 100, maximum: 599 }
+        actualStatus: { type: [integer, 'null'], minimum: 100, maximum: 599 }
+        durationMs: { type: integer, minimum: 0, maximum: 12000 }
+        jsonPath: { type: [string, 'null'], maxLength: 160 }
+        jsonMatches: { type: [boolean, 'null'] }
+        safeErrorCode: { type: [string, 'null'], enum: [REQUEST_FAILED, REQUEST_TIMEOUT, null] }
+        checkedAt: { type: string, format: date-time }
+    ReviewApiCheck:
+      type: object
+      additionalProperties: false
+      required: [id, method, endpoint, expectedStatus, actualStatus, durationMs, passed, jsonPath, jsonMatches, safeErrorCode, checkedAt, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        method: { type: string, enum: [GET, HEAD] }
+        endpoint: { type: string, maxLength: 2048 }
+        expectedStatus: { type: integer, minimum: 100, maximum: 599 }
+        actualStatus: { type: [integer, 'null'], minimum: 100, maximum: 599 }
+        durationMs: { type: integer, minimum: 0, maximum: 12000 }
+        passed: { type: boolean }
+        jsonPath: { type: [string, 'null'], maxLength: 160 }
+        jsonMatches: { type: [boolean, 'null'] }
+        safeErrorCode: { type: [string, 'null'], enum: [REQUEST_FAILED, REQUEST_TIMEOUT, null] }
+        checkedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    ReviewApiCheckResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ReviewApiCheck' }
+    ReviewApiCheckListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/ReviewApiCheck' }
     ReviewReportResponse:
       additionalProperties: false
       required: [data]
@@ -1324,7 +1419,7 @@ components:
           additionalProperties: false
           required: [schemaVersion, generatedAt, review, summary, pages, limitations]
           properties:
-            schemaVersion: { const: 1 }
+            schemaVersion: { const: 2 }
             generatedAt: { type: string, format: date-time }
             review:
               type: object
@@ -1343,7 +1438,7 @@ components:
             summary:
               type: object
               additionalProperties: false
-              required: [pages, visualDiff, requirements, findings]
+              required: [pages, visualDiff, requirements, findings, apiChecks]
               properties:
                 pages:
                   type: object
@@ -1374,12 +1469,19 @@ components:
                   properties:
                     total: { type: integer, minimum: 0 }
                     byStatus: { type: object, additionalProperties: { type: integer, minimum: 0 } }
+                apiChecks:
+                  type: object
+                  additionalProperties: false
+                  required: [totalRecent, passedRecent]
+                  properties:
+                    totalRecent: { type: integer, minimum: 0 }
+                    passedRecent: { type: integer, minimum: 0 }
             pages:
               type: array
               items:
                 type: object
                 additionalProperties: false
-                required: [id, route, title, status, designMapped, latestCapture, requirements, findings]
+                required: [id, route, title, status, designMapped, latestCapture, requirements, findings, apiChecks]
                 properties:
                   id: { type: string, format: uuid }
                   route: { type: string, maxLength: 2048 }
@@ -1417,6 +1519,10 @@ components:
                         status: { type: string, enum: [pending, satisfied, failed, blocked, unknown] }
                         verificationNote: { type: [string, 'null'], maxLength: 2000 }
                         evidenceCaptureId: { type: [string, 'null'], format: uuid }
+                  apiChecks:
+                    type: array
+                    maxItems: 50
+                    items: { $ref: '#/components/schemas/ReviewApiCheck' }
                   findings:
                     type: array
                     items:
