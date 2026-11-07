@@ -207,7 +207,7 @@ export class ReviewWorker implements OnModuleDestroy {
       await this.prisma.$transaction([
         this.prisma.reviewCapture.update({
           where: { id: captureId },
-          data: { status: 'captured', assetStorageKey: storageKey, visualDiff: visualDiff as Prisma.InputJsonValue, qualityAudit: screenshot.audit as Prisma.InputJsonValue, sha256: screenshot.sha256, toolVersion: screenshot.toolVersion, capturedAt: new Date(), safeErrorCode: null },
+          data: { status: 'captured', assetStorageKey: storageKey, visualDiff: visualDiff as Prisma.InputJsonValue, qualityAudit: screenshot.audit as unknown as Prisma.InputJsonValue, sha256: screenshot.sha256, toolVersion: screenshot.toolVersion, capturedAt: new Date(), safeErrorCode: null },
         }),
         this.prisma.reviewJob.update({
           where: { id: jobId },
