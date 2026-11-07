@@ -187,6 +187,7 @@ model User {
   idempotencyRecords        IdempotencyRecord[]
   figmaConnection           FigmaConnection?
   figmaOAuthStates          FigmaOAuthState[]
+  authoredApiChecks         ReviewApiCheck[]      @relation("ApiCheckAuthor")
 
   @@index([createdAt], map: "users_created_idx")
   @@map("users")
@@ -346,6 +347,7 @@ model ReviewRun {
   findings          ReviewFinding[]
   requirements      ReviewRequirement[]
   reports           ReviewReport[]
+  apiChecks         ReviewApiCheck[]
   project           Project      @relation(fields: [projectId], references: [id], onDelete: Restrict)
   owner             User         @relation("ReviewRunOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
 
@@ -370,6 +372,7 @@ model ReviewPage {
   captures        ReviewCapture[]
   findings        ReviewFinding[]
   requirements    ReviewRequirement[]
+  apiChecks       ReviewApiCheck[]
 
   @@unique([reviewRunId, route], map: "review_pages_run_route_key")
   @@index([reviewRunId, status], map: "review_pages_run_status_idx")
@@ -561,4 +564,30 @@ model FigmaConnection {
   user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("figma_connections")
+}
+
+
+model ReviewApiCheck {
+  id              String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewRunId     String     @map("review_run_id") @db.Uuid
+  pageId          String     @map("page_id") @db.Uuid
+  authorUserId    String     @map("author_user_id") @db.Uuid
+  method          String     @db.VarChar(4)
+  endpoint        String     @db.VarChar(2048)
+  expectedStatus  Int        @map("expected_status")
+  actualStatus    Int?       @map("actual_status")
+  durationMs      Int        @map("duration_ms")
+  passed          Boolean
+  jsonPath        String?    @map("json_path") @db.VarChar(160)
+  jsonMatches     Boolean?   @map("json_matches")
+  safeErrorCode   String?    @map("safe_error_code") @db.VarChar(32)
+  checkedAt       DateTime   @map("checked_at") @db.Timestamptz(3)
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  reviewRun       ReviewRun  @relation(fields: [reviewRunId], references: [id], onDelete: Cascade)
+  page            ReviewPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  author          User       @relation("ApiCheckAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+
+  @@index([reviewRunId, pageId, createdAt(sort: Desc)], map: "review_api_checks_run_page_created_idx")
+  @@index([authorUserId, createdAt(sort: Desc)], map: "review_api_checks_author_created_idx")
+  @@map("review_api_checks")
 }
