@@ -1125,6 +1125,7 @@ export class ReviewsService {
         }
       }
     }
+    signals.sort((a, b) => ({ high: 0, medium: 1, info: 2 }[a.severity] - { high: 0, medium: 1, info: 2 }[b.severity]));
     const signalCounts = signals.reduce<Record<string, number>>((counts, signal) => {
       counts[signal.severity] = (counts[signal.severity] ?? 0) + 1;
       return counts;
