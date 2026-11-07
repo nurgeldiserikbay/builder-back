@@ -1159,9 +1159,11 @@ export class ReviewsService {
           visualDiff: { compared: comparedPages.length, averageChangedPercent },
           requirements: { total: requirements.length, byStatus: countStatuses(requirements) },
           findings: { total: findings.length, byStatus: countStatuses(findings) },
-          apiChecks: { totalRecent: pages.reduce((total, page) => total + page.apiChecks.length, 0), passedRecent: pages.reduce((total, page) => total + page.apiChecks.filter((check) => check.passed).length, 0) },\n          analysis: { source: 'rules_v1', totalSignals: signals.length, bySeverity: signalCounts },
+          apiChecks: { totalRecent: pages.reduce((total, page) => total + page.apiChecks.length, 0), passedRecent: pages.reduce((total, page) => total + page.apiChecks.filter((check) => check.passed).length, 0) },
+          analysis: { source: 'rules_v1', totalSignals: signals.length, bySeverity: signalCounts },
         },
         pages,
+        signals,
         limitations: [
           'Visual comparison reports pixel differences only; it does not determine semantic design compliance.',
           'Rule-based signals summarize missing evidence and recorded outcomes; they do not infer semantic design compliance or replace AI/reviewer analysis.',
