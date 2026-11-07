@@ -962,6 +962,53 @@ export class ReviewsService {
     return { data: { assetId: source.id, status: 'verified', fileKey, nodeId } };
   }
 
+  async saveApiCheck(userId: string, reviewId: string, pageId: string, input: {
+    method: 'GET' | 'HEAD'; endpoint: string; expectedStatus: number; actualStatus: number | null;
+    durationMs: number; jsonPath: string | null; jsonMatches: boolean | null;
+    safeErrorCode: 'REQUEST_FAILED' | 'REQUEST_TIMEOUT' | null; checkedAt: string;
+  }) {
+    await this.reviewForAsset(userId, reviewId, true);
+    const page = await this.prisma.reviewPage.findFirst({ where: { id: pageId, reviewRunId: reviewId }, select: { id: true } });
+    if (!page) throw new NotFoundException('REVIEW_PAGE_NOT_FOUND');
+    let target: URL;
+    try { target = new URL(input.endpoint); } catch { throw new BadRequestException('INVALID_API_CHECK_ENDPOINT'); }
+    const localHost = ['localhost', '127.0.0.1', '[::1]'].includes(target.hostname);
+    if ((target.protocol !== 'https:' && !(target.protocol === 'http:' && localHost)) || target.username || target.password || target.search || target.hash || target.href !== input.endpoint || input.endpoint.length > 2048) {
+      throw new BadRequestException('INVALID_API_CHECK_ENDPOINT');
+    }
+    const checkedAt = new Date(input.checkedAt);
+    if (!Number.isFinite(checkedAt.getTime()) || Math.abs(Date.now() - checkedAt.getTime()) > 5 * 60 * 1000) throw new BadRequestException('INVALID_API_CHECK_TIME');
+    if (!['GET', 'HEAD'].includes(input.method)) throw new BadRequestException('INVALID_API_CHECK_METHOD');
+    if (!Number.isInteger(input.expectedStatus) || input.expectedStatus < 100 || input.expectedStatus > 599) throw new BadRequestException('INVALID_API_CHECK_STATUS');
+    if (input.actualStatus !== null && (!Number.isInteger(input.actualStatus) || input.actualStatus < 100 || input.actualStatus > 599)) throw new BadRequestException('INVALID_API_CHECK_STATUS');
+    if (!Number.isInteger(input.durationMs) || input.durationMs < 0 || input.durationMs > 12000) throw new BadRequestException('INVALID_API_CHECK_DURATION');
+    if (input.jsonPath !== null && (input.jsonPath.length > 160 || !input.jsonPath.trim())) throw new BadRequestException('INVALID_API_CHECK_JSON_PATH');
+    if (input.safeErrorCode !== null && !['REQUEST_FAILED', 'REQUEST_TIMEOUT'].includes(input.safeErrorCode)) throw new BadRequestException('INVALID_API_CHECK_ERROR');
+    if (input.safeErrorCode && input.actualStatus !== null) throw new BadRequestException('INVALID_API_CHECK_RESULT');
+    if (input.jsonMatches !== null && input.jsonPath === null) throw new BadRequestException('INVALID_API_CHECK_RESULT');
+    const passed = input.actualStatus === input.expectedStatus && input.jsonMatches !== false && input.safeErrorCode === null;
+    const created = await this.prisma.reviewApiCheck.create({
+      data: { reviewRunId: reviewId, pageId, authorUserId: userId, method: input.method, endpoint: target.origin + target.pathname,
+        expectedStatus: input.expectedStatus, actualStatus: input.actualStatus, durationMs: input.durationMs, passed,
+        jsonPath: input.jsonPath?.trim() || null, jsonMatches: input.jsonMatches, safeErrorCode: input.safeErrorCode, checkedAt },
+      select: { id: true, method: true, endpoint: true, expectedStatus: true, actualStatus: true, durationMs: true, passed: true, jsonPath: true, jsonMatches: true, safeErrorCode: true, checkedAt: true, createdAt: true },
+    });
+    const retained = await this.prisma.reviewApiCheck.findMany({ where: { reviewRunId: reviewId, pageId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 200, select: { id: true } });
+    await this.prisma.reviewApiCheck.deleteMany({ where: { reviewRunId: reviewId, pageId, id: { notIn: retained.map((item) => item.id) } } });
+    return { data: created };
+  }
+
+  async listApiChecks(userId: string, reviewId: string, pageId: string) {
+    await this.reviewForAsset(userId, reviewId);
+    const page = await this.prisma.reviewPage.findFirst({ where: { id: pageId, reviewRunId: reviewId }, select: { id: true } });
+    if (!page) throw new NotFoundException('REVIEW_PAGE_NOT_FOUND');
+    const data = await this.prisma.reviewApiCheck.findMany({
+      where: { reviewRunId: reviewId, pageId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 50,
+      select: { id: true, method: true, endpoint: true, expectedStatus: true, actualStatus: true, durationMs: true, passed: true, jsonPath: true, jsonMatches: true, safeErrorCode: true, checkedAt: true, createdAt: true },
+    });
+    return { data };
+  }
+
   async getReport(userId: string, reviewId: string) {
     if (!this.isUuid(reviewId)) throw new NotFoundException('REVIEW_NOT_FOUND');
     const review = await this.prisma.reviewRun.findFirst({
@@ -986,6 +1033,12 @@ export class ReviewsService {
               orderBy: [{ createdAt: 'desc' }],
               take: 100,
               select: { id: true, category: true, severity: true, status: true, summary: true, createdAt: true },
+            },
+            apiChecks: {
+              orderBy: [{ createdAt: 'desc' }],
+              take: 50,
+              select: { id: true, method: true, endpoint: true, expectedStatus: true, actualStatus: true, durationMs: true, passed: true, jsonPath: true, jsonMatches: true, safeErrorCode: true, checkedAt: true },
+
             },
           },
         },
@@ -1024,6 +1077,7 @@ export class ReviewsService {
         latestCapture: capture ? { status: capture.status, capturedAt: capture.capturedAt, visualDiff } : null,
         requirements: page.requirements,
         findings: page.findings,
+        apiChecks: page.apiChecks,
       };
     });
     const comparedPages = pages.filter((page) => page.latestCapture?.visualDiff?.status === 'ready'
@@ -1034,7 +1088,7 @@ export class ReviewsService {
 
     return {
       data: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         generatedAt: new Date().toISOString(),
         review: {
           id: review.id,
@@ -1056,13 +1110,14 @@ export class ReviewsService {
           visualDiff: { compared: comparedPages.length, averageChangedPercent },
           requirements: { total: requirements.length, byStatus: countStatuses(requirements) },
           findings: { total: findings.length, byStatus: countStatuses(findings) },
+          apiChecks: { totalRecent: pages.reduce((total, page) => total + page.apiChecks.length, 0), passedRecent: pages.reduce((total, page) => total + page.apiChecks.filter((check) => check.passed).length, 0) },
         },
         pages,
         limitations: [
           'Visual comparison reports pixel differences only; it does not determine semantic design compliance.',
           'Requirement statuses are reviewer-entered and are not inferred automatically.',
-          'Backend/API behavior and AI analysis are not evaluated by this report.',
-          'Page, requirement, and finding lists are capped at 100, 200 per page, and 100 per page respectively.',
+          'API checks are user-run GET/HEAD probes; they do not replace full backend integration or security testing.',
+          'Page, requirement, finding, and API-check lists are capped at 100, 200 per page, 100 per page, and 50 recent checks per page respectively.',
         ],
       },
     };
