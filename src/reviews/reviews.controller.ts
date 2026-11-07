@@ -319,6 +319,13 @@ export class ReviewsController {
     return this.reviews.getCapture(request.user.id, reviewId, captureId);
   }
 
+  @Post('reviews/:reviewId/captures/:captureId/ai-analysis')
+  @HttpCode(HttpStatus.OK)
+  async analyzeCaptureWithAi(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('captureId') captureId: string) {
+    if (!isUuid(reviewId) || !isUuid(captureId)) throw new BadRequestException('INVALID_CAPTURE_ID');
+    return this.reviews.analyzeCaptureWithAi(request.user.id, reviewId, captureId);
+  }
+
   @Get('reviews/:reviewId/report')
   async getReport(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string) {
     if (!isUuid(reviewId)) throw new BadRequestException('INVALID_REVIEW_ID');

@@ -658,7 +658,7 @@ paths:
                   data:
                     type: object
                     additionalProperties: false
-                    required: [captureId, status, screenshotUrl, sha256, visualDiff, viewport, safeErrorCode, capturedAt]
+                    required: [captureId, status, screenshotUrl, sha256, visualDiff, aiAnalysis, viewport, safeErrorCode, capturedAt]
                     properties:
                       captureId: { type: string, format: uuid }
                       status: { type: string, enum: [queued, captured, failed] }
@@ -667,6 +667,10 @@ paths:
                       viewport: { $ref: '#/components/schemas/ReviewViewport' }
                       safeErrorCode: { type: [string, 'null'], maxLength: 64 }
                       capturedAt: { type: [string, 'null'], format: date-time }
+                      aiAnalysis:
+                        oneOf:
+                          - type: 'null'
+                          - $ref: '#/components/schemas/AiDesignAnalysis'
                       visualDiff:
                         oneOf:
                           - type: 'null'
@@ -698,6 +702,43 @@ paths:
                                     changedPercent: { type: number, minimum: 0, maximum: 100 }
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+
+  /reviews/{reviewId}/captures/{captureId}/ai-analysis:
+    post:
+      tags: [Reviews]
+      operationId: analyzeReviewCaptureWithAi
+      summary: Analyze a captured page against its mapped design
+      description: Explicitly sends the private capture and mapped design to the configured OpenAI vision model. Results are stored per immutable capture and remain suggestions for human review.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ReviewId'
+        - in: path
+          name: captureId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: AI design analysis and human-review suggestions
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    additionalProperties: false
+                    required: [analysis, reused]
+                    properties:
+                      reused: { type: boolean }
+                      analysis: { $ref: '#/components/schemas/AiDesignAnalysis' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
 
   /reviews/{reviewId}/requirements:
@@ -1132,7 +1173,32 @@ components:
           maxItems: 100
           uniqueItems: true
           items: { type: string, format: uuid }
-    ReviewViewport:
+    AiDesignAnalysis:
+      type: object
+      additionalProperties: false
+      required: [status, provider, model, createdAt, summary, findings, limitation]
+      properties:
+        status: { type: string, enum: [complete] }
+        provider: { type: string, enum: [openai] }
+        model: { type: string, maxLength: 80 }
+        createdAt: { type: string, format: date-time }
+        summary: { type: string, maxLength: 1200 }
+        limitation: { type: string, maxLength: 500 }
+        findings:
+          type: array
+          maxItems: 12
+          items:
+            type: object
+            additionalProperties: false
+            required: [category, severity, confidence, summary, details, evidence]
+            properties:
+              category: { type: string, enum: [design, accessibility, requirement] }
+              severity: { type: string, enum: [critical, high, medium, low, info] }
+              confidence: { type: string, enum: [low, medium, high] }
+              summary: { type: string, maxLength: 300 }
+              details: { type: string, maxLength: 1200 }
+              evidence: { type: string, maxLength: 500 }
+  ReviewViewport:
       type: object
       additionalProperties: false
       required: [width, height, deviceScale]
@@ -1509,7 +1575,7 @@ components:
                       - type: 'null'
                       - type: object
                         additionalProperties: false
-                        required: [status, capturedAt, visualDiff, qualityAudit]
+                        required: [status, capturedAt, visualDiff, qualityAudit, aiAnalysis]
                         properties:
                           status: { type: string, enum: [queued, captured, failed] }
                           capturedAt: { type: [string, 'null'], format: date-time }
@@ -1522,6 +1588,10 @@ components:
                                 properties:
                                   status: { type: string, enum: [ready, failed] }
                                   changedPercent: { type: [number, 'null'], minimum: 0, maximum: 100 }
+                          aiAnalysis:
+                            oneOf:
+                              - type: 'null'
+                              - $ref: '#/components/schemas/AiDesignAnalysis'
                           qualityAudit:
                             oneOf:
                               - type: 'null'

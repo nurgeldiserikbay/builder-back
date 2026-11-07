@@ -435,6 +435,7 @@ model ReviewCapture {
   assetStorageKey  String?             @map("asset_storage_key") @db.VarChar(1024)
   visualDiff       Json?               @map("visual_diff") @db.JsonB
   qualityAudit     Json?               @map("quality_audit") @db.JsonB
+  aiAnalysis       Json?               @map("ai_analysis") @db.JsonB
   sha256           String?             @db.Char(64)
   browserProfile   String              @map("browser_profile") @db.VarChar(128)
   toolVersion      String?             @map("tool_version") @db.VarChar(128)
