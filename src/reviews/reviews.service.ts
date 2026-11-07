@@ -1011,7 +1011,7 @@ export class ReviewsService {
     if (!page) throw new NotFoundException('REVIEW_PAGE_NOT_FOUND');
     const data = await this.prisma.reviewApiCheck.findMany({
       where: { reviewRunId: reviewId, pageId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 50,
-      select: { id: true, method: true, endpoint: true, expectedStatus: true, actualStatus: true, durationMs: true, passed: true, jsonPath: true, jsonMatches: true, safeErrorCode: true, checkedAt: true, createdAt: true },
+      select: { id: true, requirementId: true, method: true, endpoint: true, expectedStatus: true, actualStatus: true, durationMs: true, passed: true, jsonPath: true, jsonMatches: true, safeErrorCode: true, checkedAt: true, createdAt: true },
     });
     return { data };
   }
