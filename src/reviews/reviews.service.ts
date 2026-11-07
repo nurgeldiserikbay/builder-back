@@ -1107,6 +1107,8 @@ export class ReviewsService {
       for (const requirement of page.requirements) {
         if (requirement.status === 'failed') {
           addSignal(page.id, 'REQUIREMENT_FAILED', 'high', requirement.id, 'Пункт ТЗ отмечен как невыполненный', requirement.title);
+        } else if (requirement.status === 'blocked') {
+          addSignal(page.id, 'REQUIREMENT_BLOCKED', 'medium', requirement.id, 'Пункт ТЗ заблокирован', requirement.title);
         } else if (requirement.status === 'pending' || requirement.status === 'unknown') {
           addSignal(page.id, 'REQUIREMENT_UNVERIFIED', 'medium', requirement.id, 'Пункт ТЗ ещё не подтверждён', requirement.title);
         }
