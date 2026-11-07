@@ -19,8 +19,20 @@ export interface ReviewPageCaptureInput {
   viewport: { width: number; height: number; deviceScale: number };
 }
 
+export interface ReviewPageAudit {
+  checkedAt: string;
+  pageTitlePresent: boolean;
+  languagePresent: boolean;
+  h1Count: number;
+  imagesMissingAlt: number;
+  linksMissingName: number;
+  buttonsMissingName: number;
+  formControlsMissingLabel: number;
+}
+
 export interface ReviewPageCaptureResult {
   bytes: Buffer;
+  audit: ReviewPageAudit;
   sha256: string;
   finalUrl: string;
   toolVersion: string;
@@ -103,11 +115,42 @@ export async function captureReviewPage(input: ReviewPageCaptureInput): Promise<
     await page.waitForTimeout(750);
     const finalUrl = page.url();
     if (new URL(finalUrl).origin !== allowedOrigin) throw new Error('CAPTURE_CROSS_ORIGIN_REDIRECT');
+    const auditCounts = await page.evaluate(() => {
+      const hasName = (element: Element): boolean => {
+        const ariaLabel = element.getAttribute('aria-label')?.trim();
+        const title = element.getAttribute('title')?.trim();
+        const labelledBy = element.getAttribute('aria-labelledby')?.split(/\\s+/).filter(Boolean)
+          .map((id) => document.getElementById(id)?.textContent?.trim() ?? '')
+          .some(Boolean);
+        const ownText = element.textContent?.trim();
+        const imageAlt = Array.from(element.querySelectorAll('img[alt]')).some((image) => image.getAttribute('alt')?.trim());
+        return Boolean(ariaLabel || title || labelledBy || ownText || imageAlt);
+      };
+      const formControls = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]), select, textarea'));
+      const formControlsMissingLabel = formControls.filter((element) => {
+        const labelledBy = element.getAttribute('aria-labelledby')?.split(/\\s+/).filter(Boolean)
+          .map((id) => document.getElementById(id)?.textContent?.trim() ?? '')
+          .some(Boolean);
+        const labelText = element.getAttribute('aria-label')?.trim();
+        const labels = 'labels' in element ? Array.from((element as HTMLInputElement).labels ?? []).some((label) => Boolean(label.textContent?.trim())) : false;
+        return !labelText && !labelledBy && !labels;
+      }).length;
+      return {
+        pageTitlePresent: Boolean(document.title.trim()),
+        languagePresent: Boolean(document.documentElement.lang.trim()),
+        h1Count: document.querySelectorAll('h1').length,
+        imagesMissingAlt: Array.from(document.images).filter((image) => !image.hasAttribute('alt')).length,
+        linksMissingName: Array.from(document.querySelectorAll('a[href]')).filter((element) => !hasName(element)).length,
+        buttonsMissingName: Array.from(document.querySelectorAll('button')).filter((element) => !hasName(element)).length,
+        formControlsMissingLabel,
+      };
+    });
+    const audit: ReviewPageAudit = { ...auditCounts, checkedAt: new Date().toISOString() };
     const bytes = await page.screenshot({ type: 'png', animations: 'disabled', fullPage: false, timeout: NAVIGATION_TIMEOUT_MS });
     if (bytes.length === 0 || bytes.length > MAX_SCREENSHOT_BYTES) throw new Error('CAPTURE_SCREENSHOT_SIZE_INVALID');
     const { createHash } = await import('node:crypto');
     await context.close();
-    return { bytes, sha256: createHash('sha256').update(bytes).digest('hex'), finalUrl, toolVersion: 'playwright-core/1.63' };
+    return { bytes, audit, sha256: createHash('sha256').update(bytes).digest('hex'), finalUrl, toolVersion: 'playwright-core/1.63' };
   } finally {
     await browser.close();
   }
