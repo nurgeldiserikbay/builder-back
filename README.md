@@ -14,16 +14,19 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Global validation settings plus explicit request field and enum checks on implemented endpoints.
 - Same-origin discovery runs in the standalone worker with page/depth caps, response-size limits, timeouts, redirect checks, and pinned public-address requests.
 - Private PNG/JPEG design uploads use short-lived S3-compatible POST forms, project authorization, checksum and magic-byte checks, ClamAV scanning, and verified page-to-design mappings. Verified assets can be opened through short-lived authorized download URLs.
+- Users can connect a Figma account with OAuth 2.0 and PKCE, import a frame by Figma URL, scan its rendered PNG with ClamAV, and map it to a review page. OAuth tokens are encrypted at rest.
 - Mapped pages can queue disposable Chromium captures at the saved viewport. HTTP resources are limited to pinned, public, same-origin GET requests; service workers, WebSockets, downloads, and browser credentials are disabled. Captures are stored privately with a checksum and short-lived preview URLs.
 - Captures are compared with their mapped PNG/JPEG using a bounded deterministic pixel threshold. A private red overlay, changed-pixel percentage, and highest-change regions are saved per capture. This is a visual signal only; it does not determine whether requirements, backend behavior, or the design specification pass.
+- Capture jobs record a bounded DOM quality audit: page title/language, primary heading count, image alt coverage, accessible names for links/buttons, and form labels. The audit stores counts and booleans, not page text, and is a heuristic rather than a complete accessibility assessment.
 - Reviewers can record page findings against a successful capture, with category, severity, note, and optional normalized coordinates; page-scoped finding lists are access-controlled and capped.
 - Each page can keep a manual requirements checklist. Verification status and optional evidence capture are stored together; marking a requirement satisfied requires a successful capture. This does not infer compliance automatically.
-- Authorized users can download a current JSON review report with page coverage, latest capture status, pixel-difference percentages, requirement statuses, findings, and explicit limits. The report is a live summary and does not claim AI or backend verification.
-- Users can connect their own Figma account with OAuth 2.0 and PKCE, import a frame by Figma URL, scan the rendered PNG with ClamAV, and map it to a review page. OAuth tokens are encrypted at rest.
+- Authorized users can download a current JSON review report with page coverage, latest capture status, pixel-difference percentages, requirement statuses, findings, explicit rule-based signals, and limitations. It is a live summary, not an AI assessment or proof of backend correctness.
 
-## Contract
+## Contract and limits
 
-The OpenAPI source of truth is [apps/api/openapi.yaml](apps/api/openapi.yaml). Account/project management, review-run creation, URL validation and queueing, page discovery/listing, private PNG/JPEG design uploads, page mappings, temporary asset reads, and deterministic capture-to-design pixel diffs are implemented. Figma import, AI interpretation, requirement evaluation, and report generation remain planned.
+The OpenAPI source of truth is [apps/api/openapi.yaml](apps/api/openapi.yaml). The API supports account/project management, review-run creation, URL validation and queueing, page discovery/listing, private design uploads, Figma frame import, page mappings, authorized temporary asset reads, captures, deterministic pixel diffs, manual requirements/findings, and JSON reports.
+
+AI interpretation and automatic requirement evaluation are not connected. API probes run in the browser and are user-configured; their sanitized results are evidence, not a backend correctness guarantee. DOM audit and report signals use explicit rules and cannot replace human review or a full WCAG assessment.
 
 The design review behavior and security requirements are in [DESIGN_CONFORMANCE.md](https://github.com/nurgeldiserikbay/builder-docs/blob/main/docs/DESIGN_CONFORMANCE.md). Product requirements, architecture, and implementation order live in [builder-docs](https://github.com/nurgeldiserikbay/builder-docs).
 
