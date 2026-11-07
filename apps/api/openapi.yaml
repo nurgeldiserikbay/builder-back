@@ -1367,7 +1367,7 @@ components:
     SaveReviewApiCheckRequest:
       type: object
       additionalProperties: false
-      required: [method, endpoint, expectedStatus, actualStatus, durationMs, jsonPath, jsonMatches, safeErrorCode, checkedAt]
+      required: [method, endpoint, expectedStatus, actualStatus, durationMs, jsonPath, jsonMatches, safeErrorCode, checkedAt, requirementId]
       properties:
         method: { type: string, enum: [GET, HEAD] }
         endpoint: { type: string, format: uri, maxLength: 2048, description: HTTPS URL without query or fragment; HTTP only for localhost }
@@ -1378,12 +1378,14 @@ components:
         jsonMatches: { type: [boolean, 'null'] }
         safeErrorCode: { type: [string, 'null'], enum: [REQUEST_FAILED, REQUEST_TIMEOUT, null] }
         checkedAt: { type: string, format: date-time }
+        requirementId: { type: [string, 'null'], format: uuid, description: Optional backend-category requirement on this page }
     ReviewApiCheck:
       type: object
       additionalProperties: false
-      required: [id, method, endpoint, expectedStatus, actualStatus, durationMs, passed, jsonPath, jsonMatches, safeErrorCode, checkedAt, createdAt]
+      required: [id, requirementId, method, endpoint, expectedStatus, actualStatus, durationMs, passed, jsonPath, jsonMatches, safeErrorCode, checkedAt, createdAt]
       properties:
         id: { type: string, format: uuid }
+        requirementId: { type: [string, 'null'], format: uuid }
         method: { type: string, enum: [GET, HEAD] }
         endpoint: { type: string, maxLength: 2048 }
         expectedStatus: { type: integer, minimum: 100, maximum: 599 }
