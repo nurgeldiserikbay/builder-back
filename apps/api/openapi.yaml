@@ -1192,13 +1192,13 @@ components:
             additionalProperties: false
             required: [category, severity, confidence, summary, details, evidence]
             properties:
-              category: { type: string, enum: [design, accessibility, requirement] }
+              category: { type: string, enum: [design] }
               severity: { type: string, enum: [critical, high, medium, low, info] }
               confidence: { type: string, enum: [low, medium, high] }
               summary: { type: string, maxLength: 300 }
               details: { type: string, maxLength: 1200 }
               evidence: { type: string, maxLength: 500 }
-  ReviewViewport:
+    ReviewViewport:
       type: object
       additionalProperties: false
       required: [width, height, deviceScale]
