@@ -243,6 +243,8 @@ export class ReviewsController {
     if (jsonMatches !== null && typeof jsonMatches !== 'boolean') throw new BadRequestException('INVALID_API_CHECK_RESULT');
     const safeErrorCode = body.safeErrorCode === null ? null : body.safeErrorCode;
     if (safeErrorCode !== null && safeErrorCode !== 'REQUEST_FAILED' && safeErrorCode !== 'REQUEST_TIMEOUT') throw new BadRequestException('INVALID_API_CHECK_ERROR');
+    const requirementId = body.requirementId === undefined || body.requirementId === null ? null : body.requirementId;
+    if (requirementId !== null && (typeof requirementId !== 'string' || !isUuid(requirementId))) throw new BadRequestException('INVALID_REQUIREMENT_ID');
     return this.reviews.saveApiCheck(request.user.id, reviewId, pageId, {
       method, endpoint: requiredString(body, 'endpoint', 1, 2048), expectedStatus, actualStatus: actualStatus as number | null,
       durationMs, jsonPath, jsonMatches, safeErrorCode, checkedAt: requiredString(body, 'checkedAt', 1, 40), requirementId: requirementId as string | null,
