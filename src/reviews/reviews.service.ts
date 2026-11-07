@@ -1356,10 +1356,36 @@ export class ReviewsService {
       counts[finding.confidence] = (counts[finding.confidence] ?? 0) + 1;
       return counts;
     }, {});
+    const mappedPages = pages.filter((page) => page.designMapped);
+    const backendRequirements = pages.flatMap((page) => page.requirements
+      .filter((requirement) => requirement.category === 'backend')
+      .map((requirement) => ({
+        requirementId: requirement.id,
+        checked: page.apiChecks.some((check) => check.requirementId === requirement.id),
+      })));
+    const coverage = {
+      site: {
+        checked: pages.filter((page) => page.latestCapture?.status === 'captured').length,
+        total: pages.length,
+      },
+      requirements: {
+        satisfied: requirements.filter((requirement) => requirement.status === 'satisfied').length,
+        total: requirements.length,
+      },
+      design: {
+        compared: mappedPages.filter((page) => page.latestCapture?.visualDiff?.status === 'ready'
+          && page.latestCapture.visualDiff.changedPercent !== null).length,
+        total: mappedPages.length,
+      },
+      backend: {
+        checked: backendRequirements.filter((requirement) => requirement.checked).length,
+        total: backendRequirements.length,
+      },
+    };
 
     return {
       data: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         generatedAt: new Date().toISOString(),
         review: {
           id: review.id,
@@ -1373,6 +1399,7 @@ export class ReviewsService {
           updatedAt: review.updatedAt,
         },
         summary: {
+          coverage,
           pages: {
             total: pages.length,
             mapped: pages.filter((page) => page.designMapped).length,

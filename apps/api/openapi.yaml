@@ -1487,7 +1487,7 @@ components:
           additionalProperties: false
           required: [schemaVersion, generatedAt, review, summary, pages, signals, limitations]
           properties:
-            schemaVersion: { const: 3 }
+            schemaVersion: { const: 4 }
             generatedAt: { type: string, format: date-time }
             review:
               type: object
@@ -1506,8 +1506,41 @@ components:
             summary:
               type: object
               additionalProperties: false
-              required: [pages, visualDiff, requirements, findings, apiChecks, aiReview, analysis]
+              required: [coverage, pages, visualDiff, requirements, findings, apiChecks, aiReview, analysis]
               properties:
+                coverage:
+                  type: object
+                  additionalProperties: false
+                  required: [site, requirements, design, backend]
+                  properties:
+                    site:
+                      type: object
+                      additionalProperties: false
+                      required: [checked, total]
+                      properties:
+                        checked: { type: integer, minimum: 0, maximum: 100 }
+                        total: { type: integer, minimum: 0, maximum: 100 }
+                    requirements:
+                      type: object
+                      additionalProperties: false
+                      required: [satisfied, total]
+                      properties:
+                        satisfied: { type: integer, minimum: 0, maximum: 20000 }
+                        total: { type: integer, minimum: 0, maximum: 20000 }
+                    design:
+                      type: object
+                      additionalProperties: false
+                      required: [compared, total]
+                      properties:
+                        compared: { type: integer, minimum: 0, maximum: 100 }
+                        total: { type: integer, minimum: 0, maximum: 100 }
+                    backend:
+                      type: object
+                      additionalProperties: false
+                      required: [checked, total]
+                      properties:
+                        checked: { type: integer, minimum: 0, maximum: 20000 }
+                        total: { type: integer, minimum: 0, maximum: 20000 }
                 pages:
                   type: object
                   additionalProperties: false
