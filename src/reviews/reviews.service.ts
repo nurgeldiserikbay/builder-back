@@ -965,7 +965,7 @@ export class ReviewsService {
   async saveApiCheck(userId: string, reviewId: string, pageId: string, input: {
     method: 'GET' | 'HEAD'; endpoint: string; expectedStatus: number; actualStatus: number | null;
     durationMs: number; jsonPath: string | null; jsonMatches: boolean | null;
-    safeErrorCode: 'REQUEST_FAILED' | 'REQUEST_TIMEOUT' | null; checkedAt: string;
+    safeErrorCode: 'REQUEST_FAILED' | 'REQUEST_TIMEOUT' | null; checkedAt: string; requirementId: string | null;
   }) {
     await this.reviewForAsset(userId, reviewId, true);
     const page = await this.prisma.reviewPage.findFirst({ where: { id: pageId, reviewRunId: reviewId }, select: { id: true } });
@@ -986,12 +986,19 @@ export class ReviewsService {
     if (input.safeErrorCode !== null && !['REQUEST_FAILED', 'REQUEST_TIMEOUT'].includes(input.safeErrorCode)) throw new BadRequestException('INVALID_API_CHECK_ERROR');
     if (input.safeErrorCode && input.actualStatus !== null) throw new BadRequestException('INVALID_API_CHECK_RESULT');
     if (input.jsonMatches !== null && input.jsonPath === null) throw new BadRequestException('INVALID_API_CHECK_RESULT');
+    if (input.requirementId !== null) {
+      const requirement = await this.prisma.reviewRequirement.findFirst({
+        where: { id: input.requirementId, reviewRunId: reviewId, pageId, category: 'backend' },
+        select: { id: true },
+      });
+      if (!requirement) throw new UnprocessableEntityException('API_CHECK_REQUIREMENT_NOT_AVAILABLE');
+    }
     const passed = input.actualStatus === input.expectedStatus && input.jsonMatches !== false && input.safeErrorCode === null;
     const created = await this.prisma.reviewApiCheck.create({
-      data: { reviewRunId: reviewId, pageId, authorUserId: userId, method: input.method, endpoint: target.origin + target.pathname,
+      data: { reviewRunId: reviewId, pageId, requirementId: input.requirementId, authorUserId: userId, method: input.method, endpoint: target.origin + target.pathname,
         expectedStatus: input.expectedStatus, actualStatus: input.actualStatus, durationMs: input.durationMs, passed,
         jsonPath: input.jsonPath?.trim() || null, jsonMatches: input.jsonMatches, safeErrorCode: input.safeErrorCode, checkedAt },
-      select: { id: true, method: true, endpoint: true, expectedStatus: true, actualStatus: true, durationMs: true, passed: true, jsonPath: true, jsonMatches: true, safeErrorCode: true, checkedAt: true, createdAt: true },
+      select: { id: true, requirementId: true, method: true, endpoint: true, expectedStatus: true, actualStatus: true, durationMs: true, passed: true, jsonPath: true, jsonMatches: true, safeErrorCode: true, checkedAt: true, createdAt: true },
     });
     const retained = await this.prisma.reviewApiCheck.findMany({ where: { reviewRunId: reviewId, pageId }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 200, select: { id: true } });
     await this.prisma.reviewApiCheck.deleteMany({ where: { reviewRunId: reviewId, pageId, id: { notIn: retained.map((item) => item.id) } } });
@@ -1037,7 +1044,7 @@ export class ReviewsService {
             apiChecks: {
               orderBy: [{ createdAt: 'desc' }],
               take: 50,
-              select: { id: true, method: true, endpoint: true, expectedStatus: true, actualStatus: true, durationMs: true, passed: true, jsonPath: true, jsonMatches: true, safeErrorCode: true, checkedAt: true },
+              select: { id: true, requirementId: true, method: true, endpoint: true, expectedStatus: true, actualStatus: true, durationMs: true, passed: true, jsonPath: true, jsonMatches: true, safeErrorCode: true, checkedAt: true },
 
             },
           },
