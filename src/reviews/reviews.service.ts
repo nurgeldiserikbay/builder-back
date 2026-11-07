@@ -1087,6 +1087,48 @@ export class ReviewsService {
         apiChecks: page.apiChecks,
       };
     });
+    const signals: Array<{ id: string; code: string; severity: 'high' | 'medium' | 'info'; pageId: string; requirementId: string | null; title: string; details: string }> = [];
+    const addSignal = (pageId: string, code: string, severity: 'high' | 'medium' | 'info', requirementId: string | null, title: string, details: string) => {
+      if (signals.length < 500) signals.push({ id: [code, pageId, requirementId ?? 'page'].join(':'), code, severity, pageId, requirementId, title, details });
+    };
+    for (const page of pages) {
+      if (review.mode === 'site_and_design' && !page.designMapped) {
+        addSignal(page.id, 'DESIGN_NOT_MAPPED', 'medium', null, 'Для страницы не назначен макет', 'Сопоставьте страницу с макетом, чтобы результат сравнения отражал дизайн-ТЗ.');
+      }
+      if (!page.latestCapture) {
+        addSignal(page.id, 'SITE_NOT_CAPTURED', 'medium', null, 'Нет снимка рабочей страницы', 'Запустите захват страницы перед оценкой сайта и сравнением с макетом.');
+      } else if (page.latestCapture.status === 'failed') {
+        addSignal(page.id, 'CAPTURE_FAILED', 'high', null, 'Не удалось получить снимок страницы', 'Проверьте доступность URL и повторите захват.');
+      }
+      const changedPercent = page.latestCapture?.visualDiff?.changedPercent;
+      if (page.latestCapture?.visualDiff?.status === 'ready' && changedPercent !== null && changedPercent !== undefined && changedPercent >= 20) {
+        addSignal(page.id, 'LARGE_VISUAL_DIFFERENCE', 'medium', null, 'Большое отличие от макета', `Пиксельное отличие составляет ${changedPercent}%. Проверьте области отличия вручную.`);
+      }
+      for (const requirement of page.requirements) {
+        if (requirement.status === 'failed') {
+          addSignal(page.id, 'REQUIREMENT_FAILED', 'high', requirement.id, 'Пункт ТЗ отмечен как невыполненный', requirement.title);
+        } else if (requirement.status === 'pending' || requirement.status === 'unknown') {
+          addSignal(page.id, 'REQUIREMENT_UNVERIFIED', 'medium', requirement.id, 'Пункт ТЗ ещё не подтверждён', requirement.title);
+        }
+        if (requirement.category === 'backend') {
+          const checks = page.apiChecks.filter((check) => check.requirementId === requirement.id);
+          if (checks.length === 0) {
+            addSignal(page.id, 'BACKEND_REQUIREMENT_UNTESTED', 'medium', requirement.id, 'Для backend-пункта нет API-проверки', requirement.title);
+          } else if (!checks[0].passed) {
+            addSignal(page.id, 'API_CHECK_FAILED', 'high', requirement.id, 'Последняя API-проверка не пройдена', requirement.title);
+          }
+        }
+      }
+      for (const finding of page.findings) {
+        if (finding.status === 'open' && (finding.severity === 'critical' || finding.severity === 'high')) {
+          addSignal(page.id, 'HIGH_SEVERITY_FINDING', 'high', null, 'Открыто важное замечание', finding.summary);
+        }
+      }
+    }
+    const signalCounts = signals.reduce<Record<string, number>>((counts, signal) => {
+      counts[signal.severity] = (counts[signal.severity] ?? 0) + 1;
+      return counts;
+    }, {});
     const comparedPages = pages.filter((page) => page.latestCapture?.visualDiff?.status === 'ready'
       && page.latestCapture.visualDiff.changedPercent !== null);
     const averageChangedPercent = comparedPages.length > 0
@@ -1095,7 +1137,7 @@ export class ReviewsService {
 
     return {
       data: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         generatedAt: new Date().toISOString(),
         review: {
           id: review.id,
@@ -1117,14 +1159,14 @@ export class ReviewsService {
           visualDiff: { compared: comparedPages.length, averageChangedPercent },
           requirements: { total: requirements.length, byStatus: countStatuses(requirements) },
           findings: { total: findings.length, byStatus: countStatuses(findings) },
-          apiChecks: { totalRecent: pages.reduce((total, page) => total + page.apiChecks.length, 0), passedRecent: pages.reduce((total, page) => total + page.apiChecks.filter((check) => check.passed).length, 0) },
+          apiChecks: { totalRecent: pages.reduce((total, page) => total + page.apiChecks.length, 0), passedRecent: pages.reduce((total, page) => total + page.apiChecks.filter((check) => check.passed).length, 0) },\n          analysis: { source: 'rules_v1', totalSignals: signals.length, bySeverity: signalCounts },
         },
         pages,
         limitations: [
           'Visual comparison reports pixel differences only; it does not determine semantic design compliance.',
-          'Requirement statuses are reviewer-entered and are not inferred automatically.',
+          'Rule-based signals summarize missing evidence and recorded outcomes; they do not infer semantic design compliance or replace AI/reviewer analysis.',
           'API checks are user-run GET/HEAD probes; they do not replace full backend integration or security testing.',
-          'Page, requirement, finding, and API-check lists are capped at 100, 200 per page, 100 per page, and 50 recent checks per page respectively.',
+          'Page, requirement, finding, and API-check lists are capped at 100, 200 per page, 100 per page, and 50 recent checks per page respectively; rule-based signals are capped at 500 per report.',
         ],
       },
     };
