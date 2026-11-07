@@ -219,6 +219,36 @@ export class ReviewsController {
     return this.reviews.listRequirements(request.user.id, reviewId, pageId);
   }
 
+  @Get('reviews/:reviewId/pages/:pageId/api-checks')
+  async listApiChecks(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('pageId') pageId: string) {
+    if (!isUuid(reviewId) || !isUuid(pageId)) throw new BadRequestException('INVALID_REVIEW_PAGE_ID');
+    return this.reviews.listApiChecks(request.user.id, reviewId, pageId);
+  }
+
+  @Post('reviews/:reviewId/pages/:pageId/api-checks')
+  async saveApiCheck(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('pageId') pageId: string, @Body() raw: unknown) {
+    if (!isUuid(reviewId) || !isUuid(pageId)) throw new BadRequestException('INVALID_REVIEW_PAGE_ID');
+    const body = parseBody(raw);
+    rejectUnknown(body, ['method', 'endpoint', 'expectedStatus', 'actualStatus', 'durationMs', 'jsonPath', 'jsonMatches', 'safeErrorCode', 'checkedAt']);
+    const method = body.method;
+    if (method !== 'GET' && method !== 'HEAD') throw new BadRequestException('INVALID_API_CHECK_METHOD');
+    const expectedStatus = body.expectedStatus;
+    const actualStatus = body.actualStatus;
+    const durationMs = body.durationMs;
+    if (typeof expectedStatus !== 'number') throw new BadRequestException('INVALID_API_CHECK_STATUS');
+    if (actualStatus !== null && typeof actualStatus !== 'number') throw new BadRequestException('INVALID_API_CHECK_STATUS');
+    if (typeof durationMs !== 'number') throw new BadRequestException('INVALID_API_CHECK_DURATION');
+    const jsonPath = body.jsonPath === null ? null : requiredString(body, 'jsonPath', 1, 160);
+    const jsonMatches = body.jsonMatches === null ? null : body.jsonMatches;
+    if (jsonMatches !== null && typeof jsonMatches !== 'boolean') throw new BadRequestException('INVALID_API_CHECK_RESULT');
+    const safeErrorCode = body.safeErrorCode === null ? null : body.safeErrorCode;
+    if (safeErrorCode !== null && safeErrorCode !== 'REQUEST_FAILED' && safeErrorCode !== 'REQUEST_TIMEOUT') throw new BadRequestException('INVALID_API_CHECK_ERROR');
+    return this.reviews.saveApiCheck(request.user.id, reviewId, pageId, {
+      method, endpoint: requiredString(body, 'endpoint', 1, 2048), expectedStatus, actualStatus: actualStatus as number | null,
+      durationMs, jsonPath, jsonMatches, safeErrorCode, checkedAt: requiredString(body, 'checkedAt', 1, 40),
+    });
+  }
+
   @Patch('reviews/:reviewId/requirements/:requirementId')
   async updateRequirement(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Param('requirementId') requirementId: string, @Body() raw: unknown) {
     if (!isUuid(reviewId) || !isUuid(requirementId)) throw new BadRequestException('INVALID_REQUIREMENT_ID');
