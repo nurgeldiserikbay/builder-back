@@ -1506,7 +1506,7 @@ components:
             summary:
               type: object
               additionalProperties: false
-              required: [pages, visualDiff, requirements, findings, apiChecks, analysis]
+              required: [pages, visualDiff, requirements, findings, apiChecks, aiReview, analysis]
               properties:
                 pages:
                   type: object
@@ -1544,6 +1544,20 @@ components:
                   properties:
                     totalRecent: { type: integer, minimum: 0 }
                     passedRecent: { type: integer, minimum: 0 }
+                aiReview:
+                  type: object
+                  additionalProperties: false
+                  required: [analyzedCaptures, totalSuggestions, byConfidence]
+                  properties:
+                    analyzedCaptures: { type: integer, minimum: 0, maximum: 100 }
+                    totalSuggestions: { type: integer, minimum: 0, maximum: 1200 }
+                    byConfidence:
+                      type: object
+                      additionalProperties: false
+                      properties:
+                        high: { type: integer, minimum: 0 }
+                        medium: { type: integer, minimum: 0 }
+                        low: { type: integer, minimum: 0 }
                 analysis:
                   type: object
                   additionalProperties: false

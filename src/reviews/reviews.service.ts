@@ -1350,6 +1350,12 @@ export class ReviewsService {
     const averageChangedPercent = comparedPages.length > 0
       ? Math.round(comparedPages.reduce((sum, page) => sum + (page.latestCapture?.visualDiff?.changedPercent ?? 0), 0) / comparedPages.length * 10) / 10
       : null;
+    const aiAnalyses = pages.flatMap((page) => page.latestCapture?.aiAnalysis ? [page.latestCapture.aiAnalysis] : []);
+    const aiSuggestions = aiAnalyses.flatMap((analysis) => analysis.findings);
+    const aiByConfidence = aiSuggestions.reduce<Record<string, number>>((counts, finding) => {
+      counts[finding.confidence] = (counts[finding.confidence] ?? 0) + 1;
+      return counts;
+    }, {});
 
     return {
       data: {
@@ -1376,6 +1382,7 @@ export class ReviewsService {
           requirements: { total: requirements.length, byStatus: countStatuses(requirements) },
           findings: { total: findings.length, byStatus: countStatuses(findings) },
           apiChecks: { totalRecent: pages.reduce((total, page) => total + page.apiChecks.length, 0), passedRecent: pages.reduce((total, page) => total + page.apiChecks.filter((check) => check.passed).length, 0) },
+          aiReview: { analyzedCaptures: aiAnalyses.length, totalSuggestions: aiSuggestions.length, byConfidence: aiByConfidence },
           analysis: { source: 'rules_v1', totalSignals: signals.length, bySeverity: signalCounts },
         },
         pages,
