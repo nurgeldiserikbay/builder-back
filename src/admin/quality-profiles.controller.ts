@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { StaffAuthGuard } from './staff-auth.guard.js';
 import type { StaffRequest } from './staff-auth.guard.js';
 import { StaffRoles, StaffRolesGuard } from './staff-roles.guard.js';
@@ -43,6 +43,13 @@ export class QualityProfilesController {
     const description = parseText(body.description, 'description', 1, 500);
     const policy = body.policy === undefined ? defaultQualityPolicy() : parseQualityPolicy(body.policy);
     return this.profiles.create({ name, description, policy }, request.staff);
+  }
+
+
+  @Put(':profileKey/default')
+  @StaffRoles('super_admin', 'quality_admin')
+  setDefault(@Param('profileKey') profileKey: string, @Req() request: StaffRequest) {
+    return this.profiles.setDefault(profileKey, request.staff);
   }
 
   @Post(':profileKey/versions')

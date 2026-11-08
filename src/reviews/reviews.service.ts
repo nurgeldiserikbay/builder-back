@@ -6,6 +6,8 @@ import { connect } from 'node:net';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { ReviewTargetPolicyError, resolveAndValidateReviewTarget } from './url-target-policy.js';
 import { PrismaService } from '../database/prisma.service.js';
+import { parseQualityPolicy } from '../admin/quality-profiles.service.js';
+import type { QualityPolicy } from '../admin/quality-profiles.service.js';
 
 type AiDesignAnalysis = {
   status: 'complete';
@@ -51,6 +53,113 @@ function normalizeAiDesignAnalysis(value: unknown): AiDesignAnalysis | null {
   return {
     status: 'complete', provider: 'openai', model: item.model.slice(0, 80), createdAt: item.createdAt,
     summary: item.summary.slice(0, 1200), findings, limitation: item.limitation.slice(0, 500),
+  };
+}
+
+
+type QualityGatePage = { latestCapture: { qualityAudit: unknown } | null; findings: Array<{ category: string; severity: string; status: string }>; apiChecks: Array<{ passed: boolean }> };
+type QualityGateRequirement = { status: string };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+function evaluateQualityGate(configuration: unknown, pages: QualityGatePage[], requirements: QualityGateRequirement[], evaluatedAt: string) {
+  const apiChecks = pages.flatMap((page) => page.apiChecks);
+  const apiCheckSummary = { checked: apiChecks.length, failed: apiChecks.filter((check) => !check.passed).length };
+  const config = isRecord(configuration) ? configuration.qualityProfile : null;
+  if (config === null || config === undefined) {
+    return {
+      status: 'not_configured' as const,
+      profile: null,
+      evaluatedAt,
+      requirementCoverage: { status: 'not_applicable' as const, actualPercent: null, minimumPercent: null },
+      apiChecks: apiCheckSummary,
+      categories: [],
+      blockingReasons: [],
+    };
+  }
+  if (!isRecord(config) || typeof config.key !== 'string' || typeof config.name !== 'string'
+    || typeof config.version !== 'number' || !Number.isInteger(config.version)) {
+    return {
+      status: 'invalid_configuration' as const,
+      profile: null,
+      evaluatedAt,
+      requirementCoverage: { status: 'not_applicable' as const, actualPercent: null, minimumPercent: null },
+      apiChecks: apiCheckSummary,
+      categories: [],
+      blockingReasons: ['profile_snapshot_invalid'],
+    };
+  }
+  let policy: QualityPolicy;
+  try { policy = parseQualityPolicy(config.policy); }
+  catch {
+    return {
+      status: 'invalid_configuration' as const,
+      profile: { key: config.key, name: config.name, version: config.version },
+      evaluatedAt,
+      requirementCoverage: { status: 'not_applicable' as const, actualPercent: null, minimumPercent: null },
+      apiChecks: apiCheckSummary,
+      categories: [],
+      blockingReasons: ['profile_policy_invalid'],
+    };
+  }
+
+  const blockingReasons: string[] = [];
+  if (apiCheckSummary.failed > 0) blockingReasons.push('backend_api_check_failed');
+  const satisfied = requirements.filter((requirement) => requirement.status === 'satisfied').length;
+  const actualRequirementCoverage = requirements.length > 0 ? Math.round(satisfied / requirements.length * 100) : null;
+  const requirementCoverage = requirements.length === 0
+    ? { status: 'not_applicable' as const, actualPercent: null, minimumPercent: policy.minimumRequirementCoverage }
+    : {
+      status: (actualRequirementCoverage ?? 0) >= policy.minimumRequirementCoverage ? 'passed' as const : 'blocked' as const,
+      actualPercent: actualRequirementCoverage,
+      minimumPercent: policy.minimumRequirementCoverage,
+    };
+  if (requirementCoverage.status === 'blocked') blockingReasons.push('requirements_coverage_below_minimum');
+
+  const qualityAuditPages = pages.filter((page) => page.latestCapture?.qualityAudit !== null && page.latestCapture?.qualityAudit !== undefined).length;
+  const categoryIds = ['security', 'accessibility', 'performance', 'seo'] as const;
+  const categories = categoryIds.map((id) => {
+    const rule = policy.categories[id];
+    const evidenceChecked = id === 'accessibility' || id === 'seo' ? qualityAuditPages : 0;
+    const evidence = { checked: evidenceChecked, total: pages.length };
+    const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+    const addCount = (severity: keyof typeof counts, amount = 1) => { counts[severity] = Math.min(100000, counts[severity] + amount); };
+    for (const page of pages) {
+      for (const finding of page.findings) {
+        if (finding.category === id && finding.status === 'open' && finding.severity in counts) {
+          addCount(finding.severity as keyof typeof counts);
+        }
+      }
+      const audit = isRecord(page.latestCapture?.qualityAudit) ? page.latestCapture?.qualityAudit : null;
+      const safeCount = (key: string) => audit && typeof audit[key] === 'number' && Number.isInteger(audit[key]) ? Math.max(0, Math.min(100000, audit[key] as number)) : 0;
+      if (id === 'accessibility' && audit) {
+        addCount('high', safeCount('linksMissingName') + safeCount('buttonsMissingName'));
+        addCount('medium', safeCount('imagesMissingAlt') + safeCount('formControlsMissingLabel'));
+      }
+      if (id === 'seo' && audit) {
+        addCount('medium', (audit.pageTitlePresent === true ? 0 : 1) + (audit.languagePresent === true ? 0 : 1) + (safeCount('h1Count') === 0 ? 1 : 0));
+      }
+    }
+    if (!rule.enabled) return { id, enabled: false, required: rule.required, status: 'disabled' as const, evidence, issues: counts, reasons: [] as string[] };
+    const reasons: string[] = [];
+    if (rule.required && (evidence.total === 0 || evidence.checked < evidence.total)) reasons.push(id === 'security' || id === 'performance' ? 'assessment_not_supported' : 'evidence_incomplete');
+    for (const severity of policy.blockingSeverities) {
+      const allowed = severity === 'critical' ? rule.maxOpenCritical : severity === 'high' ? rule.maxOpenHigh : 0;
+      if (counts[severity as keyof typeof counts] > allowed) reasons.push(`${severity}_finding_limit_exceeded`);
+    }
+    if (reasons.length > 0) blockingReasons.push(...reasons.map((reason) => `${id}:${reason}`));
+    const status = reasons.length > 0 ? 'blocked' as const : evidence.checked > 0 && evidence.checked === evidence.total ? 'passed' as const : 'not_assessed' as const;
+    return { id, enabled: true, required: rule.required, status, evidence, issues: counts, reasons };
+  });
+  const hasApplicableCheck = requirements.length > 0 || categories.some((item) => item.enabled && item.required);
+  return {
+    status: blockingReasons.length > 0 ? 'blocked' as const : hasApplicableCheck ? 'passed' as const : 'not_assessed' as const,
+    profile: { key: config.key, name: config.name, version: config.version },
+    evaluatedAt,
+    requirementCoverage,
+    apiChecks: apiCheckSummary,
+    categories,
+    blockingReasons,
   };
 }
 
@@ -699,8 +808,24 @@ export class ReviewsService {
       }
       if (previous) await tx.idempotencyRecord.delete({ where: { id: previous.id } });
 
+      const defaultProfile = await tx.qualityProfile.findFirst({
+        where: { isDefault: true },
+        include: { versions: { where: { status: 'active' }, take: 1 } },
+      });
+      const activeProfileVersion = defaultProfile?.versions[0];
+      const configuration = defaultProfile && activeProfileVersion ? JSON.parse(JSON.stringify({
+        qualityProfile: {
+          key: defaultProfile.key,
+          name: defaultProfile.name,
+          version: activeProfileVersion.version,
+          policy: activeProfileVersion.policy,
+        },
+      })) : undefined;
       const review = await tx.reviewRun.create({
-        data: { projectId, ownerUserId: userId, ...input },
+        data: {
+          projectId, ownerUserId: userId, ...input,
+          ...(configuration ? { configuration } : {}),
+        },
         select: reviewSelect,
       });
       await tx.idempotencyRecord.create({
@@ -1205,7 +1330,7 @@ export class ReviewsService {
       where: { id: reviewId, project: { members: { some: { userId, status: 'active' } } } },
       select: {
         id: true, projectId: true, title: true, mode: true, status: true, locale: true,
-        baseOrigin: true, createdAt: true, updatedAt: true,
+        baseOrigin: true, configuration: true, createdAt: true, updatedAt: true,
         pages: {
           where: { status: { not: 'excluded' } },
           orderBy: [{ route: 'asc' }],
@@ -1383,10 +1508,12 @@ export class ReviewsService {
       },
     };
 
+    const generatedAt = new Date().toISOString();
+    const qualityGate = evaluateQualityGate(review.configuration, pages, requirements, generatedAt);
     return {
       data: {
-        schemaVersion: 4,
-        generatedAt: new Date().toISOString(),
+        schemaVersion: 5,
+        generatedAt,
         review: {
           id: review.id,
           projectId: review.projectId,
@@ -1398,6 +1525,7 @@ export class ReviewsService {
           createdAt: review.createdAt,
           updatedAt: review.updatedAt,
         },
+        qualityGate,
         summary: {
           coverage,
           pages: {
@@ -1419,6 +1547,7 @@ export class ReviewsService {
           'Rule-based signals summarize missing evidence and recorded outcomes; they do not infer semantic design compliance or replace AI/reviewer analysis.',
           'Page structure and accessibility checks are heuristic DOM counts; they are not a complete WCAG audit.',
           'API checks are user-run GET/HEAD probes; they do not replace full backend integration or security testing.',
+          'The configured quality gate evaluates available report evidence only. Full security and performance assessments are not implemented, and a report result does not authorize publication.',
           'Page, requirement, finding, and API-check lists are capped at 100, 200 per page, 100 per page, and 50 recent checks per page respectively; rule-based signals are capped at 500 per report.',
         ],
       },

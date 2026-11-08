@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.4.0
+  version: 1.5.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -114,6 +114,24 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /admin/quality-profiles/{profileKey}/default:
+    put:
+      tags: [QualityProfiles]
+      operationId: setDefaultQualityProfile
+      summary: Select the default profile used by new reviews
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - in: path
+          name: profileKey
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 80 }
+      responses:
+        '200': { description: Default profile changed }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /admin/quality-profiles/{profileKey}/versions:
     post:
       tags: [QualityProfiles]
@@ -1240,6 +1258,71 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
   schemas:
+    QualityGateReport:
+      type: object
+      additionalProperties: false
+      required: [status, profile, evaluatedAt, requirementCoverage, apiChecks, categories, blockingReasons]
+      properties:
+        status: { type: string, enum: [not_configured, invalid_configuration, not_assessed, blocked, passed] }
+        profile:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [key, name, version]
+              properties:
+                key: { type: string, maxLength: 80 }
+                name: { type: string, maxLength: 120 }
+                version: { type: integer, minimum: 1 }
+            - type: 'null'
+        evaluatedAt: { type: string, format: date-time }
+        requirementCoverage:
+          type: object
+          additionalProperties: false
+          required: [status, actualPercent, minimumPercent]
+          properties:
+            status: { type: string, enum: [not_applicable, passed, blocked] }
+            actualPercent: { type: [integer, 'null'], minimum: 0, maximum: 100 }
+            minimumPercent: { type: [integer, 'null'], minimum: 0, maximum: 100 }
+        apiChecks:
+          type: object
+          additionalProperties: false
+          required: [checked, failed]
+          properties:
+            checked: { type: integer, minimum: 0, maximum: 5000 }
+            failed: { type: integer, minimum: 0, maximum: 5000 }
+        categories:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, enabled, required, status, evidence, issues, reasons]
+            properties:
+              id: { type: string, enum: [security, accessibility, performance, seo] }
+              enabled: { type: boolean }
+              required: { type: boolean }
+              status: { type: string, enum: [disabled, not_assessed, blocked, passed] }
+              evidence:
+                type: object
+                additionalProperties: false
+                required: [checked, total]
+                properties:
+                  checked: { type: integer, minimum: 0, maximum: 100 }
+                  total: { type: integer, minimum: 0, maximum: 100 }
+              issues:
+                type: object
+                additionalProperties: false
+                required: [critical, high, medium, low]
+                properties:
+                  critical: { type: integer, minimum: 0 }
+                  high: { type: integer, minimum: 0 }
+                  medium: { type: integer, minimum: 0 }
+                  low: { type: integer, minimum: 0 }
+              reasons:
+                type: array
+                items: { type: string, maxLength: 80 }
+        blockingReasons:
+          type: array
+          items: { type: string, maxLength: 120 }
     QualityProfileCreateRequest:
       type: object
       additionalProperties: false
@@ -1297,11 +1380,12 @@ components:
     QualityProfile:
       type: object
       additionalProperties: false
-      required: [key, name, description, createdAt, createdBy, versions]
+      required: [key, name, description, isDefault, createdAt, createdBy, versions]
       properties:
         key: { type: string, maxLength: 80 }
         name: { type: string, maxLength: 120 }
         description: { type: string, maxLength: 500 }
+        isDefault: { type: boolean }
         createdAt: { type: string, format: date-time }
         createdBy: { type: string, maxLength: 120 }
         versions:
@@ -1828,9 +1912,9 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [schemaVersion, generatedAt, review, summary, pages, signals, limitations]
+          required: [schemaVersion, generatedAt, review, qualityGate, summary, pages, signals, limitations]
           properties:
-            schemaVersion: { const: 4 }
+            schemaVersion: { const: 5 }
             generatedAt: { type: string, format: date-time }
             review:
               type: object
@@ -1846,6 +1930,7 @@ components:
                 siteOrigin: { type: [string, 'null'], maxLength: 512 }
                 createdAt: { type: string, format: date-time }
                 updatedAt: { type: string, format: date-time }
+            qualityGate: { $ref: '#/components/schemas/QualityGateReport' }
             summary:
               type: object
               additionalProperties: false

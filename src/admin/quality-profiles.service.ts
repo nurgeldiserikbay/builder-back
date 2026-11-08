@@ -81,6 +81,7 @@ export class QualityProfilesService {
       key: profile.key,
       name: profile.name,
       description: profile.description,
+      isDefault: profile.isDefault,
       createdAt: profile.createdAt.toISOString(),
       createdBy: profile.createdBy.displayName,
       versions: profile.versions.map(safeVersion),
@@ -97,6 +98,7 @@ export class QualityProfilesService {
       key: profile.key,
       name: profile.name,
       description: profile.description,
+      isDefault: profile.isDefault,
       createdAt: profile.createdAt.toISOString(),
       createdBy: profile.createdBy.displayName,
       versions: profile.versions.map(safeVersion),
@@ -116,7 +118,7 @@ export class QualityProfilesService {
         await tx.adminAuditEvent.create({ data: { staffId: staff.id, eventType: 'quality_profile.version_created', targetType: 'quality_profile', targetId: `${profile.key}:1`, details: JSON.parse(JSON.stringify({ version: 1, policy: input.policy })) } });
         return { profile, version };
       });
-      return { data: { key: created.profile.key, name: created.profile.name, description: created.profile.description, version: safeVersion(created.version) } };
+      return { data: { key: created.profile.key, name: created.profile.name, description: created.profile.description, isDefault: created.profile.isDefault, version: safeVersion(created.version) } };
     } catch (error) {
       if (typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'P2002') throw new ConflictException('QUALITY_PROFILE_KEY_ALREADY_EXISTS');
       throw error;
@@ -172,9 +174,31 @@ export class QualityProfilesService {
         data: { status: 'active', activatedAt: new Date() },
       });
       if (updated.count !== 1) throw new ConflictException('QUALITY_PROFILE_VERSION_CANNOT_BE_ACTIVATED');
-      await tx.adminAuditEvent.create({ data: { staffId: staff.id, eventType: 'quality_profile.version_activated', targetType: 'quality_profile', targetId: `${profile.key}:${versionNumber}`, details: JSON.parse(JSON.stringify({ previousActiveVersion: previous?.version ?? null, activatedVersion: versionNumber })) } });
+      const defaultProfile = await tx.qualityProfile.findFirst({ where: { isDefault: true }, select: { id: true } });
+      if (!defaultProfile) await tx.qualityProfile.update({ where: { id: profile.id }, data: { isDefault: true } });
+      await tx.adminAuditEvent.create({ data: { staffId: staff.id, eventType: 'quality_profile.version_activated', targetType: 'quality_profile', targetId: `${profile.key}:${versionNumber}`, details: JSON.parse(JSON.stringify({ previousActiveVersion: previous?.version ?? null, activatedVersion: versionNumber, setAsDefault: !defaultProfile })) } });
       const version = await tx.qualityProfileVersion.findUniqueOrThrow({ where: { profileId_version: { profileId: profile.id, version: versionNumber } }, include: { authoredBy: { select: { displayName: true } } } });
-      return { data: safeVersion(version) };
+      return { data: { ...safeVersion(version), isDefault: !defaultProfile || profile.isDefault } };
     });
   }
+  async setDefault(profileKey: string, staff: StaffIdentity) {
+    return this.prisma.$transaction(async (tx) => {
+      const profile = await tx.qualityProfile.findUnique({
+        where: { key: profileKey },
+        include: { versions: { where: { status: 'active' }, take: 1, select: { version: true } } },
+      });
+      if (!profile) throw new NotFoundException('QUALITY_PROFILE_NOT_FOUND');
+      if (!profile.versions[0]) throw new ConflictException('QUALITY_PROFILE_HAS_NO_ACTIVE_VERSION');
+      const previous = await tx.qualityProfile.findFirst({ where: { isDefault: true }, select: { key: true } });
+      if (profile.isDefault) return { data: { key: profile.key, isDefault: true } };
+      await tx.qualityProfile.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
+      await tx.qualityProfile.update({ where: { id: profile.id }, data: { isDefault: true } });
+      await tx.adminAuditEvent.create({ data: {
+        staffId: staff.id, eventType: 'quality_profile.default_changed', targetType: 'quality_profile', targetId: profile.key,
+        details: JSON.parse(JSON.stringify({ previousDefault: previous?.key ?? null, nextDefault: profile.key, activeVersion: profile.versions[0].version })),
+      } });
+      return { data: { key: profile.key, isDefault: true } };
+    });
+  }
+
 }
