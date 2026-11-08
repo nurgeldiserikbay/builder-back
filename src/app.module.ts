@@ -5,9 +5,10 @@ import { AuthModule } from './auth/auth.module.js';
 import { ProjectsModule } from './projects/projects.module.js';
 import { WorkspacesController } from './workspaces/workspaces.controller.js';
 import { ReviewsModule } from './reviews/reviews.module.js';
+import { CapabilitiesModule } from './capabilities/capabilities.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule],
+  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule],
   controllers: [HealthController, WorkspacesController],
 })
 export class AppModule {}

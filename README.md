@@ -4,6 +4,8 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 
 ## Implemented
 
+- Public `GET /api/v1/capabilities` returns the deterministic, versioned platform support manifest used by product and admin surfaces.
+
 - `GET /api/v1/health` checks that the HTTP process is responding.
 - `GET /api/v1/health/ready` checks PostgreSQL readiness without returning connection details.
 - Shared Prisma 7 PostgreSQL client, graceful shutdown, schema validation, and deployable migrations.
