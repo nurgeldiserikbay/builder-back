@@ -11,7 +11,7 @@ export class StaffAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<StaffRequest>();
     const header = request.headers.cookie ?? '';
     const part = header.split(';').map((item) => item.trim()).find((item) => item.startsWith('buildpath_admin_session='));
-    const token = part ? decodeURIComponent(part.slice('buildpath_admin_session='.length)) : '';
+    const token = part ? part.slice('buildpath_admin_session='.length) : '';
     const session = await this.auth.authenticate(token);
     if (!session) throw new UnauthorizedException('STAFF_AUTHENTICATION_REQUIRED');
     request.staff = session.staff;
