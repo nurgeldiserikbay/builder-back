@@ -1,5 +1,5 @@
 export const capabilityManifest = {
-  revision: '1.1.0',
+  revision: '1.2.0',
   statuses: [
     { id: 'supported', label: 'Supported', description: 'Implemented and available in the current product.' },
     { id: 'limited', label: 'Limited', description: 'Available with stated configuration, scope, or verification limits.' },
@@ -94,6 +94,22 @@ export const capabilityManifest = {
       status: 'limited',
       summary: 'Review security-relevant staff actions with exact event and actor filters.',
       conditions: ['Restricted to super admins and operations auditors.', 'Results are paginated, date-bounded, and sensitive detail fields are omitted.'],
+    },
+    {
+      id: 'security-response-baseline',
+      category: 'Quality',
+      name: 'Security response-header baseline',
+      status: 'limited',
+      summary: 'Check HTTPS and selected response protections including HSTS, CSP, frame protection, nosniff, referrer policy, and permissions policy.',
+      conditions: ['Assessment covers captured public page responses only.', 'This does not scan dependencies, application vulnerabilities, TLS configuration, authenticated routes, or exploitability.'],
+    },
+    {
+      id: 'performance-navigation-baseline',
+      category: 'Quality',
+      name: 'Page navigation and transfer metrics',
+      status: 'limited',
+      summary: 'Record browser navigation timing, time to first byte, transferred resource bytes, and request count for each capture.',
+      conditions: ['A single browser capture is a diagnostic sample, not a Lighthouse or Core Web Vitals assessment.', 'Third-party resources are blocked by the review worker.'],
     },
     {
       id: 'site-generation',

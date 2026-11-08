@@ -116,28 +116,53 @@ function evaluateQualityGate(configuration: unknown, pages: QualityGatePage[], r
     };
   if (requirementCoverage.status === 'blocked') blockingReasons.push('requirements_coverage_below_minimum');
 
-  const qualityAuditPages = pages.filter((page) => page.latestCapture?.qualityAudit !== null && page.latestCapture?.qualityAudit !== undefined).length;
   const categoryIds = ['security', 'accessibility', 'performance', 'seo'] as const;
   const categories = categoryIds.map((id) => {
     const rule = policy.categories[id];
-    const evidenceChecked = id === 'accessibility' || id === 'seo' ? qualityAuditPages : 0;
+    const evidenceChecked = pages.filter((page) => {
+      const audit = isRecord(page.latestCapture?.qualityAudit) ? page.latestCapture.qualityAudit : null;
+      if (!audit) return false;
+      if (id === 'security') return isRecord(audit.security) && typeof audit.security.isHttps === 'boolean';
+      if (id === 'performance') return isRecord(audit.performance) && typeof audit.performance.resourceCount === 'number';
+      return true;
+    }).length;
     const evidence = { checked: evidenceChecked, total: pages.length };
     const counts = { critical: 0, high: 0, medium: 0, low: 0 };
     const addCount = (severity: keyof typeof counts, amount = 1) => { counts[severity] = Math.min(100000, counts[severity] + amount); };
+    const safeCount = (value: unknown) => typeof value === 'number' && Number.isInteger(value) ? Math.max(0, Math.min(100000, value)) : 0;
+    const safeMetric = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.min(50 * 1024 * 1024, value) : null;
     for (const page of pages) {
       for (const finding of page.findings) {
-        if (finding.category === id && finding.status === 'open' && finding.severity in counts) {
-          addCount(finding.severity as keyof typeof counts);
-        }
+        if (finding.category === id && finding.status === 'open' && finding.severity in counts) addCount(finding.severity as keyof typeof counts);
       }
-      const audit = isRecord(page.latestCapture?.qualityAudit) ? page.latestCapture?.qualityAudit : null;
-      const safeCount = (key: string) => audit && typeof audit[key] === 'number' && Number.isInteger(audit[key]) ? Math.max(0, Math.min(100000, audit[key] as number)) : 0;
-      if (id === 'accessibility' && audit) {
-        addCount('high', safeCount('linksMissingName') + safeCount('buttonsMissingName'));
-        addCount('medium', safeCount('imagesMissingAlt') + safeCount('formControlsMissingLabel'));
+      const audit = isRecord(page.latestCapture?.qualityAudit) ? page.latestCapture.qualityAudit : null;
+      if (!audit) continue;
+      if (id === 'accessibility') {
+        addCount('high', safeCount(audit.linksMissingName) + safeCount(audit.buttonsMissingName));
+        addCount('medium', safeCount(audit.imagesMissingAlt) + safeCount(audit.formControlsMissingLabel));
       }
-      if (id === 'seo' && audit) {
-        addCount('medium', (audit.pageTitlePresent === true ? 0 : 1) + (audit.languagePresent === true ? 0 : 1) + (safeCount('h1Count') === 0 ? 1 : 0));
+      if (id === 'seo') {
+        addCount('medium', (audit.pageTitlePresent === true ? 0 : 1) + (audit.languagePresent === true ? 0 : 1) + (safeCount(audit.h1Count) === 0 ? 1 : 0));
+      }
+      if (id === 'security' && isRecord(audit.security) && typeof audit.security.isHttps === 'boolean') {
+        const security = audit.security;
+        if (!security.isHttps) addCount('high');
+        if (security.isHttps && security.hsts === false) addCount('medium');
+        if (security.contentSecurityPolicy === false) addCount('medium');
+        if (security.frameProtection === false) addCount('medium');
+        if (security.xContentTypeOptions === false) addCount('low');
+        if (security.referrerPolicy === false) addCount('low');
+        if (security.permissionsPolicy === false) addCount('low');
+      }
+      if (id === 'performance' && isRecord(audit.performance)) {
+        const navigationMs = safeMetric(audit.performance.navigationMs);
+        const ttfbMs = safeMetric(audit.performance.ttfbMs);
+        const transferBytes = safeMetric(audit.performance.transferBytes);
+        const resourceCount = safeCount(audit.performance.resourceCount);
+        if (navigationMs !== null) addCount(navigationMs > 8000 ? 'high' : navigationMs > 4000 ? 'medium' : 'low', navigationMs > 4000 ? 1 : 0);
+        if (ttfbMs !== null) addCount(ttfbMs > 3000 ? 'high' : ttfbMs > 1000 ? 'medium' : 'low', ttfbMs > 1000 ? 1 : 0);
+        if (transferBytes !== null) addCount(transferBytes > 8 * 1024 * 1024 ? 'high' : transferBytes > 3 * 1024 * 1024 ? 'medium' : 'low', transferBytes > 3 * 1024 * 1024 ? 1 : 0);
+        if (resourceCount > 250) addCount('medium');
       }
     }
     if (!rule.enabled) return { id, enabled: false, required: rule.required, status: 'disabled' as const, evidence, issues: counts, reasons: [] as string[] };
@@ -1387,10 +1412,15 @@ export class ReviewsService {
       let qualityAudit: {
         checkedAt: string | null; pageTitlePresent: boolean; languagePresent: boolean; h1Count: number;
         imagesMissingAlt: number; linksMissingName: number; buttonsMissingName: number; formControlsMissingLabel: number;
+        performance: { navigationMs: number | null; ttfbMs: number | null; transferBytes: number; resourceCount: number } | null;
+        security: { isHttps: boolean; hsts: boolean | null; contentSecurityPolicy: boolean; xContentTypeOptions: boolean; referrerPolicy: boolean; permissionsPolicy: boolean; frameProtection: boolean } | null;
       } | null = null;
       if (capture?.qualityAudit && typeof capture.qualityAudit === 'object' && !Array.isArray(capture.qualityAudit)) {
         const audit = capture.qualityAudit as Record<string, unknown>;
         const safeCount = (value: unknown) => typeof value === 'number' && Number.isInteger(value) ? Math.max(0, Math.min(100000, value)) : 0;
+        const performance = isRecord(audit.performance) ? audit.performance : null;
+        const security = isRecord(audit.security) ? audit.security : null;
+        const safeMetric = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.min(50 * 1024 * 1024, Math.round(value)) : null;
         qualityAudit = {
           checkedAt: typeof audit.checkedAt === 'string' ? audit.checkedAt : null,
           pageTitlePresent: audit.pageTitlePresent === true,
@@ -1400,6 +1430,21 @@ export class ReviewsService {
           linksMissingName: safeCount(audit.linksMissingName),
           buttonsMissingName: safeCount(audit.buttonsMissingName),
           formControlsMissingLabel: safeCount(audit.formControlsMissingLabel),
+          performance: performance ? {
+            navigationMs: safeMetric(performance.navigationMs),
+            ttfbMs: safeMetric(performance.ttfbMs),
+            transferBytes: safeCount(performance.transferBytes),
+            resourceCount: safeCount(performance.resourceCount),
+          } : null,
+          security: security && typeof security.isHttps === 'boolean' ? {
+            isHttps: security.isHttps,
+            hsts: typeof security.hsts === 'boolean' ? security.hsts : null,
+            contentSecurityPolicy: security.contentSecurityPolicy === true,
+            xContentTypeOptions: security.xContentTypeOptions === true,
+            referrerPolicy: security.referrerPolicy === true,
+            permissionsPolicy: security.permissionsPolicy === true,
+            frameProtection: security.frameProtection === true,
+          } : null,
         };
       }
       return {
