@@ -4,7 +4,8 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 
 ## Implemented
 
-- Public `GET /api/v1/capabilities` returns the deterministic, versioned platform support manifest used by product and admin surfaces.
+- Public `GET /api/v1/capabilities` returns the deterministic, versioned platform support manifest. Staff-only `GET /api/v1/admin/capabilities` exposes the same catalog after staff authentication and role authorization.
+- Separate staff login, 12-hour hashed-token sessions, account status checks, five-attempt/15-minute identifier rate limiting, and audit events for login/logout/denied access. Provision the first account explicitly with `STAFF_INITIAL_EMAIL`, `STAFF_INITIAL_PASSWORD`, `STAFF_INITIAL_DISPLAY_NAME`, `STAFF_INITIAL_ROLE` and `npm run staff:create`; no default credentials are created.
 
 - `GET /api/v1/health` checks that the HTTP process is responding.
 - `GET /api/v1/health/ready` checks PostgreSQL readiness without returning connection details.

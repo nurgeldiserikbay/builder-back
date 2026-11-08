@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.2.0
+  version: 1.3.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -16,6 +16,65 @@ tags:
   - name: Reviews
   - name: Capabilities
 paths:
+  /admin/auth/login:
+    post:
+      tags: [Authentication]
+      operationId: staffLogin
+      summary: Start an internal staff session
+      x-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StaffLoginRequest' }
+      responses:
+        '200':
+          description: Staff identity and an HTTP-only admin session cookie
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffIdentityResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+  /admin/auth/me:
+    get:
+      tags: [Authentication]
+      operationId: getStaffIdentity
+      summary: Read the current staff identity
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      responses:
+        '200':
+          description: Current staff identity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffIdentityResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /admin/auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: staffLogout
+      summary: Revoke the current staff session
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      responses:
+        '204': { description: Session revoked }
+        '401': { $ref: '#/components/responses/Problem' }
+  /admin/capabilities:
+    get:
+      tags: [Capabilities]
+      operationId: getAdminCapabilityManifest
+      summary: Read capability manifest in the staff console
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      responses:
+        '200':
+          description: Capability catalog for authenticated staff
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CapabilityManifestResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /capabilities:
     get:
       tags: [Capabilities]
@@ -1021,6 +1080,10 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
+    adminSessionCookie:
+      type: apiKey
+      in: cookie
+      name: buildpath_admin_session
     sessionCookie:
       type: apiKey
       in: cookie
@@ -1055,6 +1118,27 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
   schemas:
+    StaffLoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 1, maxLength: 128 }
+    StaffIdentityResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          required: [id, email, displayName, role]
+          properties:
+            id: { type: string, format: uuid }
+            email: { type: string, format: email }
+            displayName: { type: string, maxLength: 120 }
+            role: { type: string, enum: [super_admin, quality_admin, operations_auditor] }
     CapabilityManifestResponse:
       type: object
       additionalProperties: false

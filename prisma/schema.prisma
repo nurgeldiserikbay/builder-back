@@ -597,3 +597,67 @@ model ReviewApiCheck {
   @@index([requirementId, createdAt(sort: Desc)], map: "review_api_checks_requirement_created_idx")
   @@map("review_api_checks")
 }
+
+
+enum StaffRole {
+  super_admin
+  quality_admin
+  operations_auditor
+}
+
+enum StaffAccountStatus {
+  active
+  suspended
+}
+
+model StaffAccount {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email          String             @db.VarChar(254)
+  emailNormalized String            @unique @map("email_normalized") @db.VarChar(254)
+  passwordHash   String             @map("password_hash") @db.VarChar(255)
+  displayName    String             @map("display_name") @db.VarChar(120)
+  role           StaffRole          @default(operations_auditor)
+  status         StaffAccountStatus @default(active)
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  sessions       StaffSession[]
+  auditEvents    AdminAuditEvent[]
+
+  @@map("staff_accounts")
+}
+
+model StaffSession {
+  id          String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash   String      @unique @map("token_hash") @db.VarChar(64)
+  staffId     String      @map("staff_id") @db.Uuid
+  expiresAt   DateTime    @map("expires_at") @db.Timestamptz(3)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  staff       StaffAccount @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([staffId, expiresAt], map: "staff_sessions_staff_expires_idx")
+  @@index([expiresAt], map: "staff_sessions_expires_idx")
+  @@map("staff_sessions")
+}
+
+model StaffLoginAttempt {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identifierHash String   @map("identifier_hash") @db.VarChar(64)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([identifierHash, createdAt], map: "staff_login_attempts_identifier_created_idx")
+  @@map("staff_login_attempts")
+}
+
+model AdminAuditEvent {
+  id         String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  staffId    String?       @map("staff_id") @db.Uuid
+  eventType  String        @map("event_type") @db.VarChar(80)
+  targetType String?       @map("target_type") @db.VarChar(80)
+  targetId   String?       @map("target_id") @db.VarChar(160)
+  createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  staff      StaffAccount? @relation(fields: [staffId], references: [id], onDelete: SetNull)
+
+  @@index([staffId, createdAt(sort: Desc)], map: "admin_audit_events_staff_created_idx")
+  @@index([eventType, createdAt(sort: Desc)], map: "admin_audit_events_type_created_idx")
+  @@map("admin_audit_events")
+}
