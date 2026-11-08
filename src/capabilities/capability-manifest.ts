@@ -1,5 +1,5 @@
 export const capabilityManifest = {
-  revision: '1.0.0',
+  revision: '1.1.0',
   statuses: [
     { id: 'supported', label: 'Supported', description: 'Implemented and available in the current product.' },
     { id: 'limited', label: 'Limited', description: 'Available with stated configuration, scope, or verification limits.' },
@@ -86,6 +86,14 @@ export const capabilityManifest = {
       status: 'supported',
       summary: 'Export current review evidence and coverage as JSON or standalone HTML, or print the report to PDF.',
       conditions: ['Reports preserve limitations and distinguish evidence from conclusions.'],
+    },
+    {
+      id: 'admin-audit-browser',
+      category: 'Administration',
+      name: 'Staff audit event browser',
+      status: 'limited',
+      summary: 'Review security-relevant staff actions with exact event and actor filters.',
+      conditions: ['Restricted to super admins and operations auditors.', 'Results are paginated, date-bounded, and sensitive detail fields are omitted.'],
     },
     {
       id: 'site-generation',
