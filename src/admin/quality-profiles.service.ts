@@ -37,10 +37,12 @@ export function parseQualityPolicy(value: unknown): QualityPolicy {
   if (!isRecord(value) || !onlyKeys(value, ['schemaVersion', 'minimumRequirementCoverage', 'blockingSeverities', 'categories'])) throw new BadRequestException('INVALID_QUALITY_POLICY');
   if (value.schemaVersion !== 1 || !integerIn(value.minimumRequirementCoverage, 0, 100)) throw new BadRequestException('INVALID_QUALITY_POLICY');
   if (!Array.isArray(value.blockingSeverities) || value.blockingSeverities.some((item) => typeof item !== 'string' || !SEVERITIES.includes(item as Severity)) || new Set(value.blockingSeverities).size !== value.blockingSeverities.length) throw new BadRequestException('INVALID_QUALITY_POLICY');
-  if (!isRecord(value.categories) || Object.keys(value.categories).length !== CATEGORY_IDS.length || CATEGORY_IDS.some((id) => !(id in value.categories!))) throw new BadRequestException('INVALID_QUALITY_POLICY');
+  if (!isRecord(value.categories)) throw new BadRequestException('INVALID_QUALITY_POLICY');
+  const policyCategories = value.categories;
+  if (Object.keys(policyCategories).length !== CATEGORY_IDS.length || CATEGORY_IDS.some((id) => !(id in policyCategories))) throw new BadRequestException('INVALID_QUALITY_POLICY');
   const categories = {} as QualityPolicy['categories'];
   for (const id of CATEGORY_IDS) {
-    const rule = value.categories[id];
+    const rule = policyCategories[id];
     if (!isRecord(rule) || !onlyKeys(rule, ['enabled', 'required', 'maxOpenCritical', 'maxOpenHigh'])) throw new BadRequestException('INVALID_QUALITY_POLICY');
     if (typeof rule.enabled !== 'boolean' || typeof rule.required !== 'boolean' || (rule.required && !rule.enabled) || !integerIn(rule.maxOpenCritical, 0, 100) || !integerIn(rule.maxOpenHigh, 0, 100)) throw new BadRequestException('INVALID_QUALITY_POLICY');
     categories[id] = { enabled: rule.enabled, required: rule.required, maxOpenCritical: rule.maxOpenCritical, maxOpenHigh: rule.maxOpenHigh };

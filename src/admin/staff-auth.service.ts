@@ -1,4 +1,4 @@
-import { Injectable, TooManyRequestsException, UnauthorizedException } from '@nestjs/common';
+import { HttpException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 
@@ -21,7 +21,7 @@ export class StaffAuthService {
     const identifierHash = this.digest(normalized);
     const since = new Date(Date.now() - WINDOW_MS);
     const failures = await this.prisma.staffLoginAttempt.count({ where: { identifierHash, createdAt: { gte: since } } });
-    if (failures >= MAX_FAILURES) throw new TooManyRequestsException('STAFF_LOGIN_RATE_LIMITED');
+    if (failures >= MAX_FAILURES) throw new HttpException('STAFF_LOGIN_RATE_LIMITED', 429);
 
     const account = await this.prisma.staffAccount.findUnique({ where: { emailNormalized: normalized } });
     const passwordMatches = await this.verify(password, account?.passwordHash ?? DUMMY_HASH);
