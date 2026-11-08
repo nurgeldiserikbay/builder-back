@@ -7,6 +7,7 @@ import { StaffRoles, StaffRolesGuard } from './staff-roles.guard.js';
 @UseGuards(StaffAuthGuard, StaffRolesGuard)
 @StaffRoles('super_admin', 'quality_admin', 'operations_auditor')
 export class AdminController {
-  @Get('capabilities')\n  @Header('Cache-Control', 'no-store')
+  @Get('capabilities')
+  @Header('Cache-Control', 'no-store')
   getCapabilities() { return { data: capabilityManifest }; }
 }

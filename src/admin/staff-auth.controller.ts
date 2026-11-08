@@ -24,7 +24,8 @@ export class StaffAuthController {
   @Post('login')
   @HttpCode(200)
   async login(@Body() body: unknown, @Res({ passthrough: true }) response: HttpResponse) {
-    const input = parseBody(body);\n    const result = await this.auth.login(input.email, input.password);
+    const input = parseBody(body);
+    const result = await this.auth.login(input.email, input.password);
     response.setHeader('Set-Cookie', cookie(result.token, 12 * 60 * 60));
     return { data: result.staff };
   }
