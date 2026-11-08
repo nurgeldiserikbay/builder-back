@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.3.0
+  version: 1.4.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -15,6 +15,7 @@ tags:
   - name: Projects
   - name: Reviews
   - name: Capabilities
+  - name: QualityProfiles
 paths:
   /admin/auth/login:
     post:
@@ -60,6 +61,127 @@ paths:
       responses:
         '204': { description: Session revoked }
         '401': { $ref: '#/components/responses/Problem' }
+  /admin/quality-profiles:
+    get:
+      tags: [QualityProfiles]
+      operationId: listQualityProfiles
+      summary: List versioned quality profiles for staff
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      responses:
+        '200':
+          description: Quality profile catalog
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QualityProfileListResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [QualityProfiles]
+      operationId: createQualityProfile
+      summary: Create a quality profile with its first draft version
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QualityProfileCreateRequest' }
+      responses:
+        '201': { description: Draft profile created }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /admin/quality-profiles/{profileKey}:
+    get:
+      tags: [QualityProfiles]
+      operationId: getQualityProfile
+      summary: Read a quality profile and its version history
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - in: path
+          name: profileKey
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 80 }
+      responses:
+        '200':
+          description: Quality profile, version history, and saved policy snapshots
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QualityProfileResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /admin/quality-profiles/{profileKey}/versions:
+    post:
+      tags: [QualityProfiles]
+      operationId: createQualityProfileVersion
+      summary: Create a draft copied from the active version
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - in: path
+          name: profileKey
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 80 }
+      responses:
+        '201': { description: Draft version created }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /admin/quality-profiles/{profileKey}/versions/{version}:
+    patch:
+      tags: [QualityProfiles]
+      operationId: updateQualityProfileDraft
+      summary: Update the policy of a draft version
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - in: path
+          name: profileKey
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 80 }
+        - in: path
+          name: version
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QualityPolicyRequest' }
+      responses:
+        '200': { description: Draft updated }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /admin/quality-profiles/{profileKey}/versions/{version}/activate:
+    post:
+      tags: [QualityProfiles]
+      operationId: activateQualityProfileVersion
+      summary: Activate a draft or restore a retired profile version
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - in: path
+          name: profileKey
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 80 }
+        - in: path
+          name: version
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Version activated }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /admin/capabilities:
     get:
       tags: [Capabilities]
@@ -1118,6 +1240,87 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
   schemas:
+    QualityProfileCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [name, description]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, minLength: 1, maxLength: 500 }
+        policy: { $ref: '#/components/schemas/QualityPolicy' }
+    QualityPolicyRequest:
+      type: object
+      additionalProperties: false
+      required: [policy]
+      properties:
+        policy: { $ref: '#/components/schemas/QualityPolicy' }
+    QualityPolicy:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, minimumRequirementCoverage, blockingSeverities, categories]
+      properties:
+        schemaVersion: { const: 1 }
+        minimumRequirementCoverage: { type: integer, minimum: 0, maximum: 100 }
+        blockingSeverities:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [critical, high, medium, low] }
+        categories:
+          type: object
+          additionalProperties: false
+          required: [security, accessibility, performance, seo]
+          properties:
+            security: { $ref: '#/components/schemas/QualityCategoryPolicy' }
+            accessibility: { $ref: '#/components/schemas/QualityCategoryPolicy' }
+            performance: { $ref: '#/components/schemas/QualityCategoryPolicy' }
+            seo: { $ref: '#/components/schemas/QualityCategoryPolicy' }
+    QualityCategoryPolicy:
+      type: object
+      additionalProperties: false
+      required: [enabled, required, maxOpenCritical, maxOpenHigh]
+      properties:
+        enabled: { type: boolean }
+        required: { type: boolean }
+        maxOpenCritical: { type: integer, minimum: 0, maximum: 100 }
+        maxOpenHigh: { type: integer, minimum: 0, maximum: 100 }
+    QualityProfileVersion:
+      type: object
+      additionalProperties: false
+      required: [version, status, policy, createdAt, activatedAt, authoredBy]
+      properties:
+        version: { type: integer, minimum: 1 }
+        status: { type: string, enum: [draft, active, retired] }
+        policy: { $ref: '#/components/schemas/QualityPolicy' }
+        createdAt: { type: string, format: date-time }
+        activatedAt: { type: [string, 'null'], format: date-time }
+        authoredBy: { type: [string, 'null'] }
+    QualityProfile:
+      type: object
+      additionalProperties: false
+      required: [key, name, description, createdAt, createdBy, versions]
+      properties:
+        key: { type: string, maxLength: 80 }
+        name: { type: string, maxLength: 120 }
+        description: { type: string, maxLength: 500 }
+        createdAt: { type: string, format: date-time }
+        createdBy: { type: string, maxLength: 120 }
+        versions:
+          type: array
+          items: { $ref: '#/components/schemas/QualityProfileVersion' }
+    QualityProfileListResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/QualityProfile' }
+    QualityProfileResponse:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/QualityProfile' }
     StaffLoginRequest:
       type: object
       additionalProperties: false

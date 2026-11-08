@@ -622,6 +622,8 @@ model StaffAccount {
   updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
   sessions       StaffSession[]
   auditEvents    AdminAuditEvent[]
+  qualityProfilesCreated QualityProfile[] @relation("QualityProfileCreator")
+  qualityProfileVersionsAuthored QualityProfileVersion[] @relation("QualityProfileVersionAuthor")
 
   @@map("staff_accounts")
 }
@@ -654,10 +656,51 @@ model AdminAuditEvent {
   eventType  String        @map("event_type") @db.VarChar(80)
   targetType String?       @map("target_type") @db.VarChar(80)
   targetId   String?       @map("target_id") @db.VarChar(160)
+  details    Json?         @db.JsonB
   createdAt  DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
   staff      StaffAccount? @relation(fields: [staffId], references: [id], onDelete: SetNull)
 
   @@index([staffId, createdAt(sort: Desc)], map: "admin_audit_events_staff_created_idx")
   @@index([eventType, createdAt(sort: Desc)], map: "admin_audit_events_type_created_idx")
   @@map("admin_audit_events")
+}
+
+
+enum QualityProfileVersionStatus {
+  draft
+  active
+  retired
+}
+
+model QualityProfile {
+  id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key               String                 @unique @db.VarChar(80)
+  name              String                 @db.VarChar(120)
+  description       String                 @db.VarChar(500)
+  createdByStaffId  String                 @map("created_by_staff_id") @db.Uuid
+  createdAt         DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdBy         StaffAccount           @relation("QualityProfileCreator", fields: [createdByStaffId], references: [id], onDelete: Restrict)
+  versions          QualityProfileVersion[]
+
+  @@index([createdAt(sort: Desc)], map: "quality_profiles_created_idx")
+  @@map("quality_profiles")
+}
+
+model QualityProfileVersion {
+  id               String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  profileId        String                      @map("profile_id") @db.Uuid
+  version          Int
+  status           QualityProfileVersionStatus @default(draft)
+  policy           Json                        @db.JsonB
+  authoredByStaffId String                     @map("authored_by_staff_id") @db.Uuid
+  createdAt        DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  activatedAt      DateTime?                   @map("activated_at") @db.Timestamptz(3)
+  profile          QualityProfile              @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  authoredBy       StaffAccount                @relation("QualityProfileVersionAuthor", fields: [authoredByStaffId], references: [id], onDelete: Restrict)
+
+  @@unique([profileId, version], map: "quality_profile_versions_profile_version_key")
+  @@index([profileId, status], map: "quality_profile_versions_profile_status_idx")
+  @@index([authoredByStaffId, createdAt(sort: Desc)], map: "quality_profile_versions_author_created_idx")
+  @@map("quality_profile_versions")
 }
