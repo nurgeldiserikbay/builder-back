@@ -21,6 +21,14 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Specialists are not project members, so all project-wide checks (other stages, result package, publication, leads, review tool, project list) keep excluding them. They see only the assigned stage and the accepted versions of its inputs; their AI runs see the same scope. A lead can add stage rules but not project rules; an optional `aiBudget` caps their generations.
 - `submit` puts the stage in `in_review` (read-only) and notifies the owner in Telegram when linked; the owner accepts or uses `request-changes` with a note (the lead is notified). Accepting completes the assignment: writing stops immediately, reading continues for 7 days. Owners can revoke at any time; all of this is recorded in project events.
 
+### Plans and limits
+
+- Three plans in `src/billing/plans.ts` (catalog 1.0.0): **Бесплатный** (2 projects, 30 AI requests a month, 1 live site, no specialists), **Старт** (5 / 300 / 3, specialists) and **Бизнес** (25 / 1500 / 15, specialists). Limits belong to the account that owns the projects; AI requests of invited specialists count for the owner. Template drafts are free.
+- Enforced on the server: creating or restoring a project (`PLAN_LIMIT_PROJECTS`), AI generation (`PLAN_LIMIT_AI`), publishing a new site (`PLAN_LIMIT_SITES`; updating a live site is always allowed), inviting specialists (`PLAN_NO_SPECIALISTS`). Existing projects and live sites keep working when an account is over its limits.
+- `GET /me/plan` shows the plan, usage and catalog; prices come from `PLAN_PRICE_*`, the upgrade contact from `SALES_CONTACT_URL`.
+- There is no online payment yet. Staff assign a plan after a confirmed payment with `POST /admin/accounts/plan` (super_admin, audited as `account.plan_assigned`) or the «Customer plans» section of builder-admin; an optional end date returns the account to the free limits.
+- Owners can archive projects (`POST /projects/:id/archive`, not while published; revokes specialist access) and restore them if the plan allows.
+
 ### Stage work in Telegram
 
 - After linking (`/start <code>`), the bot works with projects: `/projects` lists projects (and stages where the account is a specialist), inline buttons open a project and a stage card with status, the current version summary and what is missing. From the card: ask the AI (the next text message is the instruction), build the site, accept with a confirmation step, send for acceptance, return with a comment, or suggest a change as a consultant. `/cancel` drops an awaited reply; voice messages are answered with a text-only notice.

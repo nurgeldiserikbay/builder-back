@@ -1,13 +1,14 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ROUTE_CATALOG_VERSION, projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
 import { initialStatuses } from '../journey/stage-state.js';
+import { BillingService } from '../billing/billing.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 
 const createRoles = new Set(['owner', 'admin', 'operator']);
 
 @Injectable()
 export class ProjectsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly billing: BillingService) {}
 
   async list(userId: string, workspaceId: string, cursor?: string, limit = 25) {
     if (!this.isUuid(workspaceId)) throw new NotFoundException('WORKSPACE_NOT_FOUND');
@@ -51,6 +52,7 @@ export class ProjectsService {
     const type = input.projectType ? projectTypeOf(input.projectType) : null;
     if (input.projectType && !type) throw new BadRequestException('INVALID_PROJECT_TYPE');
     if (input.startStageKey && !type?.stages.includes(input.startStageKey as StageKey)) throw new BadRequestException('INVALID_START_STAGE');
+    if (type) await this.billing.assertCanCreateProject(userId);
     if (!this.isUuid(input.workspaceId)) throw new NotFoundException('WORKSPACE_NOT_FOUND');
     const membership = await this.prisma.workspaceMember.findUnique({
       where: { workspaceId_userId: { workspaceId: input.workspaceId, userId } },
