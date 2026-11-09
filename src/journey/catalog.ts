@@ -1,7 +1,7 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.0.0';
+export const ROUTE_CATALOG_VERSION = '1.1.0';
 
 export type StageKey = 'goal' | 'offer' | 'content' | 'design' | 'build';
 export type ArtifactType = 'brief' | 'offer' | 'content' | 'design' | 'site';
@@ -55,6 +55,7 @@ const mainActionOptions: FieldOption[] = [
   { value: 'message', label: 'Написать в мессенджер', hint: 'Кнопка откроет чат в Telegram или WhatsApp.' },
   { value: 'visit', label: 'Прийти по адресу', hint: 'Главными будут адрес и часы работы.' },
   { value: 'email', label: 'Написать на почту', hint: 'Кнопка откроет письмо на ваш email.' },
+  { value: 'form', label: 'Оставить заявку на сайте', hint: 'Посетитель заполнит короткую форму, заявка придёт вам в Telegram или на почту. Работает, когда сайт опубликован на BuildPath.' },
 ];
 
 const toneOptions: FieldOption[] = [
@@ -98,7 +99,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
       instructions: [
         'Fill only facts present in the user description; leave unknown fields empty rather than inventing them.',
         'Keep wording short and in the project language.',
-        'Choose mainAction from the contact channel the user mentions; prefer message when a messenger is given.',
+        'Choose mainAction from the contact channel the user mentions; prefer message when a messenger is given; use form only when the user asks for requests or applications on the site.',
       ],
     },
   },

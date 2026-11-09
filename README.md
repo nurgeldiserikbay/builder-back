@@ -12,8 +12,16 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Owner/manager acceptance is deterministic: inputs must be accepted and the artifact complete. Reopening an accepted stage marks accepted later stages `stale` until they are confirmed or updated.
 - Stages can start from pasted material (`import`); complete material whose inputs are accepted gets status `imported`.
 - The build stage renders one self-contained, script-free HTML page from accepted versions with a restrictive CSP and runs deterministic checks (main action link, contacts, placeholders, headings, WCAG AA palette contrast, SEO lengths). Required failed checks block acceptance; a build made from older versions cannot be accepted.
-- `GET /projects/:id/result` returns the result package at any stage: `project.md`, `project.json` and, after the build, `site.html`; unaccepted stages are listed as open items. Publication to hosting is not implemented yet.
+- `GET /projects/:id/result` returns the result package at any stage: `project.md`, `project.json` and, after the build, `site.html`; unaccepted stages are listed as open items.
 - AI is optional. Configure `BUILDER_AI_OPENAI_API_KEY` and `BUILDER_AI_OPENAI_MODEL`; without them, texts and style get deterministic template drafts and instructions return `AI_NOT_CONFIGURED`. Generations are limited per project per day (`BUILDER_AI_DAILY_RUNS_PER_PROJECT`, default 40). Specialists, AI budgets per assignment and Telegram are not implemented yet; see `STAGE_WORK_MODEL.md` in builder-docs.
+
+### Publication and lead forms
+
+- `POST /projects/:id/publication` publishes the accepted build at `<slug>.<SITES_BASE_DOMAIN>` after explicit confirmation (owner/manager); `GET` shows state, a suggested latin address from the business name, whether a newer accepted build is not yet published, and notification channels; `unpublish` takes the site offline. The project status becomes `live` while published.
+- Published sites are served by a separate process, `npm run start:sites` (port `SITES_PORT`, default 4100), on a different origin from the app and API. It serves only the accepted build HTML with a restrictive CSP (`frame-ancestors 'none'`, no scripts), plus `/privacy`, `/thanks`, `robots.txt` and `sitemap.xml`. Locally, open `http://<slug>.localhost:4100`.
+- If the owner chooses «Оставить заявку на сайте» as the main action, the page gets a script-free lead form with a required consent checkbox and a link to an auto-generated data notice. Submissions go to `POST /__forms/lead` on the sites server: honeypot spam is dropped, cross-origin posts are rejected, and there are limits of 5 leads per visitor per hour and 200 per site per day (visitor IPs are stored only as salted hashes). Leads are deleted after `LEAD_RETENTION_DAYS` (365).
+- Leads notify the project owner by Telegram (bot linked through a one-time deep link from `POST /me/telegram/link`, `/start <code>` in the bot, `/stop` to unlink) and/or email via Resend. Delivery status per lead is stored; leads are listed and deletable at `GET/DELETE /projects/:id/leads`.
+- Production needs wildcard DNS and TLS for `*.SITES_BASE_DOMAIN`, a reverse proxy to the sites server, a Telegram bot with its webhook registered (see `.env.example`), and `SITES_IP_HASH_SALT`. These were verified locally only (Telegram through a mock Bot API); no live domain or bot was tested.
 
 Run unit tests with `npm test`.
 

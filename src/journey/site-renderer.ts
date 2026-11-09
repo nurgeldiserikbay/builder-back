@@ -1,5 +1,5 @@
 // Deterministic renderer: typed brief/content/design -> one self-contained, script-free HTML page.
-import type { Brief, ContentArtifact, DesignArtifact, Offer } from './artifacts.js';
+import type { Brief, ContentArtifact, DesignArtifact, Offer, SiteMeta } from './artifacts.js';
 
 export interface Palette { id: string; label: string; hint: string; background: string; surface: string; text: string; muted: string; accent: string; accentText: string }
 export interface FontPreset { id: string; label: string; hint: string; stack: string; headingWeight: number }
@@ -61,6 +61,7 @@ export function primaryActionHref(brief: Brief): string | null {
     case 'message': return links.messenger;
     case 'email': return links.email;
     case 'visit': return '#contacts';
+    case 'form': return '#request';
     default: return null;
   }
 }
@@ -104,7 +105,8 @@ export function renderSite(input: RenderInput): string {
       if (links.email && brief.email) rows.push(`<li><span>Email</span><a href="${escapeHtml(links.email)}">${escapeHtml(brief.email)}</a></li>`);
       if (brief.address) rows.push(`<li><span>Адрес</span><strong>${escapeHtml(brief.address)}${brief.city ? `, ${escapeHtml(brief.city)}` : ''}</strong></li>`);
       if (offer?.hours) rows.push(`<li><span>Часы работы</span><strong>${escapeHtml(offer.hours)}</strong></li>`);
-      return `<section class="section contacts" id="contacts"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${paragraphs(section.text)}${rows.length ? `<ul class="contact-list">${rows.join('')}</ul>` : ''}${button}</div></section>`;
+      const form = brief.mainAction === 'form' ? leadForm() : '';
+      return `<section class="section contacts" id="contacts"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${paragraphs(section.text)}${form}${rows.length ? `<ul class="contact-list">${rows.join('')}</ul>` : ''}${form ? '' : button}</div></section>`;
     }
     return `<section class="section ${escapeHtml(section.type)}" id="${escapeHtml(section.key)}"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${paragraphs(section.text)}${items}${button}</div></section>`;
   }).join('\n');
@@ -117,6 +119,10 @@ p{margin:0 0 12px;color:var(--muted)}.hero{padding:64px 0 56px;text-align:${alig
 .items{list-style:none;padding:0;margin:20px 0 0;display:grid;gap:14px}.items li{background:var(--surface);border:1px solid rgba(0,0,0,.08);border-radius:var(--radius);padding:18px}.items li p{margin:0}
 .button{display:inline-block;margin-top:12px;background:var(--accent);color:var(--accent-text);text-decoration:none;font-weight:700;padding:15px 24px;border-radius:var(--radius);min-height:48px}
 .button:focus-visible,a:focus-visible{outline:3px solid var(--text);outline-offset:3px}
+.lead-form{display:grid;gap:14px;margin:18px 0;background:var(--surface);border:1px solid rgba(0,0,0,.08);border-radius:var(--radius);padding:18px}.lead-form label{display:grid;gap:6px;font-weight:700;font-size:15px}
+.lead-form input,.lead-form textarea{font:inherit;font-size:16px;padding:12px;border:1px solid rgba(0,0,0,.25);border-radius:calc(var(--radius) / 2);background:#fff;color:#111}.lead-form textarea{min-height:90px}
+.lead-form .consent{display:flex;gap:10px;align-items:flex-start;font-weight:400;font-size:14px;color:var(--muted)}.lead-form .consent input{width:22px;height:22px;flex:none;margin-top:2px}.lead-form .consent a{color:var(--accent)}
+.lead-form .hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}.lead-form button{border:0;cursor:pointer;font:inherit;font-weight:700}
 .contact-list{list-style:none;padding:0;margin:16px 0;display:grid;gap:10px}.contact-list li{display:flex;flex-direction:column}.contact-list span{font-size:14px;color:var(--muted)}.contact-list a{color:var(--accent);font-weight:700}
 footer{padding:28px 0;color:var(--muted);font-size:14px;text-align:center}.draft{background:#fff3cd;color:#5c4400;text-align:center;font-size:14px;padding:8px}
 @media(min-width:720px){.items{grid-template-columns:repeat(2,1fr)}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}`;
@@ -127,7 +133,7 @@ footer{padding:28px 0;color:var(--muted);font-size:14px;text-align:center}.draft
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="${pageCsp(input.brief.mainAction === 'form')}">
 <title>${escapeHtml(content.seo.title)}</title>
 <meta name="description" content="${escapeHtml(content.seo.description)}">
 <style>${css}</style>
@@ -140,6 +146,39 @@ ${sectionHtml}
 </body>
 </html>
 `;
+}
+
+/** Same-origin form posts are allowed only when the page has a lead form; it posts to the BuildPath sites server. */
+export function pageCsp(hasForm: boolean): string {
+  return `default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action ${hasForm ? "'self'" : "'none'"}`;
+}
+
+export const LEAD_FORM_PATH = '/__forms/lead';
+
+function leadForm(): string {
+  return `<form id="request" class="lead-form" method="post" action="${LEAD_FORM_PATH}">
+<label>Ваше имя<input name="name" required maxlength="80" autocomplete="name"></label>
+<label>Телефон или мессенджер<input name="contact" required maxlength="120" autocomplete="tel"></label>
+<label>Сообщение (необязательно)<textarea name="message" maxlength="1000"></textarea></label>
+<div class="hp" aria-hidden="true"><label>Не заполняйте это поле<input name="website" tabindex="-1" autocomplete="off"></label></div>
+<label class="consent"><input type="checkbox" name="consent" value="yes" required><span>Согласен(на) на обработку моих данных, чтобы со мной связались по заявке. <a href="/privacy">Как используются данные</a></span></label>
+<button class="button" type="submit">Отправить заявку</button>
+</form>`;
+}
+
+export function siteMeta(input: RenderInput): SiteMeta {
+  const palette = palettes.find((item) => item.id === input.design.palette) ?? palettes[0];
+  const font = fonts.find((item) => item.id === input.design.font) ?? fonts[0];
+  const ownerContacts: SiteMeta['ownerContacts'] = [];
+  if (input.brief.phone) ownerContacts.push({ label: 'Телефон', value: input.brief.phone });
+  if (input.brief.messenger) ownerContacts.push({ label: 'Мессенджер', value: input.brief.messenger });
+  if (input.brief.email) ownerContacts.push({ label: 'Email', value: input.brief.email });
+  if (input.brief.address) ownerContacts.push({ label: 'Адрес', value: input.brief.address });
+  return {
+    businessName: input.brief.businessName, locale: ['ru', 'kk', 'en'].includes(input.locale) ? input.locale : 'ru', hasForm: input.brief.mainAction === 'form',
+    theme: { background: palette.background, text: palette.text, muted: palette.muted, accent: palette.accent, accentText: palette.accentText, font: font.stack, radius: input.design.corners === 'sharp' ? '2px' : '16px' },
+    ownerContacts,
+  };
 }
 
 export interface SiteCheck { id: string; status: 'passed' | 'warning' | 'failed'; title: string; details: string; required: boolean }
@@ -156,6 +195,11 @@ export function checkSite(input: RenderInput): SiteCheck[] {
   add('main-action', true, Boolean(href), 'Главная кнопка работает', 'Кнопка ведёт по вашему контакту.',
     'Для выбранного главного действия не указан корректный контакт. Проверьте телефон, мессенджер или email на этапе «Цель сайта».');
   add('button-present', true, content.sections.some((section) => section.buttonLabel), 'Кнопка видна посетителю', 'На странице есть кнопка главного действия.', 'Ни в одном блоке нет кнопки. Добавьте текст кнопки в первый экран.');
+  if (brief.mainAction === 'form') {
+    const ownerContact = Boolean(brief.phone || brief.email || brief.messenger || brief.address);
+    add('form-privacy', true, ownerContact, 'Форма заявки и согласие', 'Форма просит согласие на обработку данных и ведёт на страницу о данных с вашими контактами.',
+      'Для формы заявки нужен хотя бы один ваш контакт (телефон, email или мессенджер) — он будет на странице о данных, чтобы посетитель мог попросить удалить свои данные.');
+  }
   add('contacts', true, content.sections.some((section) => section.type === 'contacts'), 'Контакты', 'Есть блок контактов.', 'Нет блока контактов. Посетитель не поймёт, как с вами связаться.');
   const placeholders = JSON.stringify(content).match(/\[(?:укажите|заполните|добавьте)[^\]]*\]/gi) ?? [];
   add('placeholders', true, placeholders.length === 0, 'Нет пустых мест', 'Все места в текстах заполнены.',

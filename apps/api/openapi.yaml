@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.8.0
+  version: 1.9.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -17,6 +17,8 @@ tags:
   - name: Capabilities
   - name: QualityProfiles
   - name: Journey
+  - name: Publishing
+  - name: Telegram
 paths:
   /admin/auth/login:
     post:
@@ -1619,6 +1621,233 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/publication:
+    get:
+      tags: [Publishing]
+      operationId: getPublication
+      summary: Publication state, accepted build, suggested address and notification channels
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicationResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Publishing]
+      operationId: publishSite
+      summary: Publish or update the site on a BuildPath subdomain
+      description: Requires owner or manager, an accepted build stage and confirm=true. Makes the site public at the returned URL and sets the project status to live.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicationResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/publication/slug-check:
+    get:
+      tags: [Publishing]
+      operationId: checkSiteSlug
+      summary: Check whether a site address is valid and free
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - in: query
+          name: slug
+          required: true
+          schema: { type: string, maxLength: 60 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SlugCheckResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/publication/unpublish:
+    post:
+      tags: [Publishing]
+      operationId: unpublishSite
+      summary: Take the site offline
+      description: The sites server stops serving it within about 15 seconds; leads stay stored.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicationResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/publication/settings:
+    post:
+      tags: [Publishing]
+      operationId: setLeadNotifications
+      summary: Choose where lead notifications go
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LeadNotificationSettings' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicationResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/leads:
+    get:
+      tags: [Publishing]
+      operationId: listLeads
+      summary: List leads from the published site form
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - in: query
+          name: cursor
+          schema: { type: string, format: uuid }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LeadListResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/leads/{leadId}:
+    delete:
+      tags: [Publishing]
+      operationId: deleteLead
+      summary: Delete a lead
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - in: path
+          name: leadId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Done
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /me/telegram:
+    get:
+      tags: [Telegram]
+      operationId: getTelegramLink
+      summary: Telegram link status for notifications
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TelegramStatusResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Telegram]
+      operationId: unlinkTelegram
+      summary: Disconnect Telegram
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      responses:
+        '204':
+          description: Done
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /me/telegram/link:
+    post:
+      tags: [Telegram]
+      operationId: createTelegramLink
+      summary: Create a one-time bot deep link (valid 15 minutes)
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TelegramLinkResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /telegram/webhook:
+    post:
+      tags: [Telegram]
+      operationId: telegramWebhook
+      summary: Telegram Bot API webhook
+      description: Authenticated by the secret token header configured with setWebhook. Handles /start <code> and /stop in private chats; other updates are acknowledged.
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - in: header
+          name: X-Telegram-Bot-Api-Secret-Token
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TelegramUpdate' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OkResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
     adminSessionCookie:
@@ -2695,7 +2924,7 @@ components:
         name: { type: string }
         summary: { type: [string, 'null'] }
         startMode: { type: string, enum: [build, improve, design_implementation, analysis_only] }
-        status: { type: string, enum: [draft, active, paused, completed, archived] }
+        status: { type: string, enum: [draft, active, paused, completed, archived, live] }
         locale: { type: string, enum: [en, ru, kk] }
         projectType: { type: [string, 'null'], enum: [landing, company_site, null] }
         createdAt: { type: string, format: date-time }
@@ -2753,7 +2982,7 @@ components:
         whatYouDo: { type: string, maxLength: 400 }
         audience: { type: string, maxLength: 300 }
         city: { type: [string, 'null'], maxLength: 80 }
-        mainAction: { type: [string, 'null'], enum: [call, message, visit, email, null] }
+        mainAction: { type: [string, 'null'], enum: [call, message, visit, email, form, null] }
         phone: { type: [string, 'null'], maxLength: 30 }
         messenger: { type: [string, 'null'], maxLength: 60 }
         email: { type: [string, 'null'], maxLength: 120 }
@@ -2926,7 +3155,7 @@ components:
               properties:
                 id: { type: string, format: uuid }
                 name: { type: string }
-                status: { type: string, enum: [draft, active, paused, completed, archived] }
+                status: { type: string, enum: [draft, active, paused, completed, archived, live] }
                 locale: { type: string, enum: [en, ru, kk] }
                 role: { type: string }
                 projectType: { type: string }
@@ -3163,3 +3392,130 @@ components:
                   content: { type: string }
     JourneyActionResponse:
       $ref: '#/components/schemas/JourneyResponse'
+    PublishRequest:
+      type: object
+      additionalProperties: false
+      required: [slug, confirm]
+      properties:
+        slug: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$' }
+        confirm: { type: boolean, const: true, description: Explicit consent to make the site public. }
+    LeadNotificationSettings:
+      type: object
+      additionalProperties: false
+      required: [notifyTelegram, notifyEmail]
+      properties:
+        notifyTelegram: { type: boolean }
+        notifyEmail: { type: boolean }
+    PublicationResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [publication, acceptedBuild, outdated, canManage, suggestedSlug, baseDomain, channels, leadsCount]
+          properties:
+            publication:
+              type: [object, 'null']
+              properties:
+                slug: { type: string }
+                url: { type: string }
+                status: { type: string, enum: [live, unpublished] }
+                publishedAt: { type: string, format: date-time }
+                unpublishedAt: { type: [string, 'null'], format: date-time }
+                publishedVersionNumber: { type: [integer, 'null'] }
+                notifyTelegram: { type: boolean }
+                notifyEmail: { type: boolean }
+            acceptedBuild:
+              type: [object, 'null']
+              properties:
+                versionId: { type: string, format: uuid }
+                versionNumber: { type: integer }
+                hasForm: { type: boolean }
+            outdated: { type: boolean, description: A newer accepted build exists than the published one. }
+            canManage: { type: boolean }
+            suggestedSlug: { type: string }
+            baseDomain: { type: string }
+            urlTemplate: { type: string }
+            channels:
+              type: object
+              properties:
+                telegram:
+                  type: object
+                  properties:
+                    configured: { type: boolean }
+                    linked: { type: boolean }
+                    username: { type: [string, 'null'] }
+                    botUsername: { type: [string, 'null'] }
+                email:
+                  type: object
+                  properties:
+                    configured: { type: boolean }
+                    address: { type: string }
+            leadsCount: { type: integer }
+    SlugCheckResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [slug, available]
+          properties:
+            slug: { type: string }
+            available: { type: boolean }
+            reason: { type: [string, 'null'] }
+            url: { type: [string, 'null'] }
+    Lead:
+      type: object
+      required: [id, name, contact, createdAt, telegramStatus, emailStatus]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        contact: { type: string }
+        message: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        telegramStatus: { type: string, enum: [pending, sent, failed, 'off', not_linked, not_configured] }
+        emailStatus: { type: string, enum: [pending, sent, failed, 'off', not_linked, not_configured] }
+    LeadListResponse:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Lead' } }
+        meta:
+          type: object
+          properties:
+            nextCursor: { type: [string, 'null'] }
+    TelegramStatusResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [configured, linked]
+          properties:
+            configured: { type: boolean }
+            botUsername: { type: [string, 'null'] }
+            linked: { type: boolean }
+            username: { type: [string, 'null'] }
+            linkedAt: { type: [string, 'null'], format: date-time }
+    TelegramLinkResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [deepLink, botUsername, expiresAt]
+          properties:
+            deepLink: { type: string }
+            botUsername: { type: string }
+            expiresAt: { type: string, format: date-time }
+    TelegramUpdate:
+      type: object
+      description: Telegram Bot API Update; only message.text, message.chat and message.from are read.
+      properties:
+        update_id: { type: integer }
+        message: { type: object }
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
