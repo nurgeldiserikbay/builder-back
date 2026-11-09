@@ -1,16 +1,19 @@
 import { Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
-import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
+import { answerCallbackQuery, sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
+import { TelegramBotService } from '../telegram-bot/bot.service.js';
 
 const CODE_TTL_MS = 15 * 60 * 1000;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
-type TelegramUpdate = { message?: { text?: unknown; chat?: { id?: unknown; type?: unknown }; from?: { id?: unknown; username?: unknown } } };
+type TelegramMessage = { text?: unknown; voice?: unknown; audio?: unknown; chat?: { id?: unknown; type?: unknown }; from?: { id?: unknown; username?: unknown } };
+type TelegramUpdate = { message?: TelegramMessage; callback_query?: { id?: unknown; data?: unknown; from?: { id?: unknown }; message?: { chat?: { id?: unknown; type?: unknown } } } };
+const idOf = (value: unknown) => (typeof value === 'number' || typeof value === 'string' ? String(value) : null);
 
 @Injectable()
 export class TelegramLinkService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly bot: TelegramBotService) {}
 
   async status(userId: string) {
     const config = telegramConfig();
@@ -29,6 +32,7 @@ export class TelegramLinkService {
   }
 
   async unlink(userId: string) {
+    await this.prisma.telegramChatState.deleteMany({ where: { userId } });
     const deleted = await this.prisma.externalIdentity.deleteMany({ where: { userId, provider: 'telegram' } });
     if (deleted.count === 0) throw new NotFoundException('TELEGRAM_NOT_LINKED');
   }
@@ -40,6 +44,21 @@ export class TelegramLinkService {
     const expected = Buffer.from(config.webhookSecret);
     const actual = Buffer.from(secretHeader ?? '');
     if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return false;
+    const callback = (update as TelegramUpdate)?.callback_query;
+    if (callback) {
+      const callbackId = idOf(callback.id);
+      const fromId = idOf(callback.from?.id);
+      const chat = idOf(callback.message?.chat?.id);
+      if (!callbackId || !fromId || !chat || callback.message?.chat?.type !== 'private' || typeof callback.data !== 'string' || callback.data.length > 64) return true;
+      const identity = await this.prisma.externalIdentity.findUnique({ where: { provider_externalId: { provider: 'telegram', externalId: fromId } }, select: { userId: true } });
+      if (!identity) {
+        await answerCallbackQuery(config, callbackId, 'Telegram не подключён к BuildPath');
+        return true;
+      }
+      // Answer Telegram immediately; AI work can take longer than the webhook timeout.
+      void this.bot.onCallback(identity.userId, chat, callbackId, callback.data).catch(() => undefined);
+      return true;
+    }
     const message = (update as TelegramUpdate)?.message;
     const chatId = message?.chat?.id;
     const fromId = message?.from?.id;
@@ -61,16 +80,23 @@ export class TelegramLinkService {
         return true;
       });
       await reply(linked
-        ? 'Готово! Telegram привязан к вашему аккаунту BuildPath. Сюда будут приходить заявки с ваших сайтов. Отключить: /stop'
+        ? 'Готово! Telegram привязан к вашему аккаунту BuildPath. Сюда будут приходить заявки с сайтов и уведомления о приёмке этапов. Наберите /projects, чтобы работать с проектами. Отключить: /stop'
         : 'Ссылка устарела или уже использована. Откройте BuildPath и нажмите «Подключить Telegram» ещё раз.');
       return true;
     }
     if (/^\/stop(?:@\w+)?$/.test(text)) {
       const deleted = await this.prisma.externalIdentity.deleteMany({ where: { provider: 'telegram', externalId: String(fromId) } });
+      await this.prisma.telegramChatState.deleteMany({ where: { chatId: String(chatId) } });
       await reply(deleted.count ? 'Telegram отключён от BuildPath. Заявки сюда больше не придут.' : 'Этот Telegram не привязан к BuildPath.');
       return true;
     }
-    await reply('Это бот BuildPath. Он присылает заявки с ваших сайтов. Чтобы подключиться, откройте проект в BuildPath и нажмите «Подключить Telegram».');
+    const identity = await this.prisma.externalIdentity.findUnique({ where: { provider_externalId: { provider: 'telegram', externalId: String(fromId) } }, select: { userId: true } });
+    if (identity) {
+      const kind = typeof message.text === 'string' ? 'text' : message.voice || message.audio ? 'voice' : 'other';
+      void this.bot.onMessage(identity.userId, String(chatId), typeof message.text === 'string' ? message.text : null, kind).catch(() => undefined);
+      return true;
+    }
+    await reply('Это бот BuildPath. Здесь можно вести проекты и получать заявки с сайтов. Чтобы подключиться, откройте проект в BuildPath и нажмите «Подключить Telegram».');
     return true;
   }
 }

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.10.0
+  version: 1.11.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -349,6 +349,29 @@ paths:
         - sessionCookie: []
       responses:
         '204': { description: Session revoked }
+        '401': { $ref: '#/components/responses/Problem' }
+  /auth/telegram-webapp:
+    post:
+      tags: [Authentication]
+      operationId: loginWithTelegramWebApp
+      summary: Start a session from Telegram Mini App initData
+      description: Verifies the initData signature with the bot token (HMAC-SHA256 per Telegram docs) and its age (24 hours). Works only for a Telegram account already linked to a verified BuildPath account.
+      x-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [initData]
+              properties:
+                initData: { type: string, minLength: 10, maxLength: 4096 }
+      responses:
+        '200':
+          description: Session cookie set
+        '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
   /me:
     get:
@@ -1829,7 +1852,7 @@ paths:
       tags: [Telegram]
       operationId: telegramWebhook
       summary: Telegram Bot API webhook
-      description: Authenticated by the secret token header configured with setWebhook. Handles /start <code> and /stop in private chats; other updates are acknowledged.
+      description: Authenticated by the secret token header configured with setWebhook. Handles /start <code> and /stop; for linked accounts also /projects, inline-button callbacks (projects, stages, AI instruction, build, accept with confirmation, submit, request changes, suggestion) and text replies. Every action runs through the same permission checks as the web API. Long work is processed after the webhook is acknowledged.
       x-implementation-status: implemented
       security: []
       parameters:

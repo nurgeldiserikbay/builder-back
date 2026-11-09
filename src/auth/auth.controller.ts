@@ -73,6 +73,15 @@ export class AuthController {
     return { data: result.user };
   }
 
+  @Post('auth/telegram-webapp')
+  async telegramWebApp(@Body() raw: unknown, @Res({ passthrough: true }) response: HttpResponse) {
+    const body = objectBody(raw);
+    rejectUnknown(body, ['initData']);
+    const result = await this.auth.loginWithTelegramWebApp(textField(body, 'initData', 10, 4096));
+    response.setHeader('Set-Cookie', cookie(result.token, 30 * 24 * 60 * 60));
+    return { data: result.user };
+  }
+
   @Post('auth/logout')
   @HttpCode(204)
   @UseGuards(AuthGuard)

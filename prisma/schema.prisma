@@ -192,6 +192,7 @@ model User {
   externalIdentities        ExternalIdentity[]
   telegramLinkCodes         TelegramLinkCode[]
   stageAssignments          StageAssignment[]
+  telegramChats             TelegramChatState[]
 
   @@index([createdAt], map: "users_created_idx")
   @@map("users")
@@ -300,6 +301,7 @@ model Project {
   events           ProjectEvent[]
   publication      SitePublication?
   assignments      StageAssignment[]
+  telegramChats    TelegramChatState[]
   leads            SiteLead[]
 
   @@index([workspaceId, status, createdAt(sort: Desc)], map: "projects_workspace_status_created_idx")
@@ -979,4 +981,20 @@ model StageAssignment {
   @@index([projectId, stageId, status], map: "stage_assignments_project_stage_status_idx")
   @@index([userId, status], map: "stage_assignments_user_status_idx")
   @@map("stage_assignments")
+}
+
+/** Conversation context of a linked Telegram chat: selected project/stage and an awaited text reply. */
+model TelegramChatState {
+  chatId       String    @id @map("chat_id") @db.VarChar(64)
+  userId       String    @map("user_id") @db.Uuid
+  projectId    String?   @map("project_id") @db.Uuid
+  stageKey     String?   @map("stage_key") @db.VarChar(40)
+  pending      String?   @db.VarChar(40)
+  pendingUntil DateTime? @map("pending_until") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project      Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId], map: "telegram_chat_states_user_idx")
+  @@map("telegram_chat_states")
 }

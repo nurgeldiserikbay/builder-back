@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
+import { telegramConfig, verifyWebAppInitData } from '../notifications/telegram.js';
 
 const scrypt = (password: string, salt: Buffer, length: number, options: { N: number; r: number; p: number; maxmem: number }): Promise<Buffer> =>
   new Promise((resolve, reject) => {
@@ -127,6 +128,22 @@ export class AuthService {
       },
     });
     return { token, user: this.toSafeUser(user) };
+  }
+
+  /** Session for a Telegram Mini App user whose Telegram account is already linked to a verified BuildPath account. */
+  async loginWithTelegramWebApp(initData: string): Promise<{ token: string; user: SafeUser }> {
+    const config = telegramConfig();
+    if (!config) throw new UnauthorizedException('TELEGRAM_NOT_CONFIGURED');
+    const verified = verifyWebAppInitData(initData, config.token);
+    if (!verified) throw new UnauthorizedException('TELEGRAM_AUTH_INVALID');
+    const identity = await this.prisma.externalIdentity.findUnique({
+      where: { provider_externalId: { provider: 'telegram', externalId: verified.telegramUserId } },
+      include: { user: true },
+    });
+    if (!identity || !identity.user.emailVerifiedAt) throw new UnauthorizedException('TELEGRAM_NOT_LINKED');
+    const token = randomBytes(32).toString('base64url');
+    await this.prisma.userSession.create({ data: { userId: identity.userId, tokenHash: this.digest(token), expiresAt: new Date(Date.now() + SESSION_TTL_MS) } });
+    return { token, user: this.toSafeUser(identity.user) };
   }
 
   async authenticate(token: string): Promise<{ user: SafeUser; sessionId: string }> {
