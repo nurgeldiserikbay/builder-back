@@ -1,4 +1,6 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ROUTE_CATALOG_VERSION, projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { initialStatuses } from '../journey/stage-state.js';
 import { PrismaService } from '../database/prisma.service.js';
 
 const createRoles = new Set(['owner', 'admin', 'operator']);
@@ -22,6 +24,7 @@ export class ProjectsService {
         startMode: true,
         status: true,
         locale: true,
+        projectType: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -42,7 +45,12 @@ export class ProjectsService {
     summary?: string;
     startMode: 'build' | 'improve' | 'design_implementation' | 'analysis_only';
     locale: 'en' | 'ru' | 'kk';
+    projectType?: string;
+    startStageKey?: string;
   }) {
+    const type = input.projectType ? projectTypeOf(input.projectType) : null;
+    if (input.projectType && !type) throw new BadRequestException('INVALID_PROJECT_TYPE');
+    if (input.startStageKey && !type?.stages.includes(input.startStageKey as StageKey)) throw new BadRequestException('INVALID_START_STAGE');
     if (!this.isUuid(input.workspaceId)) throw new NotFoundException('WORKSPACE_NOT_FOUND');
     const membership = await this.prisma.workspaceMember.findUnique({
       where: { workspaceId_userId: { workspaceId: input.workspaceId, userId } },
@@ -60,6 +68,7 @@ export class ProjectsService {
           summary: input.summary?.trim() || null,
           startMode: input.startMode,
           locale: input.locale,
+          ...(type ? { projectType: type.key, routeVersion: ROUTE_CATALOG_VERSION, startStageKey: input.startStageKey ?? null, status: 'active' as const } : {}),
         },
         select: {
         id: true,
@@ -69,6 +78,7 @@ export class ProjectsService {
         startMode: true,
         status: true,
         locale: true,
+        projectType: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -76,6 +86,15 @@ export class ProjectsService {
       await tx.projectMember.create({
         data: { projectId: created.id, userId, role: 'owner', status: 'active' },
       });
+      if (type) {
+        const statuses = initialStatuses(type.stages, (input.startStageKey as StageKey | undefined) ?? null);
+        await tx.projectStage.createMany({
+          data: type.stages.map((key, position) => ({
+            projectId: created.id, stageKey: key, position, status: statuses[key] ?? 'locked', definitionVersion: stageDefinitions[key].version,
+          })),
+        });
+        await tx.projectEvent.create({ data: { projectId: created.id, actorUserId: userId, type: 'route_created', details: { projectType: type.key, routeVersion: ROUTE_CATALOG_VERSION, startStageKey: input.startStageKey ?? null } } });
+      }
       return created;
     });
     return { data: project };
@@ -96,6 +115,7 @@ export class ProjectsService {
         startMode: true,
         status: true,
         locale: true,
+        projectType: true,
         createdAt: true,
         updatedAt: true,
       },

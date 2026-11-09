@@ -4,6 +4,21 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 
 ## Implemented
 
+### Stage journey (builder flow)
+
+- `GET /api/v1/journey/catalog` lists project types (`landing`, `company_site`) and their stage routes from the versioned catalog in `src/journey/catalog.ts` (explanations, fields, acceptance criteria, built-in AI playbooks).
+- Creating a project with `projectType` (and optional `startStageKey`) creates the route: the first stage, or the chosen start stage with its earlier stages, opens; the rest stay closed until their inputs are accepted.
+- Each stage keeps immutable versions with provenance (`owner_edit`, `ai_generated`, `template`, `imported`, `compiled`, `restored`). Manual edits lock the changed parts; AI regenerations keep locked parts unless a part is explicitly targeted. One-off instructions, stage rules and project rules are stored and sent to the AI as untrusted data below platform rules and accepted inputs.
+- Owner/manager acceptance is deterministic: inputs must be accepted and the artifact complete. Reopening an accepted stage marks accepted later stages `stale` until they are confirmed or updated.
+- Stages can start from pasted material (`import`); complete material whose inputs are accepted gets status `imported`.
+- The build stage renders one self-contained, script-free HTML page from accepted versions with a restrictive CSP and runs deterministic checks (main action link, contacts, placeholders, headings, WCAG AA palette contrast, SEO lengths). Required failed checks block acceptance; a build made from older versions cannot be accepted.
+- `GET /projects/:id/result` returns the result package at any stage: `project.md`, `project.json` and, after the build, `site.html`; unaccepted stages are listed as open items. Publication to hosting is not implemented yet.
+- AI is optional. Configure `BUILDER_AI_OPENAI_API_KEY` and `BUILDER_AI_OPENAI_MODEL`; without them, texts and style get deterministic template drafts and instructions return `AI_NOT_CONFIGURED`. Generations are limited per project per day (`BUILDER_AI_DAILY_RUNS_PER_PROJECT`, default 40). Specialists, AI budgets per assignment and Telegram are not implemented yet; see `STAGE_WORK_MODEL.md` in builder-docs.
+
+Run unit tests with `npm test`.
+
+### Review tool
+
 - Public `GET /api/v1/capabilities` returns the deterministic, versioned platform support manifest. Staff-only `GET /api/v1/admin/capabilities` exposes the same catalog after staff authentication and role authorization.
 - Separate staff login, 12-hour hashed-token sessions, account status checks, five-attempt/15-minute identifier rate limiting, and audit events for login/logout/denied access. Provision the first account explicitly with `STAFF_INITIAL_EMAIL`, `STAFF_INITIAL_PASSWORD`, `STAFF_INITIAL_DISPLAY_NAME`, `STAFF_INITIAL_ROLE` and `npm run staff:create`; no default credentials are created.
 - Staff-only quality profile API supports policy drafts, immutable activated snapshots, restoring a retired version, role-based write access, and audit events containing before/after draft policy values. The first activated profile becomes the global default; administrators can change it explicitly. New review runs snapshot that version and reports evaluate requirement coverage, failed user-run API probes, available accessibility/SEO heuristics, and open findings. Security and performance scans remain unsupported; required categories without evidence block the report gate. The report result does not authorize publishing.

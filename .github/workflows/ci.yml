@@ -24,6 +24,7 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run build
+      - run: npm test
       - run: npm run db:validate
         env:
           DATABASE_URL: postgresql://buildpath:buildpath@localhost:5432/buildpath?schema=public

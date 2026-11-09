@@ -286,6 +286,14 @@ model Project {
   owner        User             @relation("ProjectOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
   members      ProjectMember[]
   reviewRuns   ReviewRun[]
+  projectType      String?          @map("project_type") @db.VarChar(40)
+  routeVersion     String?          @map("route_version") @db.VarChar(20)
+  startStageKey    String?          @map("start_stage_key") @db.VarChar(40)
+  stages           ProjectStage[]
+  stageVersions    StageArtifactVersion[]
+  stageInstructions StageInstruction[]
+  generationRuns   GenerationRun[]
+  events           ProjectEvent[]
 
   @@index([workspaceId, status, createdAt(sort: Desc)], map: "projects_workspace_status_created_idx")
   @@index([ownerUserId, createdAt(sort: Desc)], map: "projects_owner_created_idx")
@@ -704,4 +712,146 @@ model QualityProfileVersion {
   @@index([profileId, status], map: "quality_profile_versions_profile_status_idx")
   @@index([authoredByStaffId, createdAt(sort: Desc)], map: "quality_profile_versions_author_created_idx")
   @@map("quality_profile_versions")
+}
+
+enum ProjectStageStatus {
+  locked
+  ready
+  awaiting_lead
+  in_progress
+  in_review
+  changes_requested
+  approved
+  stale
+  imported
+  skipped
+  blocked
+}
+
+enum StageVersionOrigin {
+  owner_edit
+  ai_generated
+  template
+  imported
+  compiled
+  restored
+}
+
+enum StageInstructionKind {
+  one_off
+  stage_rule
+  project_rule
+}
+
+enum StageInstructionStatus {
+  active
+  disabled
+}
+
+enum GenerationRunStatus {
+  succeeded
+  failed
+}
+
+model ProjectStage {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId         String             @map("project_id") @db.Uuid
+  stageKey          String             @map("stage_key") @db.VarChar(40)
+  definitionVersion String             @map("definition_version") @db.VarChar(20)
+  position          Int
+  status            ProjectStageStatus @default(locked)
+  currentVersionId  String?            @map("current_version_id") @db.Uuid
+  approvedVersionId String?            @map("approved_version_id") @db.Uuid
+  lockedKeys        String[]           @default([]) @map("locked_keys") @db.VarChar(60)
+  approvedAt        DateTime?          @map("approved_at") @db.Timestamptz(3)
+  approvedByUserId  String?            @map("approved_by_user_id") @db.Uuid
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions          StageArtifactVersion[]
+  instructions      StageInstruction[]
+  generationRuns    GenerationRun[]
+
+  @@unique([projectId, stageKey], map: "project_stages_project_key_key")
+  @@index([projectId, position], map: "project_stages_project_position_idx")
+  @@map("project_stages")
+}
+
+model StageArtifactVersion {
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String             @map("project_id") @db.Uuid
+  stageId         String             @map("stage_id") @db.Uuid
+  versionNumber   Int                @map("version_number")
+  artifactType    String             @map("artifact_type") @db.VarChar(40)
+  content         Json
+  origin          StageVersionOrigin
+  note            String?            @db.VarChar(300)
+  createdByUserId String             @map("created_by_user_id") @db.Uuid
+  generationRunId String?            @map("generation_run_id") @db.Uuid
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  project         Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage           ProjectStage       @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@unique([stageId, versionNumber], map: "stage_artifact_versions_stage_number_key")
+  @@index([projectId, createdAt(sort: Desc)], map: "stage_artifact_versions_project_created_idx")
+  @@map("stage_artifact_versions")
+}
+
+model StageInstruction {
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId      String                 @map("project_id") @db.Uuid
+  stageId        String                 @map("stage_id") @db.Uuid
+  authorUserId   String                 @map("author_user_id") @db.Uuid
+  kind           StageInstructionKind
+  status         StageInstructionStatus @default(active)
+  text           String                 @db.VarChar(1000)
+  targetKey      String?                @map("target_key") @db.VarChar(60)
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project        Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage          ProjectStage           @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, kind, status], map: "stage_instructions_project_kind_status_idx")
+  @@index([stageId, createdAt(sort: Desc)], map: "stage_instructions_stage_created_idx")
+  @@map("stage_instructions")
+}
+
+model GenerationRun {
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId         String              @map("project_id") @db.Uuid
+  stageId           String              @map("stage_id") @db.Uuid
+  requestedByUserId String              @map("requested_by_user_id") @db.Uuid
+  provider          String              @db.VarChar(40)
+  model             String?             @db.VarChar(80)
+  playbookVersion   String              @map("playbook_version") @db.VarChar(20)
+  targetKey         String?             @map("target_key") @db.VarChar(60)
+  instructionId     String?             @map("instruction_id") @db.Uuid
+  ruleIds           String[]            @default([]) @map("rule_ids") @db.Uuid
+  inputVersionIds   String[]            @default([]) @map("input_version_ids") @db.Uuid
+  baseVersionId     String?             @map("base_version_id") @db.Uuid
+  resultVersionId   String?             @map("result_version_id") @db.Uuid
+  status            GenerationRunStatus
+  safeErrorCode     String?             @map("safe_error_code") @db.VarChar(80)
+  durationMs        Int                 @map("duration_ms")
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  project           Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage             ProjectStage        @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, provider, createdAt(sort: Desc)], map: "generation_runs_project_provider_created_idx")
+  @@index([stageId, createdAt(sort: Desc)], map: "generation_runs_stage_created_idx")
+  @@map("generation_runs")
+}
+
+model ProjectEvent {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId   String   @map("project_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  type        String   @db.VarChar(60)
+  stageKey    String?  @map("stage_key") @db.VarChar(40)
+  details     Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt(sort: Desc)], map: "project_events_project_created_idx")
+  @@map("project_events")
 }

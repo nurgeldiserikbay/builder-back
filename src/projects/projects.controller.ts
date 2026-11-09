@@ -50,7 +50,7 @@ export class ProjectsController {
   @Post()
   async create(@Req() request: AuthenticatedRequest, @Body() raw: unknown) {
     const body = parseBody(raw);
-    rejectUnknown(body, ['workspaceId', 'name', 'summary', 'startMode', 'locale']);
+    rejectUnknown(body, ['workspaceId', 'name', 'summary', 'startMode', 'locale', 'projectType', 'startStageKey']);
     const workspaceId = requiredString(body, 'workspaceId', 36, 36);
     const name = requiredString(body, 'name', 1, 120);
     const summary = optionalString(body, 'summary', 4000);
@@ -58,7 +58,12 @@ export class ProjectsController {
     const locale = body.locale;
     if (!startModes.includes(startMode as (typeof startModes)[number])) throw new BadRequestException('INVALID_START_MODE');
     if (!locales.includes(locale as (typeof locales)[number])) throw new BadRequestException('INVALID_LOCALE');
+    const projectType = optionalString(body, 'projectType', 40);
+    const startStageKey = optionalString(body, 'startStageKey', 40);
+    if (startStageKey && !projectType) throw new BadRequestException('PROJECT_TYPE_REQUIRED');
     return this.projects.create(request.user.id, {
+      projectType,
+      startStageKey,
       workspaceId,
       name,
       summary,

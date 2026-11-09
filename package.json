@@ -15,30 +15,33 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "start:worker": "node dist/worker.js",
     "start:worker:dev": "npm run db:generate && tsx watch src/worker.ts",
-    "staff:create": "tsx scripts/create-staff-account.ts"
+    "staff:create": "tsx scripts/create-staff-account.ts",
+    "test": "tsx --test 'src/**/*.test.ts'"
   },
   "dependencies": {
-    "@nestjs/common": "^11.0.0",
-    "@nestjs/core": "^11.0.0",
-    "@nestjs/platform-express": "^11.0.0",
     "@aws-sdk/client-s3": "^3.800.0",
     "@aws-sdk/s3-presigned-post": "^3.800.0",
     "@aws-sdk/s3-request-presigner": "^3.800.0",
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.4",
+    "dotenv": "^17.2.3",
+    "pg": "^8.16.3",
     "playwright-core": "^1.63.0",
-    "sharp": "^0.34.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "@prisma/client": "7.10.0",
-    "@prisma/adapter-pg": "7.10.0",
-    "pg": "^8.16.3",
-    "dotenv": "^17.2.3"
+    "sharp": "^0.34.3"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
-    "typescript": "^5.8.2",
+    "@types/pg": "^8.15.5",
     "prisma": "7.10.0",
     "tsx": "^4.20.6",
-    "@types/pg": "^8.15.5"
+    "typescript": "^5.8.2"
   },
   "type": "module"
 }
