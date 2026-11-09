@@ -9,10 +9,11 @@ import { CapabilitiesModule } from './capabilities/capabilities.module.js';
 import { StaffAuthModule } from './admin/staff-auth.module.js';
 import { JourneyModule } from './journey/journey.module.js';
 import { PublishingModule } from './publishing/publishing.module.js';
+import { ImagesModule } from './images/images.module.js';
 import { BillingModule } from './billing/billing.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule],
+  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule],
   controllers: [HealthController, WorkspacesController],
 })
 export class AppModule {}

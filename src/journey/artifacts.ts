@@ -14,7 +14,7 @@ export interface Offer { services: OfferService[]; hours: string | null }
 export const sectionTypes = ['hero', 'about', 'services', 'benefits', 'steps', 'faq', 'contacts', 'cta'] as const;
 export type SectionType = (typeof sectionTypes)[number];
 export interface ContentItem { title: string; text: string }
-export interface ContentSection { key: string; type: SectionType; title: string; text: string; items: ContentItem[]; buttonLabel: string | null }
+export interface ContentSection { key: string; type: SectionType; title: string; text: string; items: ContentItem[]; buttonLabel: string | null; imageId: string | null }
 export interface ContentArtifact { sections: ContentSection[]; seo: { title: string; description: string } }
 export interface DesignArtifact { palette: string; font: string; corners: 'rounded' | 'sharp'; heroLayout: 'centered' | 'left' }
 export interface SiteMeta {
@@ -103,6 +103,18 @@ export function normalizeOffer(raw: unknown): Offer {
   return { services, hours: str(raw.hours, 'hours', 120, false) };
 }
 
+function imageIdOf(value: unknown, field: string): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)) throw new ArtifactValidationError(`FIELD_INVALID:${field}`);
+  return value;
+}
+
+/** Photo ids used by a content artifact (for rendering and delete protection). */
+export function contentImageIds(content: unknown): string[] {
+  const sections = (content as Partial<ContentArtifact> | null)?.sections ?? [];
+  return [...new Set(sections.map((section) => section.imageId).filter((id): id is string => Boolean(id)))];
+}
+
 export function normalizeContent(raw: unknown): ContentArtifact {
   if (!isRecord(raw) || !Array.isArray(raw.sections) || !isRecord(raw.seo)) throw new ArtifactValidationError('ARTIFACT_INVALID');
   if (raw.sections.length < 1 || raw.sections.length > 12) throw new ArtifactValidationError('FIELD_COUNT:sections');
@@ -124,6 +136,7 @@ export function normalizeContent(raw: unknown): ContentArtifact {
         return { title: str(item.title, `sections.${index}.items.${itemIndex}.title`, 100, true)!, text: str(item.text, `sections.${index}.items.${itemIndex}.text`, 400, false) ?? '' };
       }),
       buttonLabel: str(section.buttonLabel, `sections.${index}.buttonLabel`, 40, false),
+      imageId: imageIdOf(section.imageId, `sections.${index}.imageId`),
     };
   });
   return {
@@ -173,7 +186,13 @@ function valueAt(type: ArtifactType, content: unknown, key: string): unknown {
 /** Keys whose value differs between two versions (used to lock manually edited parts). */
 export function changedKeys(type: ArtifactType, before: unknown, after: unknown): string[] {
   const keys = new Set([...(before ? lockableKeys(type, before) : []), ...lockableKeys(type, after)]);
-  return [...keys].filter((key) => stableStringify(valueAt(type, before, key) ?? null) !== stableStringify(valueAt(type, after, key) ?? null)
+  // Choosing a photo is not a text edit: AI rewrites keep photos anyway, so a photo change must not lock the section's text.
+  const comparable = (value: unknown) => {
+    if (type !== 'content' || !value || typeof value !== 'object' || Array.isArray(value)) return value ?? null;
+    const { imageId: _photo, ...rest } = value as Record<string, unknown>;
+    return rest;
+  };
+  return [...keys].filter((key) => stableStringify(comparable(valueAt(type, before, key))) !== stableStringify(comparable(valueAt(type, after, key)))
     && valueAt(type, after, key) !== undefined);
 }
 
@@ -187,17 +206,18 @@ export function mergeProposal(type: ArtifactType, base: unknown | null, proposal
   if (type === 'content') {
     const baseContent = base as ContentArtifact;
     const next = proposal as ContentArtifact;
+    const photoOf = (key: string) => baseContent.sections.find((section) => section.key === key)?.imageId ?? null;
     if (targetKey) {
       if (targetKey === 'seo') return { ...baseContent, seo: next.seo };
       const replacement = next.sections.find((section) => section.key === targetKey) ?? next.sections[0];
       if (!replacement) return baseContent;
-      return { ...baseContent, sections: baseContent.sections.map((section) => (section.key === targetKey ? { ...replacement, key: targetKey } : section)) };
+      return { ...baseContent, sections: baseContent.sections.map((section) => (section.key === targetKey ? { ...replacement, key: targetKey, imageId: replacement.imageId ?? section.imageId ?? null } : section)) };
     }
     const proposedByKey = new Map(next.sections.map((section) => [section.key, section]));
     const sections: ContentSection[] = [];
     for (const section of next.sections) {
       const locked = baseContent.sections.find((item) => item.key === section.key && keep.has(item.key));
-      sections.push(locked ?? section);
+      sections.push(locked ?? { ...section, imageId: section.imageId ?? photoOf(section.key) });
     }
     // Locked sections are never dropped by a full regeneration.
     for (const section of baseContent.sections) {
@@ -266,13 +286,13 @@ export function templateContent(brief: Brief, offer: Offer | null): ContentArtif
   const button = actionButton[brief.mainAction ?? 'message'];
   const place = brief.city ? ` в ${brief.city}` : '';
   const sections: ContentSection[] = [
-    { key: 'hero', type: 'hero', title: brief.businessName || '[укажите название]', text: `${brief.whatYouDo || '[опишите, чем вы занимаетесь]'}${place && !brief.whatYouDo.includes(brief.city ?? '') ? `${place}.` : ''}`.trim(), items: [], buttonLabel: button },
-    { key: 'about', type: 'about', title: 'Для кого мы работаем', text: brief.audience || '[опишите ваших клиентов]', items: [], buttonLabel: null },
+    { key: 'hero', type: 'hero', title: brief.businessName || '[укажите название]', text: `${brief.whatYouDo || '[опишите, чем вы занимаетесь]'}${place && !brief.whatYouDo.includes(brief.city ?? '') ? `${place}.` : ''}`.trim(), items: [], buttonLabel: button, imageId: null },
+    { key: 'about', type: 'about', title: 'Для кого мы работаем', text: brief.audience || '[опишите ваших клиентов]', items: [], buttonLabel: null, imageId: null },
   ];
   if (offer?.services.length) {
-    sections.push({ key: 'services', type: 'services', title: 'Услуги и цены', text: '', items: offer.services.map((service) => ({ title: service.price ? `${service.name} — ${service.price}` : service.name, text: service.description ?? '' })), buttonLabel: null });
+    sections.push({ key: 'services', type: 'services', title: 'Услуги и цены', text: '', items: offer.services.map((service) => ({ title: service.price ? `${service.name} — ${service.price}` : service.name, text: service.description ?? '' })), buttonLabel: null, imageId: null });
   } else {
-    sections.push({ key: 'benefits', type: 'benefits', title: 'Почему выбирают нас', text: '', items: [1, 2, 3].map((number) => ({ title: `[укажите преимущество ${number}]`, text: '' })), buttonLabel: null });
+    sections.push({ key: 'benefits', type: 'benefits', title: 'Почему выбирают нас', text: '', items: [1, 2, 3].map((number) => ({ title: `[укажите преимущество ${number}]`, text: '' })), buttonLabel: null, imageId: null });
   }
   sections.push({
     key: 'steps', type: 'steps', title: 'Как это работает', text: '',
@@ -281,9 +301,14 @@ export function templateContent(brief: Brief, offer: Offer | null): ContentArtif
       { title: 'Обсудим задачу', text: 'Подберём вариант под ваши пожелания.' },
       { title: 'Получите результат', text: 'Сделаем в оговорённый срок.' },
     ],
-    buttonLabel: null,
+    buttonLabel: null, imageId: null,
   });
-  sections.push({ key: 'contacts', type: 'contacts', title: 'Контакты', text: brief.mainAction === 'visit' ? 'Будем рады видеть вас.' : 'Напишите или позвоните — ответим на вопросы.', items: [], buttonLabel: button });
+  const form = brief.mainAction === 'form';
+  sections.push({
+    key: 'contacts', type: 'contacts', title: form ? 'Оставьте заявку' : 'Контакты',
+    text: brief.mainAction === 'visit' ? 'Будем рады видеть вас.' : form ? 'Заполните форму — мы свяжемся с вами.' : 'Напишите или позвоните — ответим на вопросы.',
+    items: [], buttonLabel: form ? null : button, imageId: null,
+  });
   const title = brief.businessName ? `${brief.businessName}${brief.city ? ` — ${brief.city}` : ''}` : '[укажите название]';
   return {
     sections,
@@ -299,10 +324,10 @@ export function importContentText(text: string): ContentArtifact {
     const [first, ...rest] = block.split('\n');
     const lower = first.toLowerCase();
     const type: SectionType = index === 0 ? 'hero' : /контакт|связ|адрес/.test(lower) ? 'contacts' : /вопрос/.test(lower) ? 'faq' : /услуг|цен/.test(lower) ? 'services' : /как.*работ|этап/.test(lower) ? 'steps' : 'about';
-    return { key: index === 0 ? 'hero' : `block-${index + 1}`, type, title: first.slice(0, 120), text: rest.join('\n').slice(0, 1200), items: [], buttonLabel: index === 0 ? 'Связаться' : null };
+    return { key: index === 0 ? 'hero' : `block-${index + 1}`, type, title: first.slice(0, 120), text: rest.join('\n').slice(0, 1200), items: [], buttonLabel: index === 0 ? 'Связаться' : null, imageId: null };
   });
   if (!sections.some((section) => section.type === 'contacts')) {
-    sections.push({ key: 'contacts', type: 'contacts', title: 'Контакты', text: '', items: [], buttonLabel: 'Связаться' });
+    sections.push({ key: 'contacts', type: 'contacts', title: 'Контакты', text: '', items: [], buttonLabel: 'Связаться', imageId: null });
   }
   return normalizeContent({ sections, seo: { title: sections[0].title.slice(0, 70), description: firstSentence(sections[0].text || sections[0].title, 160) } });
 }

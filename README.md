@@ -21,6 +21,13 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Specialists are not project members, so all project-wide checks (other stages, result package, publication, leads, review tool, project list) keep excluding them. They see only the assigned stage and the accepted versions of its inputs; their AI runs see the same scope. A lead can add stage rules but not project rules; an optional `aiBudget` caps their generations.
 - `submit` puts the stage in `in_review` (read-only) and notifies the owner in Telegram when linked; the owner accepts or uses `request-changes` with a note (the lead is notified). Accepting completes the assignment: writing stops immediately, reading continues for 7 days. Owners can revoke at any time; all of this is recorded in project events.
 
+### Site photos
+
+- `POST /projects/:id/images` (multipart `file`, optional `alt`) accepts JPEG, PNG or WebP up to 12 MB from members or the content-stage lead. The original is scanned with ClamAV first (fail-closed: 503 `IMAGE_SCAN_UNAVAILABLE` if clamd is unreachable), then decoded with sharp and re-encoded to WebP ≤ 1600 px, which strips EXIF/location and any non-pixel data. Up to 30 photos per project, stored in PostgreSQL (`project_images`).
+- Content sections reference photos by `imageId` only; the renderer emits `<img src="/img/<id>.webp" alt width height>` with `img-src 'self' data:`. Only photos of the same project are rendered; a missing photo fails the build check, a missing description is a warning. AI rewrites keep chosen photos.
+- Previews and the downloaded `site.html` inline the photos as data URIs, so they work offline. The sites server serves `/img/<id>.webp` only for photos that the published page shows.
+- For local development without ClamAV set `UPLOAD_MALWARE_SCAN=disabled`; this is ignored when `NODE_ENV=production`.
+
 ### Plans and limits
 
 - Three plans in `src/billing/plans.ts` (catalog 1.0.0): **Бесплатный** (2 projects, 30 AI requests a month, 1 live site, no specialists), **Старт** (5 / 300 / 3, specialists) and **Бизнес** (25 / 1500 / 15, specialists). Limits belong to the account that owns the projects; AI requests of invited specialists count for the owner. Template drafts are free.
