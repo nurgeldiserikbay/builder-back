@@ -4,6 +4,7 @@ import type { SiteArtifact } from '../journey/artifacts.js';
 import { emailConfig } from '../notifications/email.js';
 import { telegramConfig } from '../notifications/telegram.js';
 import { sitesConfig, slugProblem, suggestSlug } from './slug.js';
+import { BillingService } from '../billing/billing.service.js';
 
 const manageRoles = new Set(['owner', 'manager']);
 
@@ -13,7 +14,7 @@ function isUuid(value: string): boolean {
 
 @Injectable()
 export class PublishingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly billing: BillingService) {}
 
   private async load(userId: string, projectId: string, manage: boolean) {
     if (!isUuid(projectId)) throw new NotFoundException('PROJECT_NOT_FOUND');
@@ -88,6 +89,7 @@ export class PublishingService {
     if (!build) throw new ConflictException('BUILD_NOT_ACCEPTED');
     const problem = slugProblem(input.slug);
     if (problem) throw new BadRequestException('INVALID_SLUG');
+    await this.billing.assertCanPublish(projectId);
     const now = new Date();
     try {
       await this.prisma.$transaction(async (tx) => {

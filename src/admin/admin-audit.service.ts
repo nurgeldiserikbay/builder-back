@@ -6,6 +6,7 @@ const detailKeysByEvent: Record<string, string[]> = {
   'quality_profile.version_activated': ['previousActiveVersion', 'activatedVersion', 'setAsDefault'],
   'quality_profile.default_changed': ['previousDefault', 'nextDefault', 'activeVersion'],
   'quality_profile.version_created': ['version', 'copiedFromVersion'],
+  'account.plan_assigned': ['planKey', 'validUntil', 'note'],
 };
 
 function safeDetails(eventType: string, value: unknown): Record<string, string | number | boolean | null> | null {

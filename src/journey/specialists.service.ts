@@ -4,6 +4,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { emailConfig, sendEmail } from '../notifications/email.js';
 import { escapeHtml } from './site-renderer.js';
 import { stageDefinitions, type StageKey } from './catalog.js';
+import { BillingService } from '../billing/billing.service.js';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const manageRoles = new Set(['owner', 'manager']);
@@ -42,7 +43,7 @@ function maskEmail(email: string): string {
 
 @Injectable()
 export class SpecialistsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly billing: BillingService) {}
 
   private async manager(userId: string, projectId: string, stageKey?: string) {
     if (!isUuid(projectId)) throw new NotFoundException('PROJECT_NOT_FOUND');
@@ -80,6 +81,7 @@ export class SpecialistsService {
     const { project, stage } = await this.manager(userId, projectId, stageKey);
     if (!['active', 'live'].includes(project.status)) throw new ConflictException('PROJECT_NOT_ACTIVE');
     if (stage!.status === 'approved' || stage!.status === 'imported') throw new ConflictException('STAGE_ACCEPTED_REOPEN_FIRST');
+    await this.billing.assertCanInviteSpecialists(projectId);
     const email = input.email.trim().toLowerCase();
     if (email === project.owner.email.trim().toLowerCase()) throw new BadRequestException('CANNOT_INVITE_OWNER');
     const member = await this.prisma.projectMember.findFirst({ where: { projectId, status: 'active', user: { emailNormalized: email } }, select: { id: true } });

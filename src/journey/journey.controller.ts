@@ -186,6 +186,18 @@ export class JourneyController {
     return this.journey.setProjectStatus(request.user.id, projectId, 'complete');
   }
 
+  @Post('projects/:projectId/archive')
+  @HttpCode(200)
+  archive(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.journey.setProjectStatus(request.user.id, projectId, 'archive');
+  }
+
+  @Post('projects/:projectId/unarchive')
+  @HttpCode(200)
+  unarchive(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.journey.setProjectStatus(request.user.id, projectId, 'unarchive');
+  }
+
   @Post('projects/:projectId/resume')
   @HttpCode(200)
   resume(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {

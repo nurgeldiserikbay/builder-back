@@ -11,5 +11,6 @@ import { StaffRolesGuard } from './staff-roles.guard.js';
 @Module({
   controllers: [StaffAuthController, AdminController, QualityProfilesController],
   providers: [StaffAuthService, StaffAuthGuard, StaffRolesGuard, QualityProfilesService, AdminAuditService],
+  exports: [StaffAuthService, StaffAuthGuard, StaffRolesGuard],
 })
 export class StaffAuthModule {}

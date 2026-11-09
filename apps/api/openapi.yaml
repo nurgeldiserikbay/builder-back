@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.11.0
+  version: 1.12.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -20,6 +20,7 @@ tags:
   - name: Publishing
   - name: Telegram
   - name: Specialists
+  - name: Plans
 paths:
   /admin/auth/login:
     post:
@@ -2114,6 +2115,122 @@ paths:
         '429': { $ref: '#/components/responses/Problem' }
         '502': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /me/plan:
+    get:
+      tags: [Plans]
+      operationId: getMyPlan
+      summary: Current plan, usage against limits and available plans
+      description: Limits are counted for the account that owns the projects; AI requests include those made by invited specialists. Template drafts are not counted.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanOverviewResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /plans:
+    get:
+      tags: [Plans]
+      operationId: listPlans
+      summary: Plan catalog with configured prices
+      x-implementation-status: implemented
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanCatalogResponse' }
+  /admin/accounts/plan:
+    get:
+      tags: [Plans]
+      operationId: staffLookupAccountPlan
+      summary: Staff — plan and usage of a customer account
+      x-implementation-status: implemented
+      security:
+        - adminSessionCookie: []
+      parameters:
+        - in: query
+          name: email
+          required: true
+          schema: { type: string, maxLength: 254 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffAccountPlanResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Plans]
+      operationId: staffAssignAccountPlan
+      summary: Staff — assign a plan after a confirmed payment
+      description: super_admin only; written to the staff audit history as account.plan_assigned.
+      x-implementation-status: implemented
+      security:
+        - adminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignPlanRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StaffAccountPlanResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/archive:
+    post:
+      tags: [Journey]
+      operationId: archiveProject
+      summary: Move a project to the archive (owner only)
+      description: Not allowed while the site is published. Revokes specialist access. Archived projects are read-only and do not count against the projects limit.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/unarchive:
+    post:
+      tags: [Journey]
+      operationId: unarchiveProject
+      summary: Restore an archived project (owner only, counts against the plan)
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
     adminSessionCookie:
@@ -3920,3 +4037,84 @@ components:
             id: { type: string, format: uuid }
             status: { type: string, enum: [applied, dismissed] }
             generation: { type: [object, 'null'] }
+    PlanSummary:
+      type: object
+      required: [key, title, description, limits, specialists, price]
+      properties:
+        key: { type: string, enum: [free, start, business] }
+        title: { type: string }
+        description: { type: string }
+        limits:
+          type: object
+          required: [projects, aiPerMonth, liveSites]
+          properties:
+            projects: { type: integer }
+            aiPerMonth: { type: integer }
+            liveSites: { type: integer }
+        specialists: { type: boolean }
+        price: { type: [string, 'null'], description: Display price from configuration; null when not configured. }
+    PlanCatalogResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/PlanSummary' } }
+    PlanUsage:
+      type: object
+      required: [key, title, used, limit]
+      properties:
+        key: { type: string, enum: [projects, aiPerMonth, liveSites] }
+        title: { type: string }
+        unit: { type: string }
+        explanation: { type: string }
+        used: { type: integer }
+        limit: { type: integer }
+    CurrentPlan:
+      type: object
+      required: [key, title, specialists, expired]
+      properties:
+        key: { type: string, enum: [free, start, business] }
+        title: { type: string }
+        specialists: { type: boolean }
+        validUntil: { type: [string, 'null'], format: date-time }
+        expired: { type: boolean }
+        expiredPlanTitle: { type: [string, 'null'] }
+    PlanOverviewResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [catalogVersion, plan, usage, periodStart, plans, upgrade]
+          properties:
+            catalogVersion: { type: string }
+            plan: { $ref: '#/components/schemas/CurrentPlan' }
+            usage: { type: array, items: { $ref: '#/components/schemas/PlanUsage' } }
+            periodStart: { type: string, format: date-time }
+            plans: { type: array, items: { $ref: '#/components/schemas/PlanSummary' } }
+            upgrade:
+              type: object
+              properties:
+                contactUrl: { type: [string, 'null'] }
+    AssignPlanRequest:
+      type: object
+      additionalProperties: false
+      required: [email, planKey]
+      properties:
+        email: { type: string, maxLength: 254 }
+        planKey: { type: string, enum: [free, start, business] }
+        validUntil: { type: [string, 'null'], format: date-time }
+        note: { type: [string, 'null'], maxLength: 500 }
+    StaffAccountPlanResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [userId, email, plan, usage]
+          properties:
+            userId: { type: string, format: uuid }
+            email: { type: string }
+            plan: { $ref: '#/components/schemas/CurrentPlan' }
+            usage: { type: array, items: { $ref: '#/components/schemas/PlanUsage' } }
+            note: { type: [string, 'null'] }
+            updatedAt: { type: [string, 'null'], format: date-time }

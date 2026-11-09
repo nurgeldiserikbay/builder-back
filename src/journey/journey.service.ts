@@ -15,6 +15,7 @@ import {
 import { checkSite, corners, fonts, heroLayouts, palettes, renderSite, siteMeta } from './site-renderer.js';
 import { StageAiError, buildStagePrompt, configuredStageProvider, type StageAiProvider } from './stage-ai.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
+import { BillingService } from '../billing/billing.service.js';
 import {
   canEdit, inputsSatisfied, isSatisfied, nextStage, reopenStage, unlockDependents, type StageStatus, type StatusMap,
 } from './stage-state.js';
@@ -46,7 +47,7 @@ function validationError(error: unknown): never {
 export class JourneyService {
   private provider: StageAiProvider | null | undefined;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly billing: BillingService) {}
 
   /** Tests may inject a provider; production reads environment configuration. */
   setProvider(provider: StageAiProvider | null): void { this.provider = provider; }
@@ -208,7 +209,7 @@ export class JourneyService {
             acceptedAt: stage.approvedAt, updatedAt: stage.updatedAt,
           };
         }),
-        ai: { configured: Boolean(ai), provider: ai?.name ?? null, remainingToday: ai ? await this.remainingAiRuns(projectId) : 0 },
+        ai: { configured: Boolean(ai), provider: ai?.name ?? null, remainingToday: ai ? await this.remainingAiRuns(projectId) : 0, month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null },
       },
     };
   }
@@ -288,6 +289,7 @@ export class JourneyService {
           level: definition.ai.level, whatItDoes: definition.ai.whatItDoes, instructionExamples: definition.ai.instructionExamples, describeHint: definition.ai.describeHint ?? null,
           configured: Boolean(ai), remainingToday: ai ? await this.remainingAiRuns(projectId) : 0,
           budget: assignment ? { limit: assignment.aiBudget, used: assignment.aiUsed } : null,
+          month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null,
           templateAvailable: !ai && (stageKey === 'content' || stageKey === 'design'),
         },
         options: {
@@ -417,6 +419,7 @@ export class JourneyService {
       return { data: { versionId: version.id, versionNumber: version.versionNumber, provider: 'template' } };
     }
 
+    await this.billing.assertCanGenerate(projectId);
     if (await this.remainingAiRuns(projectId) < 1) throw new HttpException('AI_DAILY_LIMIT_REACHED', HttpStatus.TOO_MANY_REQUESTS);
     if (assignment && assignment.aiBudget !== null && assignment.aiUsed >= assignment.aiBudget) throw new HttpException('AI_BUDGET_EXHAUSTED', HttpStatus.TOO_MANY_REQUESTS);
     const rules = await this.prisma.stageInstruction.findMany({
@@ -708,15 +711,24 @@ export class JourneyService {
     return { data: { id: suggestion.id, status: action === 'apply' ? 'applied' : 'dismissed', generation: result } };
   }
 
-  async setProjectStatus(userId: string, projectId: string, action: 'complete' | 'resume') {
+  async setProjectStatus(userId: string, projectId: string, action: 'complete' | 'resume' | 'archive' | 'unarchive') {
     const ctx = await this.load(userId, projectId, 'members');
-    if (!acceptRoles.has(ctx.role)) throw new ForbiddenException('PROJECT_STATUS_FORBIDDEN');
-    const from = action === 'complete' ? ['active', 'paused'] : ['completed', 'paused'];
-    if (!from.includes(ctx.project.status)) throw new ConflictException('PROJECT_STATUS_CONFLICT');
-    const status = action === 'complete' ? 'completed' : 'active';
+    // Archiving and restoring change plan usage, so only the owner may do them.
+    const ownerOnly = action === 'archive' || action === 'unarchive';
+    if (ownerOnly ? ctx.role !== 'owner' : !acceptRoles.has(ctx.role)) throw new ForbiddenException('PROJECT_STATUS_FORBIDDEN');
+    const from: Record<typeof action, string[]> = {
+      complete: ['active', 'paused'], resume: ['completed', 'paused'], archive: ['active', 'paused', 'completed', 'draft'], unarchive: ['archived'],
+    };
+    if (action === 'archive' && ctx.project.status === 'live') throw new ConflictException('UNPUBLISH_BEFORE_ARCHIVE');
+    if (!from[action].includes(ctx.project.status)) throw new ConflictException('PROJECT_STATUS_CONFLICT');
+    if (action === 'unarchive') await this.billing.assertCanCreateProject(ctx.project.ownerUserId);
+    const status = action === 'complete' ? 'completed' : action === 'archive' ? 'archived' : 'active';
+    const eventType = { complete: 'project_completed', resume: 'project_resumed', archive: 'project_archived', unarchive: 'project_unarchived' }[action];
     await this.prisma.$transaction(async (tx) => {
       await tx.project.update({ where: { id: projectId }, data: { status } });
-      await this.event(tx, projectId, userId, action === 'complete' ? 'project_completed' : 'project_resumed', null, {});
+      // Specialists stop working on an archived project.
+      if (action === 'archive') await tx.stageAssignment.updateMany({ where: { projectId, status: { in: ['invited', 'active'] } }, data: { status: 'revoked', revokedAt: new Date() } });
+      await this.event(tx, projectId, userId, eventType, null, {});
     });
     return this.journey(userId, projectId);
   }

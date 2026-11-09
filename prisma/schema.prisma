@@ -193,6 +193,7 @@ model User {
   telegramLinkCodes         TelegramLinkCode[]
   stageAssignments          StageAssignment[]
   telegramChats             TelegramChatState[]
+  accountPlan               AccountPlan?
 
   @@index([createdAt], map: "users_created_idx")
   @@map("users")
@@ -997,4 +998,18 @@ model TelegramChatState {
 
   @@index([userId], map: "telegram_chat_states_user_idx")
   @@map("telegram_chat_states")
+}
+
+/** Paid plan assigned to an account by staff after payment; absence means the free plan. */
+model AccountPlan {
+  userId            String    @id @map("user_id") @db.Uuid
+  planKey           String    @map("plan_key") @db.VarChar(40)
+  validUntil        DateTime? @map("valid_until") @db.Timestamptz(3)
+  note              String?   @db.VarChar(500)
+  assignedByStaffId String?   @map("assigned_by_staff_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("account_plans")
 }
