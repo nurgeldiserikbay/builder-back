@@ -1,6 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
-import { PLAN_CATALOG_VERSION, limitLabels, monthStart, planOf, plans, priceOf, type LimitKey, type PlanKey } from './plans.js';
+import { PLAN_CATALOG_VERSION, limitLabels, monthStart, paidPlanKeys, planOf, plans, priceOf, validContactUrl, type LimitKey, type PaidPlanKey, type PlanKey } from './plans.js';
 
 export class PlanLimitException extends ForbiddenException {
   constructor(code: string) { super(code); }
@@ -62,23 +62,74 @@ export class BillingService {
     return { left: Math.max(0, plan.limits.aiPerMonth - usage.aiPerMonth), limit: plan.limits.aiPerMonth, planTitle: plan.title };
   }
 
-  catalog() {
-    return Object.values(plans).map((plan) => ({
-      key: plan.key, title: plan.title, description: plan.description, limits: plan.limits, specialists: plan.specialists, price: priceOf(plan),
-    }));
+  private async prices(): Promise<Record<PaidPlanKey, number | null>> {
+    const rows = await this.prisma.planPrice.findMany({ select: { planKey: true, monthlyPriceKzt: true } });
+    const result: Record<PaidPlanKey, number | null> = { start: null, business: null };
+    for (const row of rows) if ((paidPlanKeys as string[]).includes(row.planKey)) result[row.planKey as PaidPlanKey] = row.monthlyPriceKzt;
+    return result;
+  }
+
+  /** Contact set in the admin console; SALES_CONTACT_URL is only a fallback for a fresh install. */
+  private async contactUrl(): Promise<string | null> {
+    const row = await this.prisma.billingSettings.findUnique({ where: { id: 1 }, select: { salesContactUrl: true } });
+    return validContactUrl(row?.salesContactUrl) ?? validContactUrl(process.env.SALES_CONTACT_URL);
+  }
+
+  async catalog() {
+    const prices = await this.prices();
+    return Object.values(plans).map((plan) => {
+      const monthlyPriceKzt = plan.paid ? prices[plan.key as PaidPlanKey] : 0;
+      return { key: plan.key, title: plan.title, description: plan.description, limits: plan.limits, specialists: plan.specialists, monthlyPriceKzt, price: priceOf(plan, monthlyPriceKzt) };
+    });
+  }
+
+  async settings() {
+    const [prices, settings] = await Promise.all([
+      this.prisma.planPrice.findMany({ select: { planKey: true, updatedAt: true } }),
+      this.prisma.billingSettings.findUnique({ where: { id: 1 }, select: { salesContactUrl: true, updatedAt: true } }),
+    ]);
+    return {
+      data: {
+        catalogVersion: PLAN_CATALOG_VERSION,
+        plans: await this.catalog(),
+        priceUpdatedAt: Object.fromEntries(prices.map((row) => [row.planKey, row.updatedAt])),
+        salesContactUrl: settings?.salesContactUrl ?? null,
+        salesContactFallback: settings?.salesContactUrl ? null : validContactUrl(process.env.SALES_CONTACT_URL),
+        updatedAt: settings?.updatedAt ?? null,
+      },
+    };
+  }
+
+  /** Staff change of prices and the upgrade contact. Assigned plans are not touched; prices are informational until online payment exists. */
+  async updateSettings(staffId: string, input: { prices: Partial<Record<PaidPlanKey, number | null>>; salesContactUrl?: string | null }) {
+    const before = await this.prices();
+    const current = await this.prisma.billingSettings.findUnique({ where: { id: 1 }, select: { salesContactUrl: true } });
+    await this.prisma.$transaction(async (tx) => {
+      for (const key of paidPlanKeys) {
+        if (!(key in input.prices) || (input.prices[key] ?? null) === before[key]) continue;
+        const next = input.prices[key] ?? null;
+        await tx.planPrice.upsert({ where: { planKey: key }, create: { planKey: key, monthlyPriceKzt: next, updatedByStaffId: staffId }, update: { monthlyPriceKzt: next, updatedByStaffId: staffId } });
+        await tx.adminAuditEvent.create({ data: { staffId, eventType: 'plan.price_changed', targetType: 'plan', targetId: key, details: { planKey: key, previousPrice: before[key], nextPrice: next } } });
+      }
+      if (input.salesContactUrl !== undefined && (input.salesContactUrl ?? null) !== (current?.salesContactUrl ?? null)) {
+        await tx.billingSettings.upsert({ where: { id: 1 }, create: { id: 1, salesContactUrl: input.salesContactUrl, updatedByStaffId: staffId }, update: { salesContactUrl: input.salesContactUrl, updatedByStaffId: staffId } });
+        await tx.adminAuditEvent.create({ data: { staffId, eventType: 'billing.contact_changed', targetType: 'billing_settings', targetId: '1', details: { contactSet: Boolean(input.salesContactUrl) } } });
+      }
+    });
+    return this.settings();
   }
 
   async overview(userId: string) {
     const [{ plan, expired, validUntil, assignedKey }, usage] = await Promise.all([this.planFor(userId), this.usage(userId)]);
-    const contact = process.env.SALES_CONTACT_URL?.trim() || null;
+    const [catalog, contact] = await Promise.all([this.catalog(), this.contactUrl()]);
     return {
       data: {
         catalogVersion: PLAN_CATALOG_VERSION,
         plan: { key: plan.key, title: plan.title, specialists: plan.specialists, validUntil: expired ? null : validUntil, expired, expiredPlanTitle: expired ? plans[assignedKey as PlanKey]?.title ?? null : null },
         usage: (Object.keys(limitLabels) as LimitKey[]).map((key) => ({ key, ...limitLabels[key], used: usage[key], limit: plan.limits[key] })),
         periodStart: monthStart(),
-        plans: this.catalog(),
-        upgrade: { contactUrl: contact && /^(https:\/\/|mailto:|tg:\/\/)/.test(contact) ? contact : null },
+        plans: catalog,
+        upgrade: { contactUrl: contact },
       },
     };
   }

@@ -32,7 +32,7 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 
 - Three plans in `src/billing/plans.ts` (catalog 1.0.0): **Бесплатный** (2 projects, 30 AI requests a month, 1 live site, no specialists), **Старт** (5 / 300 / 3, specialists) and **Бизнес** (25 / 1500 / 15, specialists). Limits belong to the account that owns the projects; AI requests of invited specialists count for the owner. Template drafts are free.
 - Enforced on the server: creating or restoring a project (`PLAN_LIMIT_PROJECTS`), AI generation (`PLAN_LIMIT_AI`), publishing a new site (`PLAN_LIMIT_SITES`; updating a live site is always allowed), inviting specialists (`PLAN_NO_SPECIALISTS`). Existing projects and live sites keep working when an account is over its limits.
-- `GET /me/plan` shows the plan, usage and catalog; prices come from `PLAN_PRICE_*`, the upgrade contact from `SALES_CONTACT_URL`.
+- `GET /me/plan` shows the plan, usage and catalog; prices (`plan_prices`, tenge per month; starting values 4 990 ₸ «Старт» and 14 990 ₸ «Бизнес») and the upgrade contact (`billing_settings`, falls back to `SALES_CONTACT_URL`) are managed by staff at `GET/POST /admin/plan-settings` (change: `super_admin`, every change is audited).
 - There is no online payment yet. Staff assign a plan after a confirmed payment with `POST /admin/accounts/plan` (super_admin, audited as `account.plan_assigned`) or the «Customer plans» section of builder-admin; an optional end date returns the account to the free limits.
 - Owners can archive projects (`POST /projects/:id/archive`, not while published; revokes specialist access) and restore them if the plan allows.
 

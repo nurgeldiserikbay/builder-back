@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.13.0
+  version: 1.14.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -2272,6 +2272,59 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlanCatalogResponse' }
+  /admin/plan-settings:
+    get:
+      tags: [Plans]
+      operationId: staffGetPlanSettings
+      summary: Staff — plan prices and the upgrade contact
+      x-implementation-status: implemented
+      security:
+        - adminSessionCookie: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanSettingsResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Plans]
+      operationId: staffUpdatePlanSettings
+      summary: Staff — change plan prices or the upgrade contact
+      description: |
+        super_admin only. Each changed price is written to the staff audit history as plan.price_changed, a changed contact as
+        billing.contact_changed. Prices are shown to customers; assigned plans are not changed. Omitted fields stay as they are.
+      x-implementation-status: implemented
+      security:
+        - adminSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                prices:
+                  type: object
+                  additionalProperties: false
+                  properties:
+                    start: { type: [integer, 'null'], minimum: 100, maximum: 10000000 }
+                    business: { type: [integer, 'null'], minimum: 100, maximum: 10000000 }
+                salesContactUrl:
+                  type: [string, 'null']
+                  maxLength: 300
+                  description: https link (for example a Telegram or WhatsApp chat) or mailto; empty string or null removes it.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlanSettingsResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /admin/accounts/plan:
     get:
       tags: [Plans]
@@ -4197,7 +4250,7 @@ components:
             generation: { type: [object, 'null'] }
     PlanSummary:
       type: object
-      required: [key, title, description, limits, specialists, price]
+      required: [key, title, description, limits, specialists, monthlyPriceKzt, price]
       properties:
         key: { type: string, enum: [free, start, business] }
         title: { type: string }
@@ -4210,7 +4263,22 @@ components:
             aiPerMonth: { type: integer }
             liveSites: { type: integer }
         specialists: { type: boolean }
-        price: { type: [string, 'null'], description: Display price from configuration; null when not configured. }
+        monthlyPriceKzt: { type: [integer, 'null'], description: Monthly price in tenge set by staff; 0 for the free plan; null when the price is on request. }
+        price: { type: [string, 'null'], description: Formatted price such as "4 990 ₸ в месяц"; null when the price is on request. }
+    PlanSettingsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [catalogVersion, plans, priceUpdatedAt, salesContactUrl, salesContactFallback, updatedAt]
+          properties:
+            catalogVersion: { type: string }
+            plans: { type: array, items: { $ref: '#/components/schemas/PlanSummary' } }
+            priceUpdatedAt: { type: object, additionalProperties: { type: string, format: date-time } }
+            salesContactUrl: { type: [string, 'null'] }
+            salesContactFallback: { type: [string, 'null'], description: SALES_CONTACT_URL from the environment, used while no contact is set here. }
+            updatedAt: { type: [string, 'null'], format: date-time }
     PlanCatalogResponse:
       type: object
       required: [data]
