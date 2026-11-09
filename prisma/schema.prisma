@@ -1032,3 +1032,23 @@ model ProjectImage {
   @@index([projectId, createdAt(sort: Desc)], map: "project_images_project_created_idx")
   @@map("project_images")
 }
+
+/// Monthly price of a paid plan in tenge; null means "price on request". Managed in the admin console.
+model PlanPrice {
+  planKey          String   @id @map("plan_key") @db.VarChar(40)
+  monthlyPriceKzt  Int?     @map("monthly_price_kzt")
+  updatedByStaffId String?  @map("updated_by_staff_id") @db.Uuid
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("plan_prices")
+}
+
+/// Single-row billing settings (id = 1).
+model BillingSettings {
+  id               Int      @id @default(1) @db.SmallInt
+  salesContactUrl  String?  @map("sales_contact_url") @db.VarChar(300)
+  updatedByStaffId String?  @map("updated_by_staff_id") @db.Uuid
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("billing_settings")
+}

@@ -4,7 +4,7 @@ import { AuthGuard } from '../auth/auth.guard.js';
 import { StaffAuthGuard, type StaffRequest } from '../admin/staff-auth.guard.js';
 import { StaffRoles, StaffRolesGuard } from '../admin/staff-roles.guard.js';
 import { BillingService } from './billing.service.js';
-import { plans, type PlanKey } from './plans.js';
+import { MAX_PRICE_KZT, MIN_PRICE_KZT, paidPlanKeys, plans, validContactUrl, type PaidPlanKey, type PlanKey } from './plans.js';
 
 @Controller()
 export class BillingController {
@@ -18,8 +18,8 @@ export class BillingController {
   }
 
   @Get('plans')
-  catalog() {
-    return { data: this.billing.catalog() };
+  async catalog() {
+    return { data: await this.billing.catalog() };
   }
 }
 
@@ -51,5 +51,44 @@ export class AdminPlansController {
     }
     const note = body.note === undefined || body.note === null ? null : String(body.note).trim().slice(0, 500) || null;
     return this.billing.assign(request.staff.id, { email: body.email, planKey: body.planKey as PlanKey, validUntil, note });
+  }
+}
+
+@Controller('admin/plan-settings')
+@UseGuards(StaffAuthGuard, StaffRolesGuard)
+export class AdminPlanSettingsController {
+  constructor(private readonly billing: BillingService) {}
+
+  @Get()
+  @Header('Cache-Control', 'no-store')
+  @StaffRoles('super_admin', 'operations_auditor')
+  get() {
+    return this.billing.settings();
+  }
+
+  @Post()
+  @StaffRoles('super_admin')
+  update(@Body() raw: unknown, @Req() request: StaffRequest) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new BadRequestException('INVALID_REQUEST_BODY');
+    const body = raw as Record<string, unknown>;
+    if (Object.keys(body).some((key) => !['prices', 'salesContactUrl'].includes(key))) throw new BadRequestException('UNKNOWN_FIELD');
+    const prices: Partial<Record<PaidPlanKey, number | null>> = {};
+    if (body.prices !== undefined) {
+      if (!body.prices || typeof body.prices !== 'object' || Array.isArray(body.prices)) throw new BadRequestException('INVALID_PRICES');
+      for (const [key, value] of Object.entries(body.prices as Record<string, unknown>)) {
+        if (!(paidPlanKeys as string[]).includes(key)) throw new BadRequestException('INVALID_PLAN');
+        if (value !== null && (typeof value !== 'number' || !Number.isInteger(value) || value < MIN_PRICE_KZT || value > MAX_PRICE_KZT)) throw new BadRequestException('INVALID_PRICE');
+        prices[key as PaidPlanKey] = value as number | null;
+      }
+    }
+    let salesContactUrl: string | null | undefined;
+    if (body.salesContactUrl !== undefined) {
+      if (body.salesContactUrl === null || body.salesContactUrl === '') salesContactUrl = null;
+      else {
+        salesContactUrl = typeof body.salesContactUrl === 'string' ? validContactUrl(body.salesContactUrl) : null;
+        if (!salesContactUrl) throw new BadRequestException('INVALID_CONTACT_URL');
+      }
+    }
+    return this.billing.updateSettings(request.staff.id, { prices, salesContactUrl });
   }
 }
