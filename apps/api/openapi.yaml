@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.7.0
+  version: 1.8.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -16,6 +16,7 @@ tags:
   - name: Reviews
   - name: Capabilities
   - name: QualityProfiles
+  - name: Journey
 paths:
   /admin/auth/login:
     post:
@@ -1218,6 +1219,406 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /journey/catalog:
+    get:
+      tags: [Journey]
+      operationId: getJourneyCatalog
+      summary: List project types and their stage routes
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyCatalogResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/journey:
+    get:
+      tags: [Journey]
+      operationId: getProjectJourney
+      summary: Get the stage route, statuses, progress and next action
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}:
+    get:
+      tags: [Journey]
+      operationId: getProjectStage
+      summary: Get a stage contract, accepted inputs, current draft, versions with provenance and rules
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/draft:
+    put:
+      tags: [Journey]
+      operationId: saveStageDraft
+      summary: Save a manual edit as a new immutable version
+      description: Changed parts are locked so later AI runs keep them unless explicitly targeted. baseVersionId must equal the current version.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveStageDraftRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageVersionResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/generate:
+    post:
+      tags: [Journey]
+      operationId: generateStageVersion
+      summary: Ask the stage AI agent for a new candidate version
+      description: Uses accepted inputs, active project/stage rules and the built-in playbook. Output is schema-validated and merged with locked parts. Without a configured provider, content and design stages fall back to a deterministic template; instructions then return 503 AI_NOT_CONFIGURED.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GenerateStageRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageVersionResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/locks:
+    post:
+      tags: [Journey]
+      operationId: setStageLock
+      summary: Lock or unlock a part of the current draft against AI rewrites
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetStageLockRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageLocksResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/rules:
+    post:
+      tags: [Journey]
+      operationId: addStageRule
+      summary: Save a standing instruction for this stage or the whole project
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AddStageRuleRequest' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageRuleResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/rules/{ruleId}/status:
+    post:
+      tags: [Journey]
+      operationId: setStageRuleStatus
+      summary: Enable or disable a standing instruction
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/RuleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetStageRuleStatusRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageRuleStatusResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/versions/{versionId}/restore:
+    post:
+      tags: [Journey]
+      operationId: restoreStageVersion
+      summary: Create a new version from an earlier one
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+        - $ref: '#/components/parameters/VersionId'
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageVersionResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/import:
+    post:
+      tags: [Journey]
+      operationId: importStageMaterial
+      summary: Bring ready material for a stage as pasted text
+      description: Complete material whose inputs are accepted becomes status imported and unlocks later stages; otherwise it stays a draft with listed gaps.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportStageRequest' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageImportResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/accept:
+    post:
+      tags: [Journey]
+      operationId: acceptStage
+      summary: Accept the current version of a stage
+      description: Requires owner or manager, accepted inputs, a complete artifact and, for the build stage, no failed required checks on a build from the currently accepted versions.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AcceptStageRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/reopen:
+    post:
+      tags: [Journey]
+      operationId: reopenStage
+      summary: Reopen an accepted stage
+      description: Accepted later stages become stale and must be confirmed or updated.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/build:
+    post:
+      tags: [Journey]
+      operationId: buildProjectSite
+      summary: Compile the site from accepted stages and run checks
+      description: Deterministic, script-free renderer; no AI and no code execution.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BuildResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/preview:
+    get:
+      tags: [Journey]
+      operationId: previewProjectSite
+      summary: Render a draft preview or a saved build
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/OptionalVersionId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/result:
+    get:
+      tags: [Journey]
+      operationId: getProjectResult
+      summary: Download the result package for accepted stages
+      description: Available at any stage; unaccepted stages are listed as open items.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/complete:
+    post:
+      tags: [Journey]
+      operationId: completeProject
+      summary: Finish the project at its current stage
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/resume:
+    post:
+      tags: [Journey]
+      operationId: resumeProject
+      summary: Continue a completed project
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
     adminSessionCookie:
@@ -1229,6 +1630,27 @@ components:
       in: cookie
       name: buildpath_session
   parameters:
+    StageKey:
+      in: path
+      name: stageKey
+      required: true
+      schema: { type: string, enum: [goal, offer, content, design, build] }
+    RuleId:
+      in: path
+      name: ruleId
+      required: true
+      schema: { type: string, format: uuid }
+    VersionId:
+      in: path
+      name: versionId
+      required: true
+      schema: { type: string, format: uuid }
+    OptionalVersionId:
+      in: query
+      name: versionId
+      required: false
+      description: Saved build version; omitted for a draft preview from the latest drafts.
+      schema: { type: string, format: uuid }
     ProjectId:
       in: path
       name: projectId
@@ -2255,6 +2677,14 @@ components:
         summary: { type: string, maxLength: 4000 }
         startMode: { type: string, enum: [build, improve, design_implementation, analysis_only] }
         locale: { type: string, enum: [en, ru, kk] }
+        projectType:
+          type: string
+          enum: [landing, company_site]
+          description: Creates the stage route from the versioned journey catalog and makes the project active.
+        startStageKey:
+          type: string
+          enum: [goal, offer, content, design, build]
+          description: Optional later starting stage; it and its earlier stages open so the owner can bring ready materials. Requires projectType.
     Project:
       type: object
       additionalProperties: false
@@ -2267,6 +2697,7 @@ components:
         startMode: { type: string, enum: [build, improve, design_implementation, analysis_only] }
         status: { type: string, enum: [draft, active, paused, completed, archived] }
         locale: { type: string, enum: [en, ru, kk] }
+        projectType: { type: [string, 'null'], enum: [landing, company_site, null] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     ProjectResponse:
@@ -2311,3 +2742,424 @@ components:
               field: { type: string }
               code: { type: string }
               message: { type: string }
+    StageStatus:
+      type: string
+      enum: [locked, ready, awaiting_lead, in_progress, in_review, changes_requested, approved, stale, imported, skipped, blocked]
+    BriefArtifact:
+      type: object
+      additionalProperties: false
+      properties:
+        businessName: { type: string, maxLength: 80 }
+        whatYouDo: { type: string, maxLength: 400 }
+        audience: { type: string, maxLength: 300 }
+        city: { type: [string, 'null'], maxLength: 80 }
+        mainAction: { type: [string, 'null'], enum: [call, message, visit, email, null] }
+        phone: { type: [string, 'null'], maxLength: 30 }
+        messenger: { type: [string, 'null'], maxLength: 60 }
+        email: { type: [string, 'null'], maxLength: 120 }
+        address: { type: [string, 'null'], maxLength: 160 }
+        tone: { type: [string, 'null'], enum: [friendly, formal, bold, null] }
+    OfferArtifact:
+      type: object
+      additionalProperties: false
+      required: [services]
+      properties:
+        services:
+          type: array
+          maxItems: 12
+          items:
+            type: object
+            additionalProperties: false
+            required: [name]
+            properties:
+              name: { type: string, maxLength: 80 }
+              description: { type: [string, 'null'], maxLength: 300 }
+              price: { type: [string, 'null'], maxLength: 40 }
+        hours: { type: [string, 'null'], maxLength: 120 }
+    ContentArtifact:
+      type: object
+      additionalProperties: false
+      required: [sections, seo]
+      properties:
+        sections:
+          type: array
+          minItems: 1
+          maxItems: 12
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, type]
+            properties:
+              key: { type: string, pattern: '^[a-z][a-z0-9-]{0,39}$' }
+              type: { type: string, enum: [hero, about, services, benefits, steps, faq, contacts, cta] }
+              title: { type: string, maxLength: 120 }
+              text: { type: string, maxLength: 1200 }
+              items:
+                type: array
+                maxItems: 12
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [title]
+                  properties:
+                    title: { type: string, maxLength: 100 }
+                    text: { type: string, maxLength: 400 }
+              buttonLabel: { type: [string, 'null'], maxLength: 40 }
+        seo:
+          type: object
+          additionalProperties: false
+          properties:
+            title: { type: string, maxLength: 70 }
+            description: { type: string, maxLength: 160 }
+    DesignArtifact:
+      type: object
+      additionalProperties: false
+      required: [palette, font, corners, heroLayout]
+      properties:
+        palette: { type: string, enum: [forest, ocean, sunset, graphite, berry] }
+        font: { type: string, enum: [modern, classic, friendly] }
+        corners: { type: string, enum: [rounded, sharp] }
+        heroLayout: { type: string, enum: [centered, left] }
+    SiteCheck:
+      type: object
+      additionalProperties: false
+      required: [id, status, title, details, required]
+      properties:
+        id: { type: string }
+        status: { type: string, enum: [passed, warning, failed] }
+        title: { type: string }
+        details: { type: string }
+        required: { type: boolean }
+    SaveStageDraftRequest:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          oneOf:
+            - $ref: '#/components/schemas/BriefArtifact'
+            - $ref: '#/components/schemas/OfferArtifact'
+            - $ref: '#/components/schemas/ContentArtifact'
+            - $ref: '#/components/schemas/DesignArtifact'
+        baseVersionId: { type: [string, 'null'], format: uuid }
+    GenerateStageRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        instruction: { type: string, minLength: 2, maxLength: 1000 }
+        saveAs: { type: string, enum: [one_off, stage_rule, project_rule], default: one_off }
+        targetKey: { type: string, maxLength: 60, description: Change only this section or field. }
+    SetStageLockRequest:
+      type: object
+      additionalProperties: false
+      required: [key, locked]
+      properties:
+        key: { type: string, maxLength: 60 }
+        locked: { type: boolean }
+    AddStageRuleRequest:
+      type: object
+      additionalProperties: false
+      required: [text, scope]
+      properties:
+        text: { type: string, minLength: 2, maxLength: 1000 }
+        scope: { type: string, enum: [stage_rule, project_rule] }
+    SetStageRuleStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [active, disabled] }
+    ImportStageRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 2, maxLength: 20000 }
+    AcceptStageRequest:
+      type: object
+      additionalProperties: false
+      required: [versionId]
+      properties:
+        versionId: { type: string, format: uuid }
+    JourneyCatalogResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [version, projectTypes]
+          properties:
+            version: { type: string }
+            projectTypes:
+              type: array
+              items:
+                type: object
+                required: [key, title, description, stages]
+                properties:
+                  key: { type: string, enum: [landing, company_site] }
+                  title: { type: string }
+                  description: { type: string }
+                  goodFor: { type: string }
+                  examples: { type: array, items: { type: string } }
+                  resultExplanation: { type: string }
+                  stages:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, title, outcome]
+                      properties:
+                        key: { type: string }
+                        title: { type: string }
+                        outcome: { type: string }
+                        importHint: { type: [string, 'null'] }
+    JourneyResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [project, progress, nextAction, stages, ai]
+          properties:
+            project:
+              type: object
+              required: [id, name, status, projectType, typeTitle, role]
+              properties:
+                id: { type: string, format: uuid }
+                name: { type: string }
+                status: { type: string, enum: [draft, active, paused, completed, archived] }
+                locale: { type: string, enum: [en, ru, kk] }
+                role: { type: string }
+                projectType: { type: string }
+                typeTitle: { type: string }
+                resultExplanation: { type: string }
+                startStageKey: { type: [string, 'null'] }
+                routeVersion: { type: [string, 'null'] }
+            progress:
+              type: object
+              required: [accepted, total, percent]
+              properties:
+                accepted: { type: integer }
+                total: { type: integer }
+                percent: { type: integer, description: 'Share of accepted, imported or skipped stages in the route.' }
+            nextAction:
+              type: object
+              required: [stageKey, title, text]
+              properties:
+                stageKey: { type: [string, 'null'] }
+                title: { type: string }
+                text: { type: string }
+            stages:
+              type: array
+              items:
+                type: object
+                required: [key, title, status, statusLabel, inputs]
+                properties:
+                  key: { type: string }
+                  title: { type: string }
+                  purpose: { type: string }
+                  outcome: { type: string }
+                  aiLevel: { type: string, enum: [ai_full, ai_draft, ai_assist, none] }
+                  status: { $ref: '#/components/schemas/StageStatus' }
+                  statusLabel: { type: string }
+                  statusExplanation: { type: string }
+                  inputs:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, title, satisfied]
+                      properties:
+                        key: { type: string }
+                        title: { type: string }
+                        satisfied: { type: boolean }
+                  currentVersionNumber: { type: [integer, 'null'] }
+                  acceptedVersionNumber: { type: [integer, 'null'] }
+                  acceptedAt: { type: [string, 'null'], format: date-time }
+                  updatedAt: { type: string, format: date-time }
+            ai:
+              type: object
+              required: [configured, remainingToday]
+              properties:
+                configured: { type: boolean }
+                provider: { type: [string, 'null'] }
+                remainingToday: { type: integer }
+    StageResponse:
+      type: object
+      required: [data]
+      description: Stage contract with plain-language explanations, accepted inputs, the current draft (build stage returns checks without HTML), version provenance, standing rules and presentation options.
+      properties:
+        data:
+          type: object
+          required: [stage, inputs, current, issues, versions, rules, ai, options]
+          properties:
+            stage:
+              type: object
+              required: [key, title, status, artifactType, canEdit, canAccept, canReopen, canImport, inputsReady, lockedKeys]
+              properties:
+                key: { type: string }
+                title: { type: string }
+                purpose: { type: string }
+                outcome: { type: string }
+                artifactType: { type: string, enum: [brief, offer, content, design, site] }
+                status: { $ref: '#/components/schemas/StageStatus' }
+                statusLabel: { type: string }
+                statusExplanation: { type: string }
+                acceptance: { type: array, items: { type: string } }
+                acceptExplanation: { type: string }
+                importHint: { type: [string, 'null'] }
+                fields: { type: [array, 'null'], items: { type: object } }
+                lockedKeys: { type: array, items: { type: string } }
+                acceptedVersionId: { type: [string, 'null'], format: uuid }
+                canEdit: { type: boolean }
+                canAccept: { type: boolean }
+                canReopen: { type: boolean }
+                canImport: { type: boolean }
+                inputsReady: { type: boolean }
+            inputs: { type: array, items: { type: object } }
+            current:
+              type: [object, 'null']
+              properties:
+                id: { type: string, format: uuid }
+                versionNumber: { type: integer }
+                origin: { type: string, enum: [owner_edit, ai_generated, template, imported, compiled, restored] }
+                note: { type: [string, 'null'] }
+                createdAt: { type: string, format: date-time }
+                content: { type: object }
+            issues:
+              type: array
+              items:
+                type: object
+                required: [key, message]
+                properties:
+                  key: { type: string }
+                  message: { type: string }
+            versions:
+              type: array
+              items:
+                type: object
+                required: [id, versionNumber, origin, accepted]
+                properties:
+                  id: { type: string, format: uuid }
+                  versionNumber: { type: integer }
+                  origin: { type: string }
+                  note: { type: [string, 'null'] }
+                  createdAt: { type: string, format: date-time }
+                  accepted: { type: boolean }
+                  provenance:
+                    type: [object, 'null']
+                    properties:
+                      provider: { type: string }
+                      model: { type: [string, 'null'] }
+                      instruction: { type: [string, 'null'] }
+                      targetKey: { type: [string, 'null'] }
+                      rulesApplied: { type: integer }
+            rules: { type: array, items: { $ref: '#/components/schemas/StageRule' } }
+            ai: { type: object }
+            options: { type: object }
+    StageRule:
+      type: object
+      required: [id, kind, status, text, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [stage_rule, project_rule] }
+        status: { type: string, enum: [active, disabled] }
+        text: { type: string }
+        createdAt: { type: string, format: date-time }
+    StageRuleResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/StageRule' }
+    StageRuleStatusResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [id, status]
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [active, disabled] }
+    StageVersionResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [versionId, versionNumber]
+          properties:
+            versionId: { type: string, format: uuid }
+            versionNumber: { type: integer }
+            provider: { type: string }
+            changed: { type: array, items: { type: string } }
+    StageLocksResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [lockedKeys]
+          properties:
+            lockedKeys: { type: array, items: { type: string } }
+    StageImportResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [versionId, versionNumber, status, issues]
+          properties:
+            versionId: { type: string, format: uuid }
+            versionNumber: { type: integer }
+            status: { type: string, enum: [imported, in_progress] }
+            issues:
+              type: array
+              items:
+                type: object
+                properties:
+                  key: { type: string }
+                  message: { type: string }
+    BuildResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [versionId, versionNumber, checks]
+          properties:
+            versionId: { type: string, format: uuid }
+            versionNumber: { type: integer }
+            checks: { type: array, items: { $ref: '#/components/schemas/SiteCheck' } }
+    PreviewResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [html, draft]
+          properties:
+            html: { type: string, description: Self-contained HTML without scripts; render it in a sandboxed iframe. }
+            draft: { type: boolean }
+            versionNumber: { type: [integer, 'null'] }
+    ResultResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [generatedAt, complete, openItems, siteReady, files]
+          properties:
+            generatedAt: { type: string, format: date-time }
+            complete: { type: boolean }
+            siteReady: { type: boolean }
+            openItems: { type: array, items: { type: string } }
+            files:
+              type: array
+              items:
+                type: object
+                required: [name, mimeType, content]
+                properties:
+                  name: { type: string, enum: [project.md, site.html, project.json] }
+                  mimeType: { type: string }
+                  content: { type: string }
+    JourneyActionResponse:
+      $ref: '#/components/schemas/JourneyResponse'
