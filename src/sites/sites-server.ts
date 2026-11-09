@@ -7,6 +7,7 @@ import type { SiteArtifact, SiteMeta } from '../journey/artifacts.js';
 import { LEAD_FORM_PATH, pageCsp } from '../journey/site-renderer.js';
 import { notifyLead } from '../notifications/lead-notifier.js';
 import { sitesConfig, slugFromHost } from '../publishing/slug.js';
+import { reportError } from '../observability/error-reporting.js';
 import { messagePage, parseLeadForm, privacyPage, thanksPage } from './site-pages.js';
 
 export interface SitesServerOptions {
@@ -128,9 +129,34 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     void options.notify(lead.id).catch(() => undefined);
   }
 
+  /**
+   * Caddy asks this before issuing an on-demand TLS certificate for a host: only subdomains of live sites get one,
+   * so nobody can make the server request certificates for arbitrary names. Both answers reveal only what the site itself shows.
+   */
+  async function handleService(path: string, url: URL, response: ServerResponse): Promise<boolean> {
+    if (path === '/__caddy/ask') {
+      const slug = slugFromHost(url.searchParams.get('domain') ?? '', options.baseDomain);
+      const site = slug ? await loadSite(slug) : null;
+      send(response, site ? 200 : 404, site ? 'ok' : 'unknown', 'text/plain', false, { 'Cache-Control': 'no-store' });
+      return true;
+    }
+    if (path === '/__health') {
+      try {
+        await prisma.$queryRaw`SELECT 1`;
+        send(response, 200, 'ok', 'text/plain', false, { 'Cache-Control': 'no-store' });
+      } catch {
+        send(response, 503, 'database unavailable', 'text/plain', false, { 'Cache-Control': 'no-store' });
+      }
+      return true;
+    }
+    return false;
+  }
+
   async function handle(request: IncomingMessage, response: ServerResponse) {
+    const url = new URL(request.url ?? '/', 'http://site.invalid');
+    const path = url.pathname;
+    if (request.method === 'GET' && (await handleService(path, url, response))) return;
     const slug = slugFromHost(request.headers.host, options.baseDomain);
-    const path = new URL(request.url ?? '/', 'http://site.invalid').pathname;
     const site = slug ? await loadSite(slug) : null;
     if (!slug || !site) return send(response, 404, messagePage(null, 'Сайт не найден', 'По этому адресу сайта нет или он снят с публикации.', false), 'text/html');
     if (request.method === 'POST' && path === LEAD_FORM_PATH) return handleLead(request, response, slug, site);
@@ -149,7 +175,8 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
   }
 
   const server = http.createServer((request, response) => {
-    handle(request, response).catch(() => {
+    handle(request, response).catch((error: unknown) => {
+      reportError(error, { service: 'sites' });
       if (!response.headersSent) send(response, 500, messagePage(null, 'Ошибка', 'Не удалось открыть страницу. Попробуйте позже.'), 'text/html');
       else response.end();
     });

@@ -1,0 +1,149 @@
+# BuildPath production stack for one server. Expected layout (see deploy/README.md):
+#   /opt/buildpath/builder-back   (this repository; run compose from builder-back/deploy)
+#   /opt/buildpath/builder-front
+#   /opt/buildpath/builder-admin
+# Start:   docker compose -f compose.prod.yaml --env-file .env.production up -d --build
+# Secrets live in .env.production (never commit it).
+name: buildpath
+
+x-backend: &backend
+  build: { context: .., target: app }
+  image: buildpath-backend:${APP_RELEASE:-latest}
+  env_file: .env.production
+  restart: unless-stopped
+  depends_on:
+    postgres: { condition: service_healthy }
+  logging: &logging
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      APP_HOST: ${APP_HOST:?set APP_HOST in .env.production}
+      ADMIN_HOST: ${ADMIN_HOST:?set ADMIN_HOST in .env.production}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.production}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api, sites, front, admin]
+    logging: *logging
+
+  api:
+    <<: *backend
+    command: ["node", "dist/main.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  sites:
+    <<: *backend
+    command: ["node", "dist/sites.js"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4100/__health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  front:
+    build:
+      context: ../../builder-front
+      args:
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+        NEXT_PUBLIC_APP_RELEASE: ${APP_RELEASE:-}
+    image: buildpath-front:${APP_RELEASE:-latest}
+    restart: unless-stopped
+    logging: *logging
+
+  admin:
+    build:
+      context: ../../builder-admin
+      args:
+        NEXT_PUBLIC_SENTRY_DSN: ${NEXT_PUBLIC_SENTRY_DSN:-}
+        NEXT_PUBLIC_APP_RELEASE: ${APP_RELEASE:-}
+    image: buildpath-admin:${APP_RELEASE:-latest}
+    restart: unless-stopped
+    logging: *logging
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: buildpath
+      POSTGRES_DB: buildpath
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U buildpath -d buildpath"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    logging: *logging
+
+  clamav:
+    image: clamav/clamav:stable
+    restart: unless-stopped
+    volumes:
+      - clamav_data:/var/lib/clamav
+    logging: *logging
+
+  backup:
+    build: ./backup
+    image: buildpath-backup:latest
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Almaty}
+      PGHOST: postgres
+      PGUSER: buildpath
+      PGDATABASE: buildpath
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_SCHEDULE: ${BACKUP_SCHEDULE:-30 2 * * *}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_REMOTE: ${BACKUP_REMOTE:-}
+      RCLONE_CONFIG_OFFSITE_TYPE: ${RCLONE_CONFIG_OFFSITE_TYPE:-}
+      RCLONE_CONFIG_OFFSITE_PROVIDER: ${RCLONE_CONFIG_OFFSITE_PROVIDER:-}
+      RCLONE_CONFIG_OFFSITE_ENDPOINT: ${RCLONE_CONFIG_OFFSITE_ENDPOINT:-}
+      RCLONE_CONFIG_OFFSITE_REGION: ${RCLONE_CONFIG_OFFSITE_REGION:-}
+      RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID: ${RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID:-}
+      RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY: ${RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY:-}
+      BACKUP_ENCRYPTION_PASSPHRASE: ${BACKUP_ENCRYPTION_PASSPHRASE:-}
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      postgres: { condition: service_healthy }
+    logging: *logging
+
+  # Design review (staff tool for comparing a site with a mockup). Start with: --profile design-review
+  worker:
+    <<: *backend
+    build: { context: .., target: worker }
+    image: buildpath-worker:${APP_RELEASE:-latest}
+    command: ["node", "dist/worker.js"]
+    profiles: [design-review]
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: server /data
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${DESIGN_ASSETS_ACCESS_KEY:-buildpath}
+      MINIO_ROOT_PASSWORD: ${DESIGN_ASSETS_SECRET_KEY:-change-me-please}
+    volumes:
+      - minio_data:/data
+    profiles: [design-review]
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  clamav_data:
+  minio_data:
