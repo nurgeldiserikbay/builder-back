@@ -21,6 +21,13 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Specialists are not project members, so all project-wide checks (other stages, result package, publication, leads, review tool, project list) keep excluding them. They see only the assigned stage and the accepted versions of its inputs; their AI runs see the same scope. A lead can add stage rules but not project rules; an optional `aiBudget` caps their generations.
 - `submit` puts the stage in `in_review` (read-only) and notifies the owner in Telegram when linked; the owner accepts or uses `request-changes` with a note (the lead is notified). Accepting completes the assignment: writing stops immediately, reading continues for 7 days. Owners can revoke at any time; all of this is recorded in project events.
 
+### Stage work in Telegram
+
+- After linking (`/start <code>`), the bot works with projects: `/projects` lists projects (and stages where the account is a specialist), inline buttons open a project and a stage card with status, the current version summary and what is missing. From the card: ask the AI (the next text message is the instruction), build the site, accept with a confirmation step, send for acceptance, return with a comment, or suggest a change as a consultant. `/cancel` drops an awaited reply; voice messages are answered with a text-only notice.
+- The bot calls `JourneyService` as the linked account, so it can do exactly what that account can do in the web app. Chat context (`telegram_chat_states`) keeps only the selected project/stage and an awaited reply for 15 minutes; it is deleted on `/stop` or unlinking.
+- «Открыть в приложении» is a Telegram Mini App button when `PUBLIC_APP_URL` is HTTPS (a plain link otherwise). The web app recognises `?tg=1`, loads Telegram's WebApp script and calls `POST /auth/telegram-webapp` with the signed initData; linked accounts are signed in and returned to the opened page.
+- Verified locally against a mock Bot API and simulated Mini App initData; a real bot and Telegram clients were not tested.
+
 ### Publication and lead forms
 
 - `POST /projects/:id/publication` publishes the accepted build at `<slug>.<SITES_BASE_DOMAIN>` after explicit confirmation (owner/manager); `GET` shows state, a suggested latin address from the business name, whether a newer accepted build is not yet published, and notification channels; `unpublish` takes the site offline. The project status becomes `live` while published.

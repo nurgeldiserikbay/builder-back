@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
 // Minimal Telegram Bot API client. Messages are sent as plain text (no parse_mode), so user text cannot inject markup.
 
 export interface TelegramConfig { token: string; botUsername: string; webhookSecret: string | null; apiBase: string }
@@ -12,16 +14,54 @@ export function telegramConfig(env: NodeJS.ProcessEnv = process.env): TelegramCo
   return { token, botUsername, webhookSecret: env.TELEGRAM_WEBHOOK_SECRET || null, apiBase };
 }
 
-export async function sendTelegramMessage(config: TelegramConfig, chatId: string, text: string, fetchImpl: typeof fetch = fetch): Promise<boolean> {
+export type InlineButton = { text: string; callback_data?: string; url?: string; web_app?: { url: string } };
+export type InlineKeyboard = InlineButton[][];
+
+async function call(config: TelegramConfig, method: string, payload: Record<string, unknown>, fetchImpl: typeof fetch): Promise<boolean> {
   try {
-    const response = await fetchImpl(`${config.apiBase}/bot${config.token}/sendMessage`, {
+    const response = await fetchImpl(`${config.apiBase}/bot${config.token}/${method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: text.slice(0, 4000), disable_web_page_preview: true }),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(8000),
     });
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+export async function sendTelegramMessage(config: TelegramConfig, chatId: string, text: string, fetchImpl: typeof fetch = fetch, keyboard?: InlineKeyboard): Promise<boolean> {
+  return call(config, 'sendMessage', {
+    chat_id: chatId, text: text.slice(0, 4000), disable_web_page_preview: true,
+    ...(keyboard?.length ? { reply_markup: { inline_keyboard: keyboard } } : {}),
+  }, fetchImpl);
+}
+
+export async function answerCallbackQuery(config: TelegramConfig, callbackQueryId: string, text?: string, fetchImpl: typeof fetch = fetch): Promise<boolean> {
+  return call(config, 'answerCallbackQuery', { callback_query_id: callbackQueryId, ...(text ? { text: text.slice(0, 190) } : {}) }, fetchImpl);
+}
+
+/**
+ * Verifies Telegram Mini App initData (https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app).
+ * Returns the Telegram user id when the signature is valid and the data is fresh.
+ */
+export function verifyWebAppInitData(initData: string, botToken: string, maxAgeSeconds = 86_400, now = Date.now()): { telegramUserId: string } | null {
+  const params = new URLSearchParams(initData);
+  const hash = params.get('hash');
+  if (!hash || !/^[0-9a-f]{64}$/.test(hash)) return null;
+  params.delete('hash');
+  const dataCheckString = [...params.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}=${value}`).join('\n');
+  const secret = createHmac('sha256', 'WebAppData').update(botToken).digest();
+  const expected = createHmac('sha256', secret).update(dataCheckString).digest();
+  const actual = Buffer.from(hash, 'hex');
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
+  const authDate = Number(params.get('auth_date'));
+  if (!Number.isFinite(authDate) || now / 1000 - authDate > maxAgeSeconds || authDate - now / 1000 > 300) return null;
+  try {
+    const user = JSON.parse(params.get('user') ?? 'null') as { id?: unknown } | null;
+    return typeof user?.id === 'number' || typeof user?.id === 'string' ? { telegramUserId: String(user.id) } : null;
+  } catch {
+    return null;
   }
 }
