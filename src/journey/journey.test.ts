@@ -6,7 +6,8 @@ import {
   normalizeContent, templateContent, type Brief, type ContentArtifact,
 } from './artifacts.js';
 import { checkSite, contactLinks, contrastRatio, palettes, renderSite } from './site-renderer.js';
-import { initialStatuses, inputsSatisfied, nextStage, reopenStage, unlockDependents } from './stage-state.js';
+import { canEdit, initialStatuses, inputsSatisfied, nextStage, reopenStage, unlockDependents } from './stage-state.js';
+import { roleAccess } from './specialists.service.js';
 import { OpenAiStageProvider, StageAiError, buildStagePrompt } from './stage-ai.js';
 import { stageDefinitions } from './catalog.js';
 
@@ -46,6 +47,16 @@ describe('stage state', () => {
     const next = reopenStage(route, { goal: 'approved', content: 'approved', design: 'ready', build: 'locked' }, 'goal', () => false);
     assert.deepEqual(next, { goal: 'in_progress', content: 'stale', design: 'locked', build: 'locked' });
     assert.equal(inputsSatisfied(route, next, 'content'), false);
+  });
+  it('locks a stage while the owner reviews it, but not while waiting for an invited lead', () => {
+    assert.equal(canEdit('in_review'), false);
+    assert.equal(canEdit('awaiting_lead'), true);
+    assert.equal(canEdit('changes_requested'), true);
+    assert.equal(canEdit('approved'), false);
+  });
+  it('explains specialist access in plain language', () => {
+    assert.ok(roleAccess.lead.can.length > 0 && roleAccess.consultant.can.length > 0);
+    assert.ok(roleAccess.cannot.some((item) => item.includes('другие этапы')));
   });
   it('suggests the first unfinished stage', () => {
     assert.equal(nextStage(route, { goal: 'approved', content: 'in_progress', design: 'locked', build: 'locked' }), 'content');
