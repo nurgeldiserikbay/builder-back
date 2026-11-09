@@ -14,17 +14,23 @@ import {
 } from './artifacts.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderSite, siteMeta } from './site-renderer.js';
 import { StageAiError, buildStagePrompt, configuredStageProvider, type StageAiProvider } from './stage-ai.js';
+import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
 import {
   canEdit, inputsSatisfied, isSatisfied, nextStage, reopenStage, unlockDependents, type StageStatus, type StatusMap,
 } from './stage-state.js';
 
 const writeRoles = new Set(['owner', 'manager', 'contributor']);
 const acceptRoles = new Set(['owner', 'manager']);
-type Access = 'read' | 'write' | 'accept';
+type Access = 'read' | 'write' | 'accept' | 'members';
+type AssignmentRow = { id: string; stageId: string; stageKey: string; role: 'lead' | 'consultant'; status: string; aiBudget: number | null; aiUsed: number; readUntil: Date | null };
+type Viewer = { kind: 'member'; role: string } | { kind: 'specialist'; assignments: AssignmentRow[] };
+const editableProject = (status: string) => status === 'active' || status === 'live';
+const notEditableCode = (status: string) => (status === 'locked' ? 'STAGE_LOCKED' : status === 'in_review' ? 'STAGE_IN_REVIEW' : 'STAGE_ACCEPTED_REOPEN_FIRST');
+const SPECIALIST_READ_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
 type StageRow = {
   id: string; stageKey: string; position: number; status: StageStatus; currentVersionId: string | null; approvedVersionId: string | null;
-  lockedKeys: string[]; approvedAt: Date | null; updatedAt: Date; definitionVersion: string;
+  lockedKeys: string[]; approvedAt: Date | null; updatedAt: Date; definitionVersion: string; reviewNote: string | null;
 };
 
 function isUuid(value: string): boolean {
@@ -65,27 +71,66 @@ export class JourneyService {
     };
   }
 
-  private async load(userId: string, projectId: string, access: Access) {
+  /**
+   * Loads a project with the caller's access. Project members act on the whole route; specialists are not members
+   * and reach only the stages they are assigned to (STAGE_WORK_MODEL.md, section 7).
+   */
+  private async load(userId: string, projectId: string, access: Access, stageKey?: string) {
     if (!isUuid(projectId)) throw new NotFoundException('PROJECT_NOT_FOUND');
     const project = await this.prisma.project.findFirst({
-      where: { id: projectId, members: { some: { userId, status: 'active' } } },
+      where: { id: projectId, OR: [{ members: { some: { userId, status: 'active' } } }, { assignments: { some: { userId, status: { in: ['active', 'completed'] } } } }] },
       select: {
-        id: true, name: true, status: true, locale: true, projectType: true, startStageKey: true, routeVersion: true,
+        id: true, name: true, status: true, locale: true, projectType: true, startStageKey: true, routeVersion: true, ownerUserId: true,
         members: { where: { userId, status: 'active' }, select: { role: true } },
-        stages: { orderBy: { position: 'asc' }, select: { id: true, stageKey: true, position: true, status: true, currentVersionId: true, approvedVersionId: true, lockedKeys: true, approvedAt: true, updatedAt: true, definitionVersion: true } },
+        assignments: { where: { userId, status: { in: ['active', 'completed'] } }, select: { id: true, stageId: true, role: true, status: true, aiBudget: true, aiUsed: true, readUntil: true } },
+        stages: { orderBy: { position: 'asc' }, select: { id: true, stageKey: true, position: true, status: true, currentVersionId: true, approvedVersionId: true, lockedKeys: true, approvedAt: true, updatedAt: true, definitionVersion: true, reviewNote: true } },
       },
     });
     if (!project) throw new NotFoundException('PROJECT_NOT_FOUND');
     const type = projectTypeOf(project.projectType);
     if (!type) throw new ConflictException('PROJECT_HAS_NO_ROUTE');
-    const role = project.members[0]?.role ?? 'viewer';
-    if (access === 'write' && !writeRoles.has(role)) throw new ForbiddenException('STAGE_WRITE_FORBIDDEN');
-    if (access === 'accept' && !acceptRoles.has(role)) throw new ForbiddenException('STAGE_ACCEPT_FORBIDDEN');
-    if (access !== 'read' && (project.status === 'archived' || project.status === 'completed')) throw new ConflictException('PROJECT_NOT_ACTIVE');
     const stages = project.stages as StageRow[];
+    const member = project.members[0] ?? null;
+    const now = Date.now();
+    const assignments: AssignmentRow[] = project.assignments
+      .filter((item) => item.status === 'active' || (item.readUntil && item.readUntil.getTime() > now))
+      .map((item) => ({ ...item, stageKey: stages.find((stage) => stage.id === item.stageId)?.stageKey ?? '' }));
+    const viewer: Viewer = member ? { kind: 'member', role: member.role } : { kind: 'specialist', assignments };
+    if (viewer.kind === 'specialist' && assignments.length === 0) throw new NotFoundException('PROJECT_NOT_FOUND');
+    const role = member?.role ?? 'specialist';
     const route = type.stages.filter((key) => stages.some((stage) => stage.stageKey === key));
     const statuses: StatusMap = Object.fromEntries(stages.map((stage) => [stage.stageKey, stage.status]));
-    return { project, type, role, stages, route, statuses };
+    const ctx = { project, type, role, viewer, stages, route, statuses };
+    if (stageKey !== undefined && !this.canRead(ctx, stageKey)) throw new NotFoundException('STAGE_NOT_FOUND');
+    if (access === 'write' && !(stageKey !== undefined ? this.canWrite(ctx, stageKey) : viewer.kind === 'member' && writeRoles.has(role))) throw new ForbiddenException('STAGE_WRITE_FORBIDDEN');
+    if (access === 'accept' && !(viewer.kind === 'member' && acceptRoles.has(role))) throw new ForbiddenException('STAGE_ACCEPT_FORBIDDEN');
+    if (access === 'members' && viewer.kind !== 'member') throw new NotFoundException('PROJECT_NOT_FOUND');
+    if ((access === 'write' || access === 'accept') && !editableProject(project.status)) throw new ConflictException('PROJECT_NOT_ACTIVE');
+    return ctx;
+  }
+
+  private assignmentFor(ctx: { viewer: Viewer }, key: string): AssignmentRow | null {
+    return ctx.viewer.kind === 'specialist' ? ctx.viewer.assignments.find((item) => item.stageKey === key) ?? null : null;
+  }
+
+  private canRead(ctx: { viewer: Viewer }, key: string): boolean {
+    return ctx.viewer.kind === 'member' || Boolean(this.assignmentFor(ctx, key));
+  }
+
+  private viewerInfo(ctx: { viewer: Viewer; role: string }) {
+    if (ctx.viewer.kind === 'member') return { kind: 'member' as const, role: ctx.role, assignments: [] };
+    return {
+      kind: 'specialist' as const, role: 'specialist',
+      assignments: ctx.viewer.assignments.map((item) => ({
+        stageKey: item.stageKey, role: item.role, status: item.status, aiBudget: item.aiBudget, aiUsed: item.aiUsed, readUntil: item.readUntil,
+      })),
+    };
+  }
+
+  private canWrite(ctx: { viewer: Viewer }, key: string): boolean {
+    if (ctx.viewer.kind === 'member') return writeRoles.has(ctx.viewer.role);
+    const assignment = this.assignmentFor(ctx, key);
+    return assignment?.role === 'lead' && assignment.status === 'active';
   }
 
   private stageOf(ctx: { stages: StageRow[] }, key: string): StageRow {
@@ -129,12 +174,18 @@ export class JourneyService {
     const versions = await this.prisma.stageArtifactVersion.findMany({ where: { id: { in: versionIds } }, select: { id: true, versionNumber: true } });
     const numberOf = (id: string | null) => versions.find((version) => version.id === id)?.versionNumber ?? null;
     const approved = ctx.route.filter((key) => isSatisfied(ctx.statuses[key])).length;
-    const next = nextStage(ctx.route, ctx.statuses);
+    const visible = ctx.route.filter((key) => this.canRead(ctx, key));
+    const specialist = ctx.viewer.kind === 'specialist';
+    const next = specialist ? visible.find((key) => !isSatisfied(ctx.statuses[key])) ?? null : nextStage(ctx.route, ctx.statuses);
     const nextStatus = next ? ctx.statuses[next] : null;
-    const nextText = !next ? 'Все этапы приняты. Опубликуйте сайт или скачайте результат ниже. Вернуться к любому этапу можно в любой момент.'
-      : nextStatus === 'stale' ? `Изменился предыдущий этап. Проверьте «${stageDefinitions[next].title}» и подтвердите или обновите.`
-        : nextStatus === 'in_progress' ? `Проверьте черновик этапа «${stageDefinitions[next].title}» и примите его, если всё устраивает.`
-          : `Начните этап «${stageDefinitions[next].title}». ${stageDefinitions[next].outcome}`;
+    const title = next ? stageDefinitions[next].title : '';
+    const nextText = !next ? (specialist ? 'Ваш этап принят владельцем. Спасибо за работу!' : 'Все этапы приняты. Опубликуйте сайт или скачайте результат ниже. Вернуться к любому этапу можно в любой момент.')
+      : nextStatus === 'stale' ? `Изменился предыдущий этап. Проверьте «${title}» и подтвердите или обновите.`
+        : nextStatus === 'in_review' ? (specialist ? `Этап «${title}» на приёмке у владельца. Пока он проверяет, вносить изменения нельзя.` : `Специалист отправил этап «${title}» на приёмку. Проверьте и примите или верните на доработку.`)
+          : nextStatus === 'changes_requested' ? `Владелец попросил доработать этап «${title}».`
+            : nextStatus === 'awaiting_lead' ? `Этап «${title}» ждёт, когда приглашённый специалист примет приглашение. Вы можете продолжить сами.`
+              : nextStatus === 'in_progress' ? (specialist ? `Доработайте этап «${title}» и отправьте владельцу на приёмку.` : `Проверьте черновик этапа «${title}» и примите его, если всё устраивает.`)
+                : `Начните этап «${title}». ${stageDefinitions[next].outcome}`;
     const ai = this.ai();
     return {
       data: {
@@ -143,9 +194,10 @@ export class JourneyService {
           projectType: ctx.type.key, typeTitle: ctx.type.title, resultExplanation: ctx.type.resultExplanation, startStageKey: ctx.project.startStageKey,
           routeVersion: ctx.project.routeVersion,
         },
+        viewer: this.viewerInfo(ctx),
         progress: { accepted: approved, total: ctx.route.length, percent: Math.round((approved / ctx.route.length) * 100) },
         nextAction: next ? { stageKey: next, title: stageDefinitions[next].title, text: nextText } : { stageKey: null, title: 'Готово', text: nextText },
-        stages: ctx.route.map((key) => {
+        stages: visible.map((key) => {
           const stage = this.stageOf(ctx, key);
           const definition = stageDefinitions[key];
           return {
@@ -162,7 +214,7 @@ export class JourneyService {
   }
 
   async stage(userId: string, projectId: string, key: string) {
-    const ctx = await this.load(userId, projectId, 'read');
+    const ctx = await this.load(userId, projectId, 'read', key);
     const stage = this.stageOf(ctx, key);
     const stageKey = key as StageKey;
     const definition = stageDefinitions[stageKey];
@@ -181,18 +233,37 @@ export class JourneyService {
     const instructionText = (id: string | null) => instructions.find((item) => item.id === id)?.text ?? null;
     const ai = this.ai();
     const site = definition.artifactType === 'site' && current ? current.content as unknown as SiteArtifact : null;
+    const assignment = this.assignmentFor(ctx, stageKey);
+    const owner = ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role) && editableProject(ctx.project.status);
+    const writable = canEdit(stage.status) && this.canWrite(ctx, stageKey) && editableProject(ctx.project.status);
+    const suggestions = await this.prisma.stageInstruction.findMany({
+      where: { stageId: stage.id, kind: 'suggestion' }, orderBy: { createdAt: 'desc' }, take: 30,
+      select: { id: true, text: true, targetKey: true, status: true, authorUserId: true, createdAt: true },
+    });
+    const authorIds = [...new Set(suggestions.map((item) => item.authorUserId))];
+    const authors = authorIds.length ? await this.prisma.user.findMany({ where: { id: { in: authorIds } }, select: { id: true, name: true, email: true } }) : [];
     return {
       data: {
+        viewer: this.viewerInfo(ctx),
+        suggestions: suggestions.map((item) => {
+          const author = authors.find((user) => user.id === item.authorUserId);
+          return { id: item.id, text: item.text, targetKey: item.targetKey, status: item.status, createdAt: item.createdAt, author: author?.name ?? author?.email ?? null };
+        }),
         stage: {
           key: stageKey, title: definition.title, purpose: definition.purpose, outcome: definition.outcome, artifactType: definition.artifactType,
           status: stage.status, statusLabel: statusExplanations[stage.status].label, statusExplanation: statusExplanations[stage.status].explanation,
           acceptance: definition.acceptance, acceptExplanation: definition.acceptExplanation, importHint: definition.importHint,
           fields: definition.fields ?? null, lockedKeys: stage.lockedKeys, acceptedVersionId: stage.approvedVersionId,
-          canEdit: canEdit(stage.status) && writeRoles.has(ctx.role) && ctx.project.status === 'active',
-          canAccept: acceptRoles.has(ctx.role) && ctx.project.status === 'active' && Boolean(stage.currentVersionId)
-            && (stage.status === 'in_progress' || stage.status === 'stale' || stage.status === 'changes_requested') && inputsSatisfied(ctx.route, ctx.statuses, stageKey),
-          canReopen: acceptRoles.has(ctx.role) && ctx.project.status === 'active' && (stage.status === 'approved' || stage.status === 'imported'),
-          canImport: Boolean(definition.importHint) && canEdit(stage.status) && writeRoles.has(ctx.role) && ctx.project.status === 'active',
+          canEdit: writable,
+          canAccept: owner && Boolean(stage.currentVersionId)
+            && ['in_progress', 'stale', 'changes_requested', 'in_review'].includes(stage.status) && inputsSatisfied(ctx.route, ctx.statuses, stageKey),
+          canReopen: owner && (stage.status === 'approved' || stage.status === 'imported'),
+          canImport: Boolean(definition.importHint) && writable,
+          canSubmit: Boolean(assignment) && writable && Boolean(stage.currentVersionId) && stage.status !== 'in_review',
+          canRequestChanges: owner && stage.status === 'in_review',
+          canInvite: owner,
+          canSuggest: assignment?.role === 'consultant' && assignment.status === 'active' && !['approved', 'imported'].includes(stage.status),
+          reviewNote: stage.reviewNote,
           inputsReady: inputsSatisfied(ctx.route, ctx.statuses, stageKey),
         },
         inputs: routeInputs(ctx.route, stageKey).map((input) => ({
@@ -212,10 +283,11 @@ export class JourneyService {
             provenance: run ? { provider: run.provider, model: run.model, instruction: instructionText(run.instructionId), targetKey: run.targetKey, rulesApplied: run.ruleIds.length } : null,
           };
         }),
-        rules: instructions.filter((item) => item.kind !== 'one_off').map((item) => ({ id: item.id, kind: item.kind, status: item.status, text: item.text, createdAt: item.createdAt })),
+        rules: instructions.filter((item) => item.kind === 'stage_rule' || item.kind === 'project_rule').map((item) => ({ id: item.id, kind: item.kind, status: item.status, text: item.text, createdAt: item.createdAt })),
         ai: {
           level: definition.ai.level, whatItDoes: definition.ai.whatItDoes, instructionExamples: definition.ai.instructionExamples, describeHint: definition.ai.describeHint ?? null,
           configured: Boolean(ai), remainingToday: ai ? await this.remainingAiRuns(projectId) : 0,
+          budget: assignment ? { limit: assignment.aiBudget, used: assignment.aiUsed } : null,
           templateAvailable: !ai && (stageKey === 'content' || stageKey === 'design'),
         },
         options: {
@@ -254,11 +326,11 @@ export class JourneyService {
   }
 
   async saveDraft(userId: string, projectId: string, key: string, input: { content: unknown; baseVersionId: string | null }) {
-    const ctx = await this.load(userId, projectId, 'write');
+    const ctx = await this.load(userId, projectId, 'write', key);
     const stage = this.stageOf(ctx, key);
     const definition = stageDefinitions[key as StageKey];
     if (definition.artifactType === 'site') throw new BadRequestException('STAGE_NOT_EDITABLE');
-    if (!canEdit(stage.status)) throw new ConflictException(stage.status === 'locked' ? 'STAGE_LOCKED' : 'STAGE_ACCEPTED_REOPEN_FIRST');
+    if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     if ((input.baseVersionId ?? null) !== (stage.currentVersionId ?? null)) throw new ConflictException('STAGE_VERSION_CONFLICT');
     let content: unknown;
     try { content = normalizeArtifact(definition.artifactType, input.content); } catch (error) { validationError(error); }
@@ -276,7 +348,7 @@ export class JourneyService {
   }
 
   async setLock(userId: string, projectId: string, key: string, lockKey: string, locked: boolean) {
-    const ctx = await this.load(userId, projectId, 'write');
+    const ctx = await this.load(userId, projectId, 'write', key);
     const stage = this.stageOf(ctx, key);
     const current = await this.versionContent(stage.currentVersionId);
     const definition = stageDefinitions[key as StageKey];
@@ -287,7 +359,8 @@ export class JourneyService {
   }
 
   async addRule(userId: string, projectId: string, key: string, input: { text: string; scope: 'stage_rule' | 'project_rule' }) {
-    const ctx = await this.load(userId, projectId, 'write');
+    const ctx = await this.load(userId, projectId, 'write', key);
+    if (input.scope === 'project_rule' && ctx.viewer.kind !== 'member') throw new ForbiddenException('PROJECT_RULE_FORBIDDEN');
     const stage = this.stageOf(ctx, key);
     const rule = await this.prisma.$transaction(async (tx) => {
       const created = await tx.stageInstruction.create({ data: { projectId, stageId: stage.id, authorUserId: userId, kind: input.scope, text: input.text }, select: { id: true, kind: true, status: true, text: true, createdAt: true } });
@@ -307,12 +380,14 @@ export class JourneyService {
   }
 
   async generate(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null }) {
-    const ctx = await this.load(userId, projectId, 'write');
+    const ctx = await this.load(userId, projectId, 'write', key);
+    const assignment = this.assignmentFor(ctx, key);
+    if (input.saveAs === 'project_rule' && assignment) throw new ForbiddenException('PROJECT_RULE_FORBIDDEN');
     const stage = this.stageOf(ctx, key);
     const stageKey = key as StageKey;
     const definition = stageDefinitions[stageKey];
     if (definition.ai.level === 'none') throw new BadRequestException('AI_NOT_USED_FOR_STAGE');
-    if (!canEdit(stage.status)) throw new ConflictException(stage.status === 'locked' ? 'STAGE_LOCKED' : 'STAGE_ACCEPTED_REOPEN_FIRST');
+    if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     if (!inputsSatisfied(ctx.route, ctx.statuses, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const base = await this.versionContent(stage.currentVersionId);
     if (input.targetKey && (!base || !lockableKeys(definition.artifactType, base.content).includes(input.targetKey))) throw new NotFoundException('TARGET_NOT_FOUND');
@@ -343,6 +418,7 @@ export class JourneyService {
     }
 
     if (await this.remainingAiRuns(projectId) < 1) throw new HttpException('AI_DAILY_LIMIT_REACHED', HttpStatus.TOO_MANY_REQUESTS);
+    if (assignment && assignment.aiBudget !== null && assignment.aiUsed >= assignment.aiBudget) throw new HttpException('AI_BUDGET_EXHAUSTED', HttpStatus.TOO_MANY_REQUESTS);
     const rules = await this.prisma.stageInstruction.findMany({
       where: { projectId, status: 'active', OR: [{ kind: 'project_rule' }, { kind: 'stage_rule', stageId: stage.id }] },
       orderBy: { createdAt: 'asc' }, take: 30, select: { id: true, text: true },
@@ -394,17 +470,18 @@ export class JourneyService {
       });
       await tx.generationRun.update({ where: { id: run.id }, data: { resultVersionId: created.id } });
       await this.event(tx, projectId, userId, 'stage_generated', key, { provider: provider.name, versionNumber: created.versionNumber, targetKey: input.targetKey });
+      if (assignment) await tx.stageAssignment.update({ where: { id: assignment.id }, data: { aiUsed: { increment: 1 } } });
       return created;
     });
     return { data: { versionId: version.id, versionNumber: version.versionNumber, provider: provider.name } };
   }
 
   async restore(userId: string, projectId: string, key: string, versionId: string) {
-    const ctx = await this.load(userId, projectId, 'write');
+    const ctx = await this.load(userId, projectId, 'write', key);
     const stage = this.stageOf(ctx, key);
     const definition = stageDefinitions[key as StageKey];
     if (definition.artifactType === 'site') throw new BadRequestException('STAGE_NOT_EDITABLE');
-    if (!canEdit(stage.status)) throw new ConflictException('STAGE_ACCEPTED_REOPEN_FIRST');
+    if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     if (!isUuid(versionId)) throw new NotFoundException('VERSION_NOT_FOUND');
     const source = await this.prisma.stageArtifactVersion.findFirst({ where: { id: versionId, stageId: stage.id }, select: { content: true, versionNumber: true } });
     if (!source) throw new NotFoundException('VERSION_NOT_FOUND');
@@ -417,12 +494,12 @@ export class JourneyService {
   }
 
   async importText(userId: string, projectId: string, key: string, text: string) {
-    const ctx = await this.load(userId, projectId, 'write');
+    const ctx = await this.load(userId, projectId, 'write', key);
     const stage = this.stageOf(ctx, key);
     const stageKey = key as StageKey;
     const definition = stageDefinitions[stageKey];
     if (!definition.importHint) throw new BadRequestException('IMPORT_NOT_SUPPORTED');
-    if (!canEdit(stage.status)) throw new ConflictException(stage.status === 'locked' ? 'STAGE_LOCKED' : 'STAGE_ACCEPTED_REOPEN_FIRST');
+    if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     let content: unknown;
     try {
       content = definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : importContentText(text);
@@ -443,9 +520,9 @@ export class JourneyService {
   }
 
   async build(userId: string, projectId: string) {
-    const ctx = await this.load(userId, projectId, 'write');
+    const ctx = await this.load(userId, projectId, 'write', 'build');
     const stage = this.stageOf(ctx, 'build');
-    if (!canEdit(stage.status)) throw new ConflictException(stage.status === 'locked' ? 'STAGE_LOCKED' : 'STAGE_ACCEPTED_REOPEN_FIRST');
+    if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     if (!inputsSatisfied(ctx.route, ctx.statuses, 'build')) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const sources = await this.renderSources(ctx, true);
     const renderInput = { ...sources.input, draft: false };
@@ -459,11 +536,14 @@ export class JourneyService {
   }
 
   /** Accepted versions for a build, or latest drafts for a preview. */
-  private async renderSources(ctx: { route: StageKey[]; stages: StageRow[]; project: { locale: string } }, acceptedOnly: boolean) {
+  /** Accepted versions for a build; for a preview, latest drafts (all of them for members, only the specialist's own stages otherwise). */
+  private async renderSources(ctx: { route: StageKey[]; stages: StageRow[]; project: { locale: string } }, acceptedOnly: boolean, draftKeys?: string[]) {
     const pick = async (key: StageKey) => {
       if (!ctx.route.includes(key)) return null;
       const stage = this.stageOf(ctx, key);
-      const id = acceptedOnly ? (isSatisfied(stage.status) ? stage.approvedVersionId : null) : stage.currentVersionId ?? stage.approvedVersionId;
+      const accepted = isSatisfied(stage.status) ? stage.approvedVersionId : null;
+      const useDraft = !acceptedOnly && (!draftKeys || draftKeys.includes(key));
+      const id = useDraft ? stage.currentVersionId ?? stage.approvedVersionId : accepted;
       return this.versionContent(id);
     };
     const [goal, offer, content, design] = await Promise.all([pick('goal'), pick('offer'), pick('content'), pick('design')]);
@@ -483,23 +563,27 @@ export class JourneyService {
 
   async preview(userId: string, projectId: string, versionId: string | null) {
     const ctx = await this.load(userId, projectId, 'read');
+    const own = ctx.viewer.kind === 'specialist' ? ctx.viewer.assignments.map((item) => item.stageKey) : undefined;
+    // A preview shows the page texts, so specialists see it only when their stage works with them.
+    if (own && !own.some((key) => ['content', 'design', 'build'].includes(key))) throw new NotFoundException('PREVIEW_NOT_AVAILABLE');
     if (versionId) {
+      if (own && !own.includes('build')) throw new NotFoundException('VERSION_NOT_FOUND');
       const build = this.stageOf(ctx, 'build');
       if (!isUuid(versionId)) throw new NotFoundException('VERSION_NOT_FOUND');
       const version = await this.prisma.stageArtifactVersion.findFirst({ where: { id: versionId, stageId: build.id }, select: { content: true, versionNumber: true } });
       if (!version) throw new NotFoundException('VERSION_NOT_FOUND');
       return { data: { html: (version.content as unknown as SiteArtifact).html, draft: false, versionNumber: version.versionNumber } };
     }
-    const sources = await this.renderSources(ctx, false);
+    const sources = await this.renderSources(ctx, false, own);
     return { data: { html: renderSite(sources.input), draft: true, versionNumber: null } };
   }
 
   async accept(userId: string, projectId: string, key: string, versionId: string) {
-    const ctx = await this.load(userId, projectId, 'accept');
+    const ctx = await this.load(userId, projectId, 'accept', key);
     const stage = this.stageOf(ctx, key);
     const stageKey = key as StageKey;
     const definition = stageDefinitions[stageKey];
-    if (!['in_progress', 'stale', 'changes_requested'].includes(stage.status)) throw new ConflictException('STAGE_NOT_ACCEPTABLE');
+    if (!['in_progress', 'stale', 'changes_requested', 'in_review'].includes(stage.status)) throw new ConflictException('STAGE_NOT_ACCEPTABLE');
     if (stage.currentVersionId !== versionId) throw new ConflictException('STAGE_VERSION_CONFLICT');
     if (!inputsSatisfied(ctx.route, ctx.statuses, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const version = await this.versionContent(versionId);
@@ -514,7 +598,13 @@ export class JourneyService {
       if (issues.length) throw new UnprocessableEntityException(`STAGE_INCOMPLETE:${issues.map((issue) => issue.key).join(',')}`);
     }
     await this.prisma.$transaction(async (tx) => {
-      await tx.projectStage.update({ where: { id: stage.id }, data: { status: 'approved', approvedVersionId: versionId, approvedAt: new Date(), approvedByUserId: userId } });
+      await tx.projectStage.update({ where: { id: stage.id }, data: { status: 'approved', approvedVersionId: versionId, approvedAt: new Date(), approvedByUserId: userId, reviewNote: null } });
+      // Specialists keep read access for a grace period after acceptance; writing and AI use stop now.
+      const completed = await tx.stageAssignment.updateMany({
+        where: { stageId: stage.id, status: 'active' },
+        data: { status: 'completed', completedAt: new Date(), readUntil: new Date(Date.now() + SPECIALIST_READ_GRACE_MS) },
+      });
+      if (completed.count) await this.event(tx, projectId, userId, 'assignments_completed', key, { count: completed.count });
       await this.writeStatuses(tx, { project: ctx.project, statuses: { ...ctx.statuses, [stageKey]: 'approved' } }, unlockDependents(ctx.route, { ...ctx.statuses, [stageKey]: 'approved' }));
       await this.event(tx, projectId, userId, 'stage_accepted', key, { versionNumber: version.versionNumber });
     });
@@ -522,7 +612,7 @@ export class JourneyService {
   }
 
   async reopen(userId: string, projectId: string, key: string) {
-    const ctx = await this.load(userId, projectId, 'accept');
+    const ctx = await this.load(userId, projectId, 'accept', key);
     const stage = this.stageOf(ctx, key);
     if (stage.status !== 'approved' && stage.status !== 'imported') throw new ConflictException('STAGE_NOT_ACCEPTED');
     const next = reopenStage(ctx.route, ctx.statuses, key as StageKey, (dependent) => Boolean(this.stageOf(ctx, dependent).currentVersionId));
@@ -533,8 +623,93 @@ export class JourneyService {
     return this.journey(userId, projectId);
   }
 
+  /** Best-effort Telegram notice to a linked account; the workflow never depends on it. */
+  private async notifyUser(userId: string, text: string): Promise<void> {
+    const config = telegramConfig();
+    if (!config) return;
+    const identity = await this.prisma.externalIdentity.findUnique({ where: { userId_provider: { userId, provider: 'telegram' } }, select: { chatId: true } });
+    if (identity) await sendTelegramMessage(config, identity.chatId, text);
+  }
+
+  private stageLink(projectId: string, key: string): string {
+    return process.env.PUBLIC_APP_URL ? new URL(`/projects/${projectId}/stages/${key}`, process.env.PUBLIC_APP_URL).toString() : '';
+  }
+
+  async submit(userId: string, projectId: string, key: string, versionId: string) {
+    const ctx = await this.load(userId, projectId, 'write', key);
+    if (ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role)) throw new ConflictException('OWNER_ACCEPTS_DIRECTLY');
+    const stage = this.stageOf(ctx, key);
+    const stageKey = key as StageKey;
+    if (!['in_progress', 'stale', 'changes_requested'].includes(stage.status)) throw new ConflictException('STAGE_NOT_SUBMITTABLE');
+    if (stage.currentVersionId !== versionId) throw new ConflictException('STAGE_VERSION_CONFLICT');
+    if (!inputsSatisfied(ctx.route, ctx.statuses, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+    const version = await this.versionContent(versionId);
+    const definition = stageDefinitions[stageKey];
+    if (version && definition.artifactType !== 'site') {
+      const issues = completenessIssues(definition.artifactType, version.content);
+      if (issues.length) throw new UnprocessableEntityException(`STAGE_INCOMPLETE:${issues.map((issue) => issue.key).join(',')}`);
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.projectStage.update({ where: { id: stage.id }, data: { status: 'in_review' } });
+      await this.event(tx, projectId, userId, 'stage_submitted', key, { versionNumber: version?.versionNumber ?? null });
+    });
+    await this.notifyUser(ctx.project.ownerUserId, `Этап «${definition.title}» в проекте «${ctx.project.name}» отправлен вам на приёмку. ${this.stageLink(projectId, key)}`.trim()).catch(() => undefined);
+    return this.journey(userId, projectId);
+  }
+
+  async requestChanges(userId: string, projectId: string, key: string, note: string) {
+    const ctx = await this.load(userId, projectId, 'accept', key);
+    const stage = this.stageOf(ctx, key);
+    if (stage.status !== 'in_review') throw new ConflictException('STAGE_NOT_IN_REVIEW');
+    await this.prisma.$transaction(async (tx) => {
+      await tx.projectStage.update({ where: { id: stage.id }, data: { status: 'changes_requested', reviewNote: note } });
+      await this.event(tx, projectId, userId, 'stage_changes_requested', key, {});
+    });
+    const leads = await this.prisma.stageAssignment.findMany({ where: { stageId: stage.id, status: 'active', role: 'lead' }, select: { userId: true } });
+    for (const lead of leads) {
+      if (lead.userId) await this.notifyUser(lead.userId, `Владелец проекта «${ctx.project.name}» просит доработать этап «${stageDefinitions[key as StageKey].title}»: ${note} ${this.stageLink(projectId, key)}`.trim()).catch(() => undefined);
+    }
+    return this.journey(userId, projectId);
+  }
+
+  async suggest(userId: string, projectId: string, key: string, input: { text: string; targetKey: string | null }) {
+    const ctx = await this.load(userId, projectId, 'read', key);
+    const assignment = this.assignmentFor(ctx, key);
+    if (assignment?.role !== 'consultant' || assignment.status !== 'active') throw new ForbiddenException('SUGGEST_FORBIDDEN');
+    const stage = this.stageOf(ctx, key);
+    if (stage.status === 'approved' || stage.status === 'imported') throw new ConflictException('STAGE_ACCEPTED_REOPEN_FIRST');
+    const created = await this.prisma.$transaction(async (tx) => {
+      const suggestion = await tx.stageInstruction.create({
+        data: { projectId, stageId: stage.id, authorUserId: userId, kind: 'suggestion', status: 'proposed', text: input.text, targetKey: input.targetKey },
+        select: { id: true, text: true, targetKey: true, status: true, createdAt: true },
+      });
+      await this.event(tx, projectId, userId, 'suggestion_added', key, { suggestionId: suggestion.id });
+      return suggestion;
+    });
+    return { data: created };
+  }
+
+  async resolveSuggestion(userId: string, projectId: string, key: string, suggestionId: string, action: 'apply' | 'dismiss') {
+    const ctx = await this.load(userId, projectId, 'write', key);
+    const stage = this.stageOf(ctx, key);
+    if (!isUuid(suggestionId)) throw new NotFoundException('SUGGESTION_NOT_FOUND');
+    const suggestion = await this.prisma.stageInstruction.findFirst({ where: { id: suggestionId, stageId: stage.id, kind: 'suggestion', status: 'proposed' }, select: { id: true, text: true, targetKey: true } });
+    if (!suggestion) throw new NotFoundException('SUGGESTION_NOT_FOUND');
+    let result: unknown = null;
+    if (action === 'apply') {
+      // The suggestion becomes an AI instruction from the person who accepted it; failures leave it proposed.
+      const current = await this.versionContent(stage.currentVersionId);
+      const definition = stageDefinitions[key as StageKey];
+      const target = suggestion.targetKey && current && lockableKeys(definition.artifactType, current.content).includes(suggestion.targetKey) ? suggestion.targetKey : null;
+      result = (await this.generate(userId, projectId, key, { instruction: suggestion.text, saveAs: 'one_off', targetKey: target })).data;
+    }
+    await this.prisma.stageInstruction.update({ where: { id: suggestion.id }, data: { status: action === 'apply' ? 'applied' : 'dismissed' } });
+    await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: action === 'apply' ? 'suggestion_applied' : 'suggestion_dismissed', stageKey: key, details: { suggestionId } } });
+    return { data: { id: suggestion.id, status: action === 'apply' ? 'applied' : 'dismissed', generation: result } };
+  }
+
   async setProjectStatus(userId: string, projectId: string, action: 'complete' | 'resume') {
-    const ctx = await this.load(userId, projectId, 'read');
+    const ctx = await this.load(userId, projectId, 'members');
     if (!acceptRoles.has(ctx.role)) throw new ForbiddenException('PROJECT_STATUS_FORBIDDEN');
     const from = action === 'complete' ? ['active', 'paused'] : ['completed', 'paused'];
     if (!from.includes(ctx.project.status)) throw new ConflictException('PROJECT_STATUS_CONFLICT');
@@ -547,7 +722,7 @@ export class JourneyService {
   }
 
   async result(userId: string, projectId: string) {
-    const ctx = await this.load(userId, projectId, 'read');
+    const ctx = await this.load(userId, projectId, 'members');
     const stages = await Promise.all(ctx.route.map(async (key) => {
       const stage = this.stageOf(ctx, key);
       const accepted = isSatisfied(stage.status) ? await this.versionContent(stage.approvedVersionId) : null;

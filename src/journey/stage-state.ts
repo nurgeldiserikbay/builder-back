@@ -48,7 +48,7 @@ export function reopenStage(route: StageKey[], statuses: StatusMap, key: StageKe
 }
 
 export function canEdit(status: StageStatus | undefined): boolean {
-  return status === 'ready' || status === 'in_progress' || status === 'stale' || status === 'changes_requested';
+  return status === 'ready' || status === 'awaiting_lead' || status === 'in_progress' || status === 'stale' || status === 'changes_requested';
 }
 
 export function nextStage(route: StageKey[], statuses: StatusMap): StageKey | null {

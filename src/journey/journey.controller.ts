@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, HttpCode, Param, Post, Put,
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { JourneyService } from './journey.service.js';
+import { SpecialistsService } from './specialists.service.js';
 
 function body(value: unknown, fields: string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('INVALID_REQUEST_BODY');
@@ -22,7 +23,67 @@ function stageKey(value: string): string {
 @Controller()
 @UseGuards(AuthGuard)
 export class JourneyController {
-  constructor(private readonly journey: JourneyService) {}
+  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService) {}
+
+  @Post('projects/:projectId/stages/:stageKey/submit')
+  @HttpCode(200)
+  submit(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw, ['versionId']);
+    return this.journey.submit(request.user.id, projectId, stageKey(key), text(input.versionId, 'versionId', 36, 36)!);
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/request-changes')
+  @HttpCode(200)
+  requestChanges(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw, ['note']);
+    return this.journey.requestChanges(request.user.id, projectId, stageKey(key), text(input.note, 'note', 2, 1000)!);
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/suggestions')
+  suggest(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw, ['text', 'targetKey']);
+    return this.journey.suggest(request.user.id, projectId, stageKey(key), { text: text(input.text, 'text', 2, 1000)!, targetKey: text(input.targetKey, 'targetKey', 1, 60, true) });
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/suggestions/:suggestionId/:action')
+  @HttpCode(200)
+  resolveSuggestion(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Param('suggestionId') suggestionId: string, @Param('action') action: string) {
+    if (action !== 'apply' && action !== 'dismiss') throw new BadRequestException('INVALID_ACTION');
+    return this.journey.resolveSuggestion(request.user.id, projectId, stageKey(key), suggestionId, action);
+  }
+
+  @Get('projects/:projectId/stages/:stageKey/assignments')
+  assignments(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
+    return this.specialists.list(request.user.id, projectId, stageKey(key));
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/assignments')
+  invite(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw, ['email', 'role', 'aiBudget']);
+    const email = text(input.email, 'email', 3, 254)!;
+    if (!/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(email)) throw new BadRequestException('INVALID_EMAIL');
+    if (input.role !== 'lead' && input.role !== 'consultant') throw new BadRequestException('INVALID_ROLE');
+    const aiBudget = input.aiBudget ?? null;
+    if (aiBudget !== null && (!Number.isInteger(aiBudget) || (aiBudget as number) < 0 || (aiBudget as number) > 1000)) throw new BadRequestException('INVALID_AIBUDGET');
+    return this.specialists.invite(request.user.id, projectId, stageKey(key), { email, role: input.role, aiBudget: aiBudget as number | null });
+  }
+
+  @Post('projects/:projectId/assignments/:assignmentId/revoke')
+  @HttpCode(204)
+  async revoke(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('assignmentId') assignmentId: string) {
+    await this.specialists.revoke(request.user.id, projectId, assignmentId);
+  }
+
+  @Post('invites/:token/accept')
+  @HttpCode(200)
+  acceptInvite(@Req() request: AuthenticatedRequest, @Param('token') token: string) {
+    return this.specialists.accept(request.user.id, request.user.email, token);
+  }
+
+  @Get('me/assignments')
+  myAssignments(@Req() request: AuthenticatedRequest) {
+    return this.specialists.mine(request.user.id);
+  }
 
   @Get('journey/catalog')
   catalog() { return this.journey.catalog(); }
@@ -129,5 +190,16 @@ export class JourneyController {
   @HttpCode(200)
   resume(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
     return this.journey.setProjectStatus(request.user.id, projectId, 'resume');
+  }
+}
+
+/** Invitation details are readable without a session so the invitee can see what they are joining before signing in. */
+@Controller()
+export class InviteInfoController {
+  constructor(private readonly specialists: SpecialistsService) {}
+
+  @Get('invites/:token')
+  info(@Param('token') token: string) {
+    return this.specialists.inviteInfo(token);
   }
 }

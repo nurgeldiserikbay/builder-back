@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.9.0
+  version: 1.10.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -19,6 +19,7 @@ tags:
   - name: Journey
   - name: Publishing
   - name: Telegram
+  - name: Specialists
 paths:
   /admin/auth/login:
     post:
@@ -1848,6 +1849,248 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/OkResponse' }
         '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/assignments:
+    get:
+      tags: [Specialists]
+      operationId: listStageAssignments
+      summary: Specialists invited to a stage (owner or manager)
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AssignmentListResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Specialists]
+      operationId: inviteSpecialist
+      summary: Invite a specialist to one stage
+      description: Creates a 7-day invitation bound to the e-mail address. A lead directs the stage AI and submits for review; a consultant reads and suggests. Specialists never become project members and see only this stage and its accepted inputs. The invite link is returned and e-mailed when Resend is configured.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InviteSpecialistRequest' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InviteSpecialistResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/assignments/{assignmentId}/revoke:
+    post:
+      tags: [Specialists]
+      operationId: revokeSpecialist
+      summary: Revoke a specialist invitation or access
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - in: path
+          name: assignmentId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204':
+          description: Done
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /invites/{token}:
+    get:
+      tags: [Specialists]
+      operationId: getInvite
+      summary: What the invitation gives access to (no session needed)
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string, minLength: 20, maxLength: 64 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InviteInfoResponse' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /invites/{token}/accept:
+    post:
+      tags: [Specialists]
+      operationId: acceptInvite
+      summary: Accept an invitation
+      description: The signed-in account e-mail must match the invited address.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string, minLength: 20, maxLength: 64 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InviteAcceptResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '410': { $ref: '#/components/responses/Problem' }
+  /me/assignments:
+    get:
+      tags: [Specialists]
+      operationId: listMyAssignments
+      summary: Stages the current account works on as a specialist
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MyAssignmentsResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/submit:
+    post:
+      tags: [Journey]
+      operationId: submitStage
+      summary: Send the current version to the owner for acceptance
+      description: Lead specialists and contributors only; the stage is read-only while in review. The owner gets a Telegram notice when linked.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AcceptStageRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/request-changes:
+    post:
+      tags: [Journey]
+      operationId: requestStageChanges
+      summary: Return a stage in review with a note
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RequestChangesRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/suggestions:
+    post:
+      tags: [Journey]
+      operationId: suggestStageChange
+      summary: Consultant suggestion for the stage AI
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SuggestionRequest' }
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuggestionResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/suggestions/{suggestionId}/{action}:
+    post:
+      tags: [Journey]
+      operationId: resolveSuggestion
+      summary: Apply a suggestion as an AI instruction or dismiss it
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+        - in: path
+          name: suggestionId
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: action
+          required: true
+          schema: { type: string, enum: [apply, dismiss] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuggestionResolveResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
     adminSessionCookie:
@@ -3519,3 +3762,138 @@ components:
       required: [ok]
       properties:
         ok: { type: boolean }
+    InviteSpecialistRequest:
+      type: object
+      additionalProperties: false
+      required: [email, role]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        role: { type: string, enum: [lead, consultant] }
+        aiBudget: { type: [integer, 'null'], minimum: 0, maximum: 1000, description: Maximum AI generations for this assignment; null means only the project daily limit applies. }
+    StageAssignment:
+      type: object
+      required: [id, email, role, status]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        name: { type: [string, 'null'] }
+        role: { type: string, enum: [lead, consultant] }
+        status: { type: string, enum: [invited, active, completed, revoked] }
+        aiBudget: { type: [integer, 'null'] }
+        aiUsed: { type: integer }
+        inviteExpiresAt: { type: string, format: date-time }
+        inviteExpired: { type: boolean }
+        acceptedAt: { type: [string, 'null'], format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        readUntil: { type: [string, 'null'], format: date-time }
+    AssignmentListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [assignments, roles]
+          properties:
+            assignments: { type: array, items: { $ref: '#/components/schemas/StageAssignment' } }
+            roles: { type: object, description: Plain-language access summary per role. }
+    InviteSpecialistResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [assignment, inviteUrl, emailSent]
+          properties:
+            assignment: { $ref: '#/components/schemas/StageAssignment' }
+            inviteUrl: { type: string }
+            emailSent: { type: boolean }
+    InviteInfoResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [projectName, stageTitle, role, can, cannot, status, expired]
+          properties:
+            projectName: { type: string }
+            invitedBy: { type: string }
+            stageKey: { type: string }
+            stageTitle: { type: string }
+            stagePurpose: { type: string }
+            role: { type: string, enum: [lead, consultant] }
+            roleTitle: { type: string }
+            roleExplanation: { type: string }
+            can: { type: array, items: { type: string } }
+            cannot: { type: array, items: { type: string } }
+            afterAcceptance: { type: string }
+            aiBudget: { type: [integer, 'null'] }
+            email: { type: string, description: Masked invited address. }
+            status: { type: string, enum: [invited, active, completed, revoked] }
+            expired: { type: boolean }
+            projectId: { type: [string, 'null'] }
+    InviteAcceptResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [projectId, stageKey]
+          properties:
+            projectId: { type: string, format: uuid }
+            stageKey: { type: string }
+    MyAssignmentsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              projectId: { type: string, format: uuid }
+              projectName: { type: string }
+              stageKey: { type: string }
+              stageTitle: { type: string }
+              stageStatus: { $ref: '#/components/schemas/StageStatus' }
+              role: { type: string, enum: [lead, consultant] }
+              roleTitle: { type: string }
+              status: { type: string, enum: [active, completed] }
+              aiBudget: { type: [integer, 'null'] }
+              aiUsed: { type: integer }
+              readUntil: { type: [string, 'null'], format: date-time }
+    RequestChangesRequest:
+      type: object
+      additionalProperties: false
+      required: [note]
+      properties:
+        note: { type: string, minLength: 2, maxLength: 1000 }
+    SuggestionRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 2, maxLength: 1000 }
+        targetKey: { type: string, maxLength: 60 }
+    SuggestionResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            text: { type: string }
+            targetKey: { type: [string, 'null'] }
+            status: { type: string, enum: [proposed, applied, dismissed] }
+            createdAt: { type: string, format: date-time }
+    SuggestionResolveResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [applied, dismissed] }
+            generation: { type: [object, 'null'] }

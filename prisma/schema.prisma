@@ -191,6 +191,7 @@ model User {
   authoredApiChecks         ReviewApiCheck[]      @relation("ApiCheckAuthor")
   externalIdentities        ExternalIdentity[]
   telegramLinkCodes         TelegramLinkCode[]
+  stageAssignments          StageAssignment[]
 
   @@index([createdAt], map: "users_created_idx")
   @@map("users")
@@ -298,6 +299,7 @@ model Project {
   generationRuns   GenerationRun[]
   events           ProjectEvent[]
   publication      SitePublication?
+  assignments      StageAssignment[]
   leads            SiteLead[]
 
   @@index([workspaceId, status, createdAt(sort: Desc)], map: "projects_workspace_status_created_idx")
@@ -746,11 +748,27 @@ enum StageInstructionKind {
   one_off
   stage_rule
   project_rule
+  suggestion
 }
 
 enum StageInstructionStatus {
   active
   disabled
+  proposed
+  applied
+  dismissed
+}
+
+enum StageAssignmentRole {
+  lead
+  consultant
+}
+
+enum StageAssignmentStatus {
+  invited
+  active
+  completed
+  revoked
 }
 
 enum GenerationRunStatus {
@@ -768,6 +786,7 @@ model ProjectStage {
   currentVersionId  String?            @map("current_version_id") @db.Uuid
   approvedVersionId String?            @map("approved_version_id") @db.Uuid
   lockedKeys        String[]           @default([]) @map("locked_keys") @db.VarChar(60)
+  reviewNote        String?            @map("review_note") @db.VarChar(1000)
   approvedAt        DateTime?          @map("approved_at") @db.Timestamptz(3)
   approvedByUserId  String?            @map("approved_by_user_id") @db.Uuid
   createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
@@ -776,6 +795,7 @@ model ProjectStage {
   versions          StageArtifactVersion[]
   instructions      StageInstruction[]
   generationRuns    GenerationRun[]
+  assignments       StageAssignment[]
 
   @@unique([projectId, stageKey], map: "project_stages_project_key_key")
   @@index([projectId, position], map: "project_stages_project_position_idx")
@@ -931,4 +951,32 @@ model TelegramLinkCode {
 
   @@index([userId, createdAt(sort: Desc)], map: "telegram_link_codes_user_created_idx")
   @@map("telegram_link_codes")
+}
+
+model StageAssignment {
+  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String                @map("project_id") @db.Uuid
+  stageId         String                @map("stage_id") @db.Uuid
+  userId          String?               @map("user_id") @db.Uuid
+  email           String                @db.VarChar(254)
+  role            StageAssignmentRole
+  status          StageAssignmentStatus @default(invited)
+  inviteTokenHash String                @unique @map("invite_token_hash") @db.VarChar(64)
+  inviteExpiresAt DateTime              @map("invite_expires_at") @db.Timestamptz(3)
+  aiBudget        Int?                  @map("ai_budget")
+  aiUsed          Int                   @default(0) @map("ai_used")
+  invitedByUserId String                @map("invited_by_user_id") @db.Uuid
+  acceptedAt      DateTime?             @map("accepted_at") @db.Timestamptz(3)
+  completedAt     DateTime?             @map("completed_at") @db.Timestamptz(3)
+  readUntil       DateTime?             @map("read_until") @db.Timestamptz(3)
+  revokedAt       DateTime?             @map("revoked_at") @db.Timestamptz(3)
+  createdAt       DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project         Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage           ProjectStage          @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  user            User?                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, stageId, status], map: "stage_assignments_project_stage_status_idx")
+  @@index([userId, status], map: "stage_assignments_user_status_idx")
+  @@map("stage_assignments")
 }

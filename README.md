@@ -15,6 +15,12 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - `GET /projects/:id/result` returns the result package at any stage: `project.md`, `project.json` and, after the build, `site.html`; unaccepted stages are listed as open items.
 - AI is optional. Configure `BUILDER_AI_OPENAI_API_KEY` and `BUILDER_AI_OPENAI_MODEL`; without them, texts and style get deterministic template drafts and instructions return `AI_NOT_CONFIGURED`. Generations are limited per project per day (`BUILDER_AI_DAILY_RUNS_PER_PROJECT`, default 40). Specialists, AI budgets per assignment and Telegram are not implemented yet; see `STAGE_WORK_MODEL.md` in builder-docs.
 
+### Specialists on a stage
+
+- Owners and managers invite a specialist to one stage (`POST /projects/:id/stages/:key/assignments`) as **lead** (directs the stage AI, edits, submits for review) or **consultant** (reads and suggests AI instructions). Invitations last 7 days, are bound to the invited e-mail, and are e-mailed through Resend when configured; the link is always returned so the owner can send it in any messenger.
+- Specialists are not project members, so all project-wide checks (other stages, result package, publication, leads, review tool, project list) keep excluding them. They see only the assigned stage and the accepted versions of its inputs; their AI runs see the same scope. A lead can add stage rules but not project rules; an optional `aiBudget` caps their generations.
+- `submit` puts the stage in `in_review` (read-only) and notifies the owner in Telegram when linked; the owner accepts or uses `request-changes` with a note (the lead is notified). Accepting completes the assignment: writing stops immediately, reading continues for 7 days. Owners can revoke at any time; all of this is recorded in project events.
+
 ### Publication and lead forms
 
 - `POST /projects/:id/publication` publishes the accepted build at `<slug>.<SITES_BASE_DOMAIN>` after explicit confirmation (owner/manager); `GET` shows state, a suggested latin address from the business name, whether a newer accepted build is not yet published, and notification channels; `unpublish` takes the site offline. The project status becomes `live` while published.
