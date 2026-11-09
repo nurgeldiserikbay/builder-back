@@ -28,6 +28,7 @@ type AssignmentRow = { id: string; stageId: string; stageKey: string; role: 'lea
 type Viewer = { kind: 'member'; role: string } | { kind: 'specialist'; assignments: AssignmentRow[] };
 const editableProject = (status: string) => status === 'active' || status === 'live';
 const notEditableCode = (status: string) => (status === 'locked' ? 'STAGE_LOCKED' : status === 'in_review' ? 'STAGE_IN_REVIEW' : 'STAGE_ACCEPTED_REOPEN_FIRST');
+const normalizedOrRaw = (type: ArtifactType, value: unknown) => { try { return normalizeArtifact(type, value); } catch { return value; } };
 const SPECIALIST_READ_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
 type StageRow = {
@@ -339,7 +340,10 @@ export class JourneyService {
     try { content = normalizeArtifact(definition.artifactType, input.content); } catch (error) { validationError(error); }
     const base = await this.versionContent(stage.currentVersionId);
     const changed = changedKeys(definition.artifactType, base?.content ?? null, content);
-    if (base && changed.length === 0) return { data: { versionId: base.id, versionNumber: base.versionNumber, changed: [] } };
+    // changedKeys ignores photo choices (they never lock text), so compare whole artifacts to decide whether anything changed.
+    if (base && changed.length === 0 && stableStringify(normalizedOrRaw(definition.artifactType, base.content)) === stableStringify(content)) {
+      return { data: { versionId: base.id, versionNumber: base.versionNumber, changed: [] } };
+    }
     const valid = new Set(lockableKeys(definition.artifactType, content));
     const locked = [...new Set([...stage.lockedKeys, ...changed])].filter((item) => valid.has(item));
     const version = await this.prisma.$transaction(async (tx) => {
