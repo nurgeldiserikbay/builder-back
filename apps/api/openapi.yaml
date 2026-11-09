@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.12.0
+  version: 1.13.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -10,6 +10,7 @@ servers:
   - url: http://localhost:4000/api/v1
 tags:
   - name: Health
+  - name: Images
   - name: Authentication
   - name: Workspaces
   - name: Projects
@@ -1646,6 +1647,133 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/images:
+    get:
+      tags: [Images]
+      operationId: listProjectImages
+      summary: Photo library of the project
+      description: Readable by project members and by specialists assigned to the content stage.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectImageListResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Images]
+      operationId: uploadProjectImage
+      summary: Upload a photo (JPEG, PNG or WebP up to 12 MB)
+      description: |
+        Requires write access to the content stage. The original is scanned for malware (fails closed with 503 IMAGE_SCAN_UNAVAILABLE
+        when the scanner is unreachable), then decoded and re-encoded to WebP of at most 1600 px; metadata such as EXIF location is removed.
+        At most 30 photos per project (409 IMAGE_LIMIT_REACHED).
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                alt: { type: string, maxLength: 200, description: Short description of what is in the photo }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectImageResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '413': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/images/{imageId}:
+    get:
+      tags: [Images]
+      operationId: getProjectImage
+      summary: Processed photo bytes (WebP)
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: imageId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: WebP image
+          content:
+            image/webp:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Images]
+      operationId: deleteProjectImage
+      summary: Delete a photo that the texts no longer use
+      description: Fails with 409 IMAGE_IN_USE while the current draft or the accepted version of the content stage shows the photo.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: imageId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectImageListResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/images/{imageId}/alt:
+    post:
+      tags: [Images]
+      operationId: setProjectImageAlt
+      summary: Change the photo description
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: imageId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [alt]
+              properties:
+                alt: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectImageListResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/publication:
     get:
       tags: [Publishing]
@@ -2292,6 +2420,32 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
   schemas:
+    ProjectImage:
+      type: object
+      required: [id, width, height, sizeBytes, alt, createdAt, inUse]
+      properties:
+        id: { type: string, format: uuid }
+        width: { type: integer }
+        height: { type: integer }
+        sizeBytes: { type: integer }
+        alt: { type: string }
+        createdAt: { type: string, format: date-time }
+        inUse: { type: boolean, description: Shown by the current or accepted texts }
+    ProjectImageResponse:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/ProjectImage' }
+    ProjectImageListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [items, limit]
+          properties:
+            items: { type: array, items: { $ref: '#/components/schemas/ProjectImage' } }
+            limit: { type: integer }
     QualityGateReport:
       type: object
       additionalProperties: false
@@ -3417,6 +3571,10 @@ components:
                     title: { type: string, maxLength: 100 }
                     text: { type: string, maxLength: 400 }
               buttonLabel: { type: [string, 'null'], maxLength: 40 }
+              imageId:
+                type: [string, 'null']
+                format: uuid
+                description: Photo from the project library (GET /projects/{projectId}/images). Only photos of the same project are rendered.
         seo:
           type: object
           additionalProperties: false

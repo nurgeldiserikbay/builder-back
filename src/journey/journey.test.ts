@@ -84,7 +84,7 @@ describe('artifacts', () => {
   });
   it('compares versions independent of stored key order', () => {
     const content = templateContent(brief, null);
-    const reordered = JSON.parse(JSON.stringify({ seo: content.seo, sections: content.sections.map((section) => ({ buttonLabel: section.buttonLabel, items: section.items, text: section.text, title: section.title, type: section.type, key: section.key })) }));
+    const reordered = JSON.parse(JSON.stringify({ seo: content.seo, sections: content.sections.map((section) => ({ imageId: section.imageId, buttonLabel: section.buttonLabel, items: section.items, text: section.text, title: section.title, type: section.type, key: section.key })) }));
     assert.deepEqual(changedKeys('content', content, reordered), []);
   });
   it('treats every filled field of a first draft as changed', () => {

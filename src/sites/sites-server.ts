@@ -67,6 +67,21 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     response.end(body);
   }
 
+  /** Serves only photos that the published page itself shows, so unpublished photos in the project library stay private. */
+  async function sendImage(response: ServerResponse, site: Site, id: string, head: boolean) {
+    const notFound = () => send(response, 404, 'Not found', 'text/plain');
+    if (!site.html.includes(`/img/${id}.webp`)) return notFound();
+    const row = await prisma.projectImage.findFirst({ where: { id, projectId: site.projectId }, select: { data: true, sha256: true } });
+    if (!row) return notFound();
+    const data = Buffer.from(row.data);
+    response.writeHead(200, {
+      'Content-Type': 'image/webp', 'Content-Length': String(data.length), 'Cache-Control': 'public, max-age=31536000, immutable',
+      ETag: `"${row.sha256}"`, 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'",
+      'Cross-Origin-Resource-Policy': 'same-origin',
+    });
+    response.end(head ? undefined : data);
+  }
+
   function clientIp(request: IncomingMessage): string {
     const forwarded = options.trustProxy ? String(request.headers['x-forwarded-for'] ?? '').split(',')[0]?.trim() : '';
     return forwarded || request.socket.remoteAddress || 'unknown';
@@ -121,6 +136,8 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     if (request.method === 'POST' && path === LEAD_FORM_PATH) return handleLead(request, response, slug, site);
     if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, '', 'text/plain', false, { Allow: 'GET, HEAD' });
     const cacheHeaders = { 'Cache-Control': 'public, max-age=60' };
+    const image = /^\/img\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.webp$/.exec(path);
+    if (image) return sendImage(response, site, image[1]!, request.method === 'HEAD');
     switch (path) {
       case '/': return send(response, 200, site.html, 'text/html', site.hasForm, cacheHeaders);
       case '/privacy': return send(response, 200, privacyPage(site.meta, options.retentionDays), 'text/html', false, cacheHeaders);

@@ -78,7 +78,18 @@ export function contrastRatio(foreground: string, background: string): number {
   return (light + 0.05) / (dark + 0.05);
 }
 
-export interface RenderInput { brief: Brief; offer: Offer | null; content: ContentArtifact; design: DesignArtifact; locale: string; draft: boolean }
+export interface ImageInfo { alt: string; width: number; height: number }
+export interface RenderInput {
+  brief: Brief; offer: Offer | null; content: ContentArtifact; design: DesignArtifact; locale: string; draft: boolean;
+  /** Photos referenced by content sections; rendered as /img/<id>.webp. */
+  images?: Record<string, ImageInfo>;
+}
+
+function photo(id: string | null, images: Record<string, ImageInfo> | undefined, eager: boolean): string {
+  const image = id ? images?.[id] : undefined;
+  if (!id || !image) return '';
+  return `<img class="photo" src="/img/${escapeHtml(id)}.webp" alt="${escapeHtml(image.alt)}" width="${image.width}" height="${image.height}"${eager ? ' fetchpriority="high"' : ' loading="lazy"'} decoding="async">`;
+}
 
 export function renderSite(input: RenderInput): string {
   const { brief, offer, content, design } = input;
@@ -96,7 +107,7 @@ export function renderSite(input: RenderInput): string {
       ? `<ul class="items">${section.items.map((item) => `<li><h3>${escapeHtml(item.title)}</h3>${item.text ? paragraphs(item.text) : ''}</li>`).join('')}</ul>` : '';
     if (section.type === 'hero') {
       const brand = section.title.trim() === brief.businessName.trim() ? '' : `<p class="brand">${escapeHtml(brief.businessName)}</p>`;
-      return `<header class="hero" id="${escapeHtml(section.key)}"><div class="wrap">${brand}<h1>${escapeHtml(section.title)}</h1>${paragraphs(section.text)}${button}</div></header>`;
+      return `<header class="hero" id="${escapeHtml(section.key)}"><div class="wrap">${brand}<h1>${escapeHtml(section.title)}</h1>${paragraphs(section.text)}${button}${photo(section.imageId, input.images, true)}</div></header>`;
     }
     if (section.type === 'contacts') {
       const rows: string[] = [];
@@ -108,7 +119,7 @@ export function renderSite(input: RenderInput): string {
       const form = brief.mainAction === 'form' ? leadForm() : '';
       return `<section class="section contacts" id="contacts"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${paragraphs(section.text)}${form}${rows.length ? `<ul class="contact-list">${rows.join('')}</ul>` : ''}${form ? '' : button}</div></section>`;
     }
-    return `<section class="section ${escapeHtml(section.type)}" id="${escapeHtml(section.key)}"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${paragraphs(section.text)}${items}${button}</div></section>`;
+    return `<section class="section ${escapeHtml(section.type)}" id="${escapeHtml(section.key)}"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${photo(section.imageId, input.images, false)}${paragraphs(section.text)}${items}${button}</div></section>`;
   }).join('\n');
 
   const css = `:root{--bg:${palette.background};--surface:${palette.surface};--text:${palette.text};--muted:${palette.muted};--accent:${palette.accent};--accent-text:${palette.accentText};--radius:${radius}}
@@ -124,6 +135,7 @@ p{margin:0 0 12px;color:var(--muted)}.hero{padding:64px 0 56px;text-align:${alig
 .lead-form .consent{display:flex;gap:10px;align-items:flex-start;font-weight:400;font-size:14px;color:var(--muted)}.lead-form .consent input{width:22px;height:22px;flex:none;margin-top:2px}.lead-form .consent a{color:var(--accent)}
 .lead-form .hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}.lead-form button{border:0;cursor:pointer;font:inherit;font-weight:700}
 .contact-list{list-style:none;padding:0;margin:16px 0;display:grid;gap:10px}.contact-list li{display:flex;flex-direction:column}.contact-list span{font-size:14px;color:var(--muted)}.contact-list a{color:var(--accent);font-weight:700}
+.photo{display:block;width:100%;height:auto;border-radius:var(--radius);margin:18px 0 6px;background:var(--surface)}.hero .photo{margin-top:28px}
 footer{padding:28px 0;color:var(--muted);font-size:14px;text-align:center}.draft{background:#fff3cd;color:#5c4400;text-align:center;font-size:14px;padding:8px}
 @media(min-width:720px){.items{grid-template-columns:repeat(2,1fr)}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}`;
 
@@ -150,7 +162,7 @@ ${sectionHtml}
 
 /** Same-origin form posts are allowed only when the page has a lead form; it posts to the BuildPath sites server. */
 export function pageCsp(hasForm: boolean): string {
-  return `default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action ${hasForm ? "'self'" : "'none'"}`;
+  return `default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action ${hasForm ? "'self'" : "'none'"}`;
 }
 
 export const LEAD_FORM_PATH = '/__forms/lead';
@@ -213,6 +225,13 @@ export function checkSite(input: RenderInput): SiteCheck[] {
   const buttonContrast = contrastRatio(palette.accentText, palette.accent);
   add('contrast', true, textContrast >= 4.5 && mutedContrast >= 4.5 && buttonContrast >= 4.5, 'Контраст текста',
     `Текст и кнопки читаются: контраст не ниже 4,5:1 (WCAG AA).`, 'Контраст ниже 4,5:1 — текст будет плохо читаться.');
+  const used = content.sections.map((section) => section.imageId).filter((id): id is string => Boolean(id));
+  if (used.length) {
+    const missing = used.filter((id) => !input.images?.[id]);
+    add('photos', true, missing.length === 0, 'Фото на месте', 'Все выбранные фото найдены.', 'Некоторые выбранные фото удалены. Выберите другие на этапе «Структура и тексты».');
+    const noAlt = used.filter((id) => input.images?.[id] && !input.images[id].alt.trim());
+    add('photo-alt', false, noAlt.length === 0, 'Описание фото', 'У всех фото есть описание для незрячих и поисковиков.', `У ${noAlt.length} фото нет описания. Добавьте короткое описание — что изображено.`, true);
+  }
   const longHero = (hero?.text.length ?? 0) > 320;
   add('hero-length', false, !longHero, 'Первый экран короткий', 'Текст первого экрана помещается на экран телефона.', 'Текст первого экрана длинный — на телефоне кнопка уйдёт вниз. Сократите до 2 предложений.', true);
   return checks;

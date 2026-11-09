@@ -10,9 +10,10 @@ import {
 import {
   ArtifactValidationError, changedKeys, completenessIssues, defaultDesign, emptyBrief, importBriefText, importContentText,
   importOfferText, lockableKeys, stableStringify, mergeProposal, normalizeArtifact, normalizeContent, sectionTypeLabels, templateContent,
-  type Brief, type ContentArtifact, type DesignArtifact, type Offer, type SiteArtifact,
+  contentImageIds, type Brief, type ContentArtifact, type DesignArtifact, type Offer, type SiteArtifact,
 } from './artifacts.js';
-import { checkSite, corners, fonts, heroLayouts, palettes, renderSite, siteMeta } from './site-renderer.js';
+import { inlineImages } from '../images/image-processing.js';
+import { checkSite, corners, fonts, heroLayouts, palettes, renderSite, siteMeta, type ImageInfo } from './site-renderer.js';
 import { StageAiError, buildStagePrompt, configuredStageProvider, type StageAiProvider } from './stage-ai.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
 import { BillingService } from '../billing/billing.service.js';
@@ -540,7 +541,27 @@ export class JourneyService {
 
   /** Accepted versions for a build, or latest drafts for a preview. */
   /** Accepted versions for a build; for a preview, latest drafts (all of them for members, only the specialist's own stages otherwise). */
-  private async renderSources(ctx: { route: StageKey[]; stages: StageRow[]; project: { locale: string } }, acceptedOnly: boolean, draftKeys?: string[]) {
+  private async imageInfo(projectId: string, ids: string[]): Promise<Record<string, ImageInfo>> {
+    if (!ids.length) return {};
+    const rows = await this.prisma.projectImage.findMany({ where: { projectId, id: { in: ids } }, select: { id: true, alt: true, width: true, height: true } });
+    return Object.fromEntries(rows.map((row) => [row.id, { alt: row.alt, width: row.width, height: row.height }]));
+  }
+
+  /** Replaces /img/<id>.webp references with inline data so the preview and the downloaded file work without the sites server. */
+  private inline(projectId: string, html: string): Promise<string> {
+    return inlineImages(html, async (ids) => {
+      const rows = await this.prisma.projectImage.findMany({ where: { projectId, id: { in: ids } }, select: { id: true, data: true } });
+      return new Map(rows.map((row) => [row.id, Buffer.from(row.data)]));
+    });
+  }
+
+  /** Photos belong to the «Структура и тексты» stage: whoever may read or edit that stage may see or change the photo library. */
+  async assertImageAccess(userId: string, projectId: string, access: 'read' | 'write') {
+    const ctx = await this.load(userId, projectId, access, 'content');
+    return { projectId: ctx.project.id, ownerUserId: ctx.project.ownerUserId };
+  }
+
+  private async renderSources(ctx: { route: StageKey[]; stages: StageRow[]; project: { id: string; locale: string } }, acceptedOnly: boolean, draftKeys?: string[]) {
     const pick = async (key: StageKey) => {
       if (!ctx.route.includes(key)) return null;
       const stage = this.stageOf(ctx, key);
@@ -560,6 +581,7 @@ export class JourneyService {
       input: {
         brief: goal.content as Brief, offer: (offer?.content as Offer | undefined) ?? null, content: content.content as ContentArtifact,
         design: (design?.content as DesignArtifact | undefined) ?? defaultDesign, locale: ctx.project.locale, draft: !acceptedOnly,
+        images: await this.imageInfo(ctx.project.id, contentImageIds(content.content)),
       },
     };
   }
@@ -575,10 +597,10 @@ export class JourneyService {
       if (!isUuid(versionId)) throw new NotFoundException('VERSION_NOT_FOUND');
       const version = await this.prisma.stageArtifactVersion.findFirst({ where: { id: versionId, stageId: build.id }, select: { content: true, versionNumber: true } });
       if (!version) throw new NotFoundException('VERSION_NOT_FOUND');
-      return { data: { html: (version.content as unknown as SiteArtifact).html, draft: false, versionNumber: version.versionNumber } };
+      return { data: { html: await this.inline(projectId, (version.content as unknown as SiteArtifact).html), draft: false, versionNumber: version.versionNumber } };
     }
     const sources = await this.renderSources(ctx, false, own);
-    return { data: { html: renderSite(sources.input), draft: true, versionNumber: null } };
+    return { data: { html: await this.inline(projectId, renderSite(sources.input)), draft: true, versionNumber: null } };
   }
 
   async accept(userId: string, projectId: string, key: string, versionId: string) {
@@ -770,7 +792,7 @@ export class JourneyService {
     if (openItems.length) lines.push('', '## Что ещё не сделано', '', ...openItems.map((item) => `- ${item}`));
     if (site?.meta?.hasForm) lines.push('', '> Форма заявки работает, когда сайт опубликован на BuildPath. На другом хостинге форму нужно подключить к своему обработчику.');
     const files = [{ name: 'project.md', mimeType: 'text/markdown', content: `${lines.join('\n')}\n` }];
-    if (site) files.push({ name: 'site.html', mimeType: 'text/html', content: site.html });
+    if (site) files.push({ name: 'site.html', mimeType: 'text/html', content: await this.inline(projectId, site.html) });
     files.push({
       name: 'project.json', mimeType: 'application/json',
       content: JSON.stringify({
