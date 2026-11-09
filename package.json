@@ -16,7 +16,9 @@
     "start:worker": "node dist/worker.js",
     "start:worker:dev": "npm run db:generate && tsx watch src/worker.ts",
     "staff:create": "tsx scripts/create-staff-account.ts",
-    "test": "tsx --test 'src/**/*.test.ts'"
+    "test": "tsx --test 'src/**/*.test.ts'",
+    "start:sites": "node dist/sites.js",
+    "start:sites:dev": "npm run db:generate && tsx watch src/sites.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.800.0",

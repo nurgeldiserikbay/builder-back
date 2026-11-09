@@ -12,7 +12,7 @@ import {
   importOfferText, lockableKeys, stableStringify, mergeProposal, normalizeArtifact, normalizeContent, sectionTypeLabels, templateContent,
   type Brief, type ContentArtifact, type DesignArtifact, type Offer, type SiteArtifact,
 } from './artifacts.js';
-import { checkSite, corners, fonts, heroLayouts, palettes, renderSite } from './site-renderer.js';
+import { checkSite, corners, fonts, heroLayouts, palettes, renderSite, siteMeta } from './site-renderer.js';
 import { StageAiError, buildStagePrompt, configuredStageProvider, type StageAiProvider } from './stage-ai.js';
 import {
   canEdit, inputsSatisfied, isSatisfied, nextStage, reopenStage, unlockDependents, type StageStatus, type StatusMap,
@@ -131,7 +131,7 @@ export class JourneyService {
     const approved = ctx.route.filter((key) => isSatisfied(ctx.statuses[key])).length;
     const next = nextStage(ctx.route, ctx.statuses);
     const nextStatus = next ? ctx.statuses[next] : null;
-    const nextText = !next ? 'Все этапы приняты. Скачайте результат или вернитесь к любому этапу, чтобы что-то изменить.'
+    const nextText = !next ? 'Все этапы приняты. Опубликуйте сайт или скачайте результат ниже. Вернуться к любому этапу можно в любой момент.'
       : nextStatus === 'stale' ? `Изменился предыдущий этап. Проверьте «${stageDefinitions[next].title}» и подтвердите или обновите.`
         : nextStatus === 'in_progress' ? `Проверьте черновик этапа «${stageDefinitions[next].title}» и примите его, если всё устраивает.`
           : `Начните этап «${stageDefinitions[next].title}». ${stageDefinitions[next].outcome}`;
@@ -449,7 +449,7 @@ export class JourneyService {
     if (!inputsSatisfied(ctx.route, ctx.statuses, 'build')) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const sources = await this.renderSources(ctx, true);
     const renderInput = { ...sources.input, draft: false };
-    const site: SiteArtifact = { html: renderSite(renderInput), checks: checkSite(renderInput), sourceVersionIds: sources.versionIds, compiledAt: new Date().toISOString() };
+    const site: SiteArtifact = { html: renderSite(renderInput), meta: siteMeta(renderInput), checks: checkSite(renderInput), sourceVersionIds: sources.versionIds, compiledAt: new Date().toISOString() };
     const version = await this.prisma.$transaction(async (tx) => {
       const created = await this.createVersion(tx, { projectId, stage, artifactType: 'site', content: site, origin: 'compiled', note: 'Сборка из принятых этапов', userId });
       await this.event(tx, projectId, userId, 'site_built', 'build', { versionNumber: created.versionNumber, failed: site.checks.filter((check) => check.status === 'failed').map((check) => check.id) });
@@ -581,6 +581,7 @@ export class JourneyService {
       }
     }
     if (openItems.length) lines.push('', '## Что ещё не сделано', '', ...openItems.map((item) => `- ${item}`));
+    if (site?.meta?.hasForm) lines.push('', '> Форма заявки работает, когда сайт опубликован на BuildPath. На другом хостинге форму нужно подключить к своему обработчику.');
     const files = [{ name: 'project.md', mimeType: 'text/markdown', content: `${lines.join('\n')}\n` }];
     if (site) files.push({ name: 'site.html', mimeType: 'text/html', content: site.html });
     files.push({

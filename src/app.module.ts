@@ -8,9 +8,10 @@ import { ReviewsModule } from './reviews/reviews.module.js';
 import { CapabilitiesModule } from './capabilities/capabilities.module.js';
 import { StaffAuthModule } from './admin/staff-auth.module.js';
 import { JourneyModule } from './journey/journey.module.js';
+import { PublishingModule } from './publishing/publishing.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule],
+  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule],
   controllers: [HealthController, WorkspacesController],
 })
 export class AppModule {}

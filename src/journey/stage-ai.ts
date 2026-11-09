@@ -28,7 +28,7 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
         required: ['businessName', 'whatYouDo', 'audience', 'city', 'mainAction', 'phone', 'messenger', 'email', 'address', 'tone'],
         properties: {
           businessName: { type: 'string' }, whatYouDo: { type: 'string' }, audience: { type: 'string' }, city: nullableString,
-          mainAction: { type: ['string', 'null'], enum: ['call', 'message', 'visit', 'email', null] },
+          mainAction: { type: ['string', 'null'], enum: ['call', 'message', 'visit', 'email', 'form', null] },
           phone: nullableString, messenger: nullableString, email: nullableString, address: nullableString,
           tone: { type: ['string', 'null'], enum: ['friendly', 'formal', 'bold', null] },
         },

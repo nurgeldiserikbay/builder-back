@@ -2,7 +2,7 @@
 import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
 import type { ArtifactType } from './catalog.js';
 
-export type MainAction = 'call' | 'message' | 'visit' | 'email';
+export type MainAction = 'call' | 'message' | 'visit' | 'email' | 'form';
 export type Tone = 'friendly' | 'formal' | 'bold';
 
 export interface Brief {
@@ -17,8 +17,15 @@ export interface ContentItem { title: string; text: string }
 export interface ContentSection { key: string; type: SectionType; title: string; text: string; items: ContentItem[]; buttonLabel: string | null }
 export interface ContentArtifact { sections: ContentSection[]; seo: { title: string; description: string } }
 export interface DesignArtifact { palette: string; font: string; corners: 'rounded' | 'sharp'; heroLayout: 'centered' | 'left' }
+export interface SiteMeta {
+  businessName: string; locale: string; hasForm: boolean;
+  theme: { background: string; text: string; muted: string; accent: string; accentText: string; font: string; radius: string };
+  ownerContacts: Array<{ label: string; value: string }>;
+}
 export interface SiteArtifact {
   html: string;
+  /** Present for builds made after forms/publication were added (catalog 1.1.0). */
+  meta?: SiteMeta;
   checks: Array<{ id: string; status: 'passed' | 'warning' | 'failed'; title: string; details: string; required: boolean }>;
   sourceVersionIds: Record<string, string>;
   compiledAt: string;
@@ -73,7 +80,7 @@ export function normalizeBrief(raw: unknown): Brief {
     whatYouDo: str(raw.whatYouDo, 'whatYouDo', 400, false) ?? '',
     audience: str(raw.audience, 'audience', 300, false) ?? '',
     city: str(raw.city, 'city', 80, false),
-    mainAction: oneOf(raw.mainAction, 'mainAction', ['call', 'message', 'visit', 'email'] as const),
+    mainAction: oneOf(raw.mainAction, 'mainAction', ['call', 'message', 'visit', 'email', 'form'] as const),
     phone: str(raw.phone, 'phone', 30, false),
     messenger: str(raw.messenger, 'messenger', 60, false),
     email: str(raw.email, 'email', 120, false),
@@ -247,7 +254,7 @@ export function emptyBrief(): Brief {
   return { businessName: '', whatYouDo: '', audience: '', city: null, mainAction: null, phone: null, messenger: null, email: null, address: null, tone: null };
 }
 
-const actionButton: Record<MainAction, string> = { call: 'Позвонить', message: 'Написать нам', visit: 'Как нас найти', email: 'Написать письмо' };
+const actionButton: Record<MainAction, string> = { call: 'Позвонить', message: 'Написать нам', visit: 'Как нас найти', email: 'Написать письмо', form: 'Оставить заявку' };
 
 function firstSentence(text: string, max: number): string {
   const sentence = text.split(/(?<=[.!?])\s/)[0] ?? text;

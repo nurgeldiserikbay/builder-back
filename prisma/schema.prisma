@@ -152,6 +152,7 @@ enum ProjectStatus {
   paused
   completed
   archived
+  live
 }
 
 enum ProjectRole {
@@ -188,6 +189,8 @@ model User {
   figmaConnection           FigmaConnection?
   figmaOAuthStates          FigmaOAuthState[]
   authoredApiChecks         ReviewApiCheck[]      @relation("ApiCheckAuthor")
+  externalIdentities        ExternalIdentity[]
+  telegramLinkCodes         TelegramLinkCode[]
 
   @@index([createdAt], map: "users_created_idx")
   @@map("users")
@@ -294,6 +297,8 @@ model Project {
   stageInstructions StageInstruction[]
   generationRuns   GenerationRun[]
   events           ProjectEvent[]
+  publication      SitePublication?
+  leads            SiteLead[]
 
   @@index([workspaceId, status, createdAt(sort: Desc)], map: "projects_workspace_status_created_idx")
   @@index([ownerUserId, createdAt(sort: Desc)], map: "projects_owner_created_idx")
@@ -854,4 +859,76 @@ model ProjectEvent {
 
   @@index([projectId, createdAt(sort: Desc)], map: "project_events_project_created_idx")
   @@map("project_events")
+}
+
+enum SitePublicationStatus {
+  live
+  unpublished
+}
+
+model SitePublication {
+  id                String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId         String                @unique @map("project_id") @db.Uuid
+  slug              String                @unique @db.VarChar(40)
+  status            SitePublicationStatus
+  buildVersionId    String                @map("build_version_id") @db.Uuid
+  publishedAt       DateTime              @map("published_at") @db.Timestamptz(3)
+  publishedByUserId String                @map("published_by_user_id") @db.Uuid
+  unpublishedAt     DateTime?             @map("unpublished_at") @db.Timestamptz(3)
+  notifyTelegram    Boolean               @default(true) @map("notify_telegram")
+  notifyEmail       Boolean               @default(true) @map("notify_email")
+  createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project           Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  leads             SiteLead[]
+
+  @@map("site_publications")
+}
+
+model SiteLead {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId      String          @map("project_id") @db.Uuid
+  publicationId  String          @map("publication_id") @db.Uuid
+  name           String          @db.VarChar(80)
+  contact        String          @db.VarChar(120)
+  message        String?         @db.VarChar(1000)
+  consentAt      DateTime        @map("consent_at") @db.Timestamptz(3)
+  ipHash         String          @map("ip_hash") @db.VarChar(64)
+  telegramStatus String          @default("pending") @map("telegram_status") @db.VarChar(20)
+  emailStatus    String          @default("pending") @map("email_status") @db.VarChar(20)
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  publication    SitePublication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt(sort: Desc)], map: "site_leads_project_created_idx")
+  @@index([publicationId, ipHash, createdAt(sort: Desc)], map: "site_leads_publication_ip_created_idx")
+  @@map("site_leads")
+}
+
+model ExternalIdentity {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  provider   String   @db.VarChar(20)
+  externalId String   @map("external_id") @db.VarChar(64)
+  chatId     String   @map("chat_id") @db.VarChar(64)
+  username   String?  @db.VarChar(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider], map: "external_identities_user_provider_key")
+  @@unique([provider, externalId], map: "external_identities_provider_external_key")
+  @@map("external_identities")
+}
+
+model TelegramLinkCode {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  codeHash  String    @unique @map("code_hash") @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)], map: "telegram_link_codes_user_created_idx")
+  @@map("telegram_link_codes")
 }
