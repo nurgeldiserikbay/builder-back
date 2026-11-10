@@ -203,6 +203,7 @@ model User {
   @@map("users")
   gitAccounts        GitAccount[]
   oauthStates        OAuthState[]
+  payoutDetails      PayoutDetails?
 }
 
 model UserSession {
@@ -1215,6 +1216,8 @@ model AiPricing {
   billingMode          String   @default("off") @map("billing_mode") @db.VarChar(10)
   prepaidSince         DateTime? @map("prepaid_since") @db.Timestamptz(3)
   minTopUpTiyn         Int      @default(100000) @map("min_top_up_tiyn")
+  /// Share BuildPath keeps from specialist payments made through the platform, in basis points (100 = 1%).
+  specialistFeeBp      Int      @default(0) @map("specialist_fee_bp")
   updatedByStaffId     String?  @map("updated_by_staff_id") @db.Uuid
   updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1251,10 +1254,20 @@ model StagePayment {
   basis          String          @db.VarChar(10)
   minutes        Int?
   amountTiyn     Int             @map("amount_tiyn")
+  /// due → (owner pays through BuildPath) checkout → held → paid_out; or paid_direct; cancelled
   status         String          @default("due") @db.VarChar(12)
   stageVersion   Int?            @map("stage_version")
   paidAt         DateTime?       @map("paid_at") @db.Timestamptz(3)
   markedByUserId String?         @map("marked_by_user_id") @db.Uuid
+  /// Platform fee and the specialist's part, fixed when the owner starts paying through BuildPath.
+  feeTiyn        Int?            @map("fee_tiyn")
+  payoutTiyn     Int?            @map("payout_tiyn")
+  provider       String?         @db.VarChar(20)
+  providerPaymentId String?      @map("provider_payment_id") @db.VarChar(64)
+  heldAt         DateTime?       @map("held_at") @db.Timestamptz(3)
+  paidOutAt      DateTime?       @map("paid_out_at") @db.Timestamptz(3)
+  payoutReference String?        @map("payout_reference") @db.VarChar(100)
+  paidOutByStaffId String?       @map("paid_out_by_staff_id") @db.Uuid
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   assignment     StageAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 
@@ -1343,5 +1356,19 @@ model ProjectTopUp {
 
   @@index([projectId, status], map: "project_top_ups_project_status_idx")
   @@map("project_top_ups")
+}
+
+/// Where a specialist receives payouts. The IBAN is encrypted (CODE_HOSTING_TOKEN_ENCRYPTION_KEY) and shown only to staff making a transfer.
+model PayoutDetails {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String   @unique(map: "payout_details_user_key") @map("user_id") @db.Uuid
+  holderName    String   @map("holder_name") @db.VarChar(120)
+  ibanEncrypted String   @map("iban_encrypted")
+  ibanHint      String   @map("iban_hint") @db.VarChar(8)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("payout_details")
 }
 
