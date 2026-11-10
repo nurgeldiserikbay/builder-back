@@ -273,7 +273,7 @@ export class JourneyService {
         project: {
           id: ctx.project.id, name: ctx.project.name, status: ctx.project.status, locale: ctx.project.locale, role: ctx.role,
           projectType: ctx.type.key, typeTitle: ctx.type.title, resultExplanation: ctx.type.resultExplanation, startStageKey: ctx.project.startStageKey,
-          routeVersion: ctx.project.routeVersion,
+          routeVersion: ctx.project.routeVersion, changeResponseDays: ctx.project.changeResponseDays,
         },
         viewer: this.viewerInfo(ctx),
         progress: { accepted: approved, total: ctx.route.length, percent: Math.round((approved / ctx.route.length) * 100) },
