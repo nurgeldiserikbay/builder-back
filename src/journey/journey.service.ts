@@ -15,6 +15,7 @@ import {
 import { inlineImages } from '../images/image-processing.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderSite, siteMeta, type ImageInfo } from './site-renderer.js';
 import { describeChanges } from './change-summary.js';
+import { costOf } from '../budget/budget.js';
 import { StageAiError, buildStagePrompt, configuredStageProvider, type StageAiProvider } from './stage-ai.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
 import { BillingService } from '../billing/billing.service.js';
@@ -538,13 +539,14 @@ export class JourneyService {
       current: base?.content ?? null, lockedKeys: stage.lockedKeys, targetKey: input.targetKey, rules: ruleTexts, instruction: instruction?.text ?? null,
     });
     // Tokens are spent even when the output is rejected, so failures record usage too.
+    const pricing = await this.prisma.aiPricing.findUnique({ where: { id: 1 } });
     let usage: { inputTokens: number | null; outputTokens: number | null } | null = null;
     const recordFailure = async (code: string) => {
       await this.prisma.generationRun.create({ data: {
         projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
         targetKey: input.targetKey, instructionId: instruction?.id ?? null, ruleIds: rules.map((rule) => rule.id), inputVersionIds: Object.values(inputs).map((item) => item.versionId),
         baseVersionId: base?.id ?? null, status: 'failed', safeErrorCode: code, durationMs: Date.now() - started, source,
-        inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null,
+        inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null, costTiyn: costOf(usage, pricing),
       } });
     };
     let merged: unknown;
@@ -572,7 +574,7 @@ export class JourneyService {
         projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
         targetKey: input.targetKey, instructionId: instruction?.id ?? null, ruleIds: rules.map((rule) => rule.id), inputVersionIds: Object.values(inputs).map((item) => item.versionId),
         baseVersionId: base?.id ?? null, status: 'succeeded', durationMs: Date.now() - started, source,
-        inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null,
+        inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null, costTiyn: costOf(usage, pricing),
       }, select: { id: true } });
       const created = await this.createVersion(tx, {
         projectId, stage, artifactType: definition.artifactType, content: merged, origin: 'ai_generated',
@@ -607,7 +609,7 @@ export class JourneyService {
     const runs = await this.prisma.generationRun.findMany({
       where: { ...where, ...(instructionMatch ? { instructionId: { in: instructionMatch } } : {}) },
       orderBy: { createdAt: 'desc' }, take: filter.limit + 1,
-      select: { id: true, stageId: true, requestedByUserId: true, provider: true, model: true, targetKey: true, instructionId: true, ruleIds: true, resultVersionId: true, status: true, safeErrorCode: true, durationMs: true, source: true, inputTokens: true, outputTokens: true, createdAt: true },
+      select: { id: true, stageId: true, requestedByUserId: true, provider: true, model: true, targetKey: true, instructionId: true, ruleIds: true, resultVersionId: true, status: true, safeErrorCode: true, durationMs: true, source: true, inputTokens: true, outputTokens: true, costTiyn: true, createdAt: true },
     });
     const page = runs.slice(0, filter.limit);
     const instructionIds = [...new Set(page.map((run) => run.instructionId).filter((id): id is string => Boolean(id)))];
@@ -639,6 +641,7 @@ export class JourneyService {
         model: run.model, source: run.source,
         tokens: run.inputTokens === null && run.outputTokens === null ? null : { input: run.inputTokens, output: run.outputTokens },
         durationMs: run.durationMs,
+        cost: run.costTiyn === null ? null : run.costTiyn / 100,
         result: version ? { versionNumber: version.versionNumber } : null,
         outcome, errorCode: run.safeErrorCode,
       };

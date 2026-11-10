@@ -10,6 +10,7 @@ const detailKeysByEvent: Record<string, string[]> = {
   'plan.price_changed': ['planKey', 'previousPrice', 'nextPrice'],
   'billing.contact_changed': ['contactSet'],
   'privacy.retention_changed': ['previousDays', 'nextDays'],
+  'billing.ai_pricing_changed': ['previousInput', 'previousOutput', 'nextInput', 'nextOutput'],
   'account.deletion_cancelled': ['requestedAt'],
 };
 
