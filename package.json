@@ -7,7 +7,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "npm run db:generate && tsc -p tsconfig.build.json",
+    "build": "npm run db:generate && tsc -p tsconfig.build.json && node scripts/build-export.mjs",
     "start": "node dist/main.js",
     "start:dev": "npm run db:generate && tsx watch src/main.ts",
     "db:validate": "prisma validate",
@@ -18,7 +18,8 @@
     "staff:create": "tsx scripts/create-staff-account.ts",
     "test": "tsx --test 'src/**/*.test.ts'",
     "start:sites": "node dist/sites.js",
-    "start:sites:dev": "npm run db:generate && tsx watch src/sites.ts"
+    "start:sites:dev": "npm run db:generate && tsx watch src/sites.ts",
+    "build:export": "node scripts/build-export.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.800.0",
@@ -44,7 +45,8 @@
     "@types/pg": "^8.15.5",
     "prisma": "7.10.0",
     "tsx": "^4.20.6",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "esbuild": "^0.28.2"
   },
   "type": "module"
 }

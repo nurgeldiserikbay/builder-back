@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 import { WorktimeService } from './worktime.service.js';
 import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, type BookingConfig, type Schedule } from './schedule.js';
+import { TECHPLAN_VERSION, bookingApiContract, sameTechPlan, buildTechPlan, techPlanMarkdown, techPlanNotes, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
 import {
   ROUTE_CATALOG_VERSION, projectTypeOf, projectTypes, routeAncestors, routeInputs, stageDefinitions, statusExplanations,
@@ -329,6 +330,9 @@ export class JourneyService {
     const site = definition.artifactType === 'site' && current ? current.content as unknown as SiteArtifact : null;
     const assignment = this.assignmentFor(ctx, stageKey);
     // Schedule has no AI: the editor starts from the accepted services and a typical working day.
+    const techPlanPreview = definition.artifactType === 'techplan' && inputsSatisfied(ctx.route, ctx.dep, stageKey)
+      ? await this.techPlanFor(ctx, stageKey, (current?.content as unknown as TechPlan | undefined)?.ownerNotes ?? null) : null;
+    const techPlanOutdated = Boolean(techPlanPreview && current && !sameTechPlan(techPlanPreview, current.content as unknown as TechPlan));
     const scheduleTemplate = definition.artifactType === 'schedule' && !current
       ? templateSchedule((await this.acceptedInputs(ctx, stageKey)).offer?.content as Offer | undefined ?? null) : null;
     const owner = ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role) && editableProject(ctx.project.status);
@@ -352,7 +356,7 @@ export class JourneyService {
           acceptance: definition.acceptance, acceptExplanation: definition.acceptExplanation, importHint: definition.importHint,
           fields: definition.fields ?? null, lockedKeys: stage.lockedKeys, acceptedVersionId: stage.approvedVersionId,
           canEdit: writable,
-          canAccept: owner && Boolean(stage.currentVersionId) && !changesPending && waiting.length === 0
+          canAccept: owner && Boolean(stage.currentVersionId) && !changesPending && waiting.length === 0 && !techPlanOutdated
             && ['in_progress', 'stale', 'changes_requested', 'in_review'].includes(stage.status) && inputsSatisfied(ctx.route, ctx.dep, stageKey),
           changesPending,
           contract: definition.contract ?? null,
@@ -397,6 +401,7 @@ export class JourneyService {
         },
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
+          ...(definition.artifactType === 'techplan' ? { techplan: { preview: techPlanPreview, outdated: techPlanOutdated } } : {}),
           ...(definition.artifactType === 'schedule' ? { schedule: { template: scheduleTemplate, timezones: TIMEZONES, weekdays: WEEKDAYS, slotSteps: SLOT_STEPS } } : {}),
         },
       },
@@ -431,6 +436,13 @@ export class JourneyService {
     return tx.projectEvent.create({ data: { projectId, actorUserId: userId, type, stageKey, details: details as never } });
   }
 
+  private async techPlanFor(ctx: Parameters<JourneyService['acceptedInputs']>[0], key: StageKey, notes: string | null): Promise<TechPlan> {
+    const inputs = await this.acceptedInputs(ctx, key);
+    const schedule = inputs.schedule?.content as Schedule | undefined;
+    if (!schedule) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+    return buildTechPlan({ brief: (inputs.goal?.content as Brief | undefined) ?? null, offer: null, schedule }, notes);
+  }
+
   async saveDraft(userId: string, projectId: string, key: string, input: { content: unknown; baseVersionId: string | null }) {
     const ctx = await this.load(userId, projectId, 'write', key);
     const stage = this.stageOf(ctx, key);
@@ -439,7 +451,15 @@ export class JourneyService {
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     if ((input.baseVersionId ?? null) !== (stage.currentVersionId ?? null)) throw new ConflictException('STAGE_VERSION_CONFLICT');
     let content: unknown;
-    try { content = normalizeArtifact(definition.artifactType, input.content); } catch (error) { validationError(error); }
+    if (definition.artifactType === 'techplan') {
+      // The plan itself is always computed from the accepted inputs; the owner contributes only notes.
+      let notes: string | null = null;
+      try { notes = techPlanNotes(input.content); } catch (error) { validationError(error); }
+      if (!inputsSatisfied(ctx.route, ctx.dep, key as StageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+      content = await this.techPlanFor(ctx, key as StageKey, notes);
+    } else {
+      try { content = normalizeArtifact(definition.artifactType, input.content); } catch (error) { validationError(error); }
+    }
     const base = await this.versionContent(stage.currentVersionId);
     const changed = changedKeys(definition.artifactType, base?.content ?? null, content);
     // changedKeys ignores photo choices (they never lock text), so compare whole artifacts to decide whether anything changed.
@@ -803,7 +823,7 @@ export class JourneyService {
       const id = useDraft ? stage.currentVersionId ?? stage.approvedVersionId : accepted;
       return this.versionContent(id);
     };
-    const [goal, offer, content, design, schedule] = await Promise.all([pick('goal'), pick('offer'), pick('content'), pick('design'), pick('schedule')]);
+    const [goal, offer, content, design, schedule, techplan] = await Promise.all([pick('goal'), pick('offer'), pick('content'), pick('design'), pick('schedule'), pick('techplan')]);
     if (acceptedOnly && ctx.route.includes('schedule') && !schedule) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     if (!goal || !content) throw new ConflictException(acceptedOnly ? 'STAGE_INPUTS_NOT_ACCEPTED' : 'PREVIEW_NOT_READY');
     if (acceptedOnly && !design) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
@@ -811,6 +831,7 @@ export class JourneyService {
     if (offer) versionIds.offer = offer.id;
     if (design) versionIds.design = design.id;
     if (schedule) versionIds.schedule = schedule.id;
+    if (techplan) versionIds.techplan = techplan.id;
     const offerContent = (offer?.content as Offer | undefined) ?? null;
     const booking: BookingConfig | null = schedule ? {
       schedule: schedule.content as Schedule,
@@ -823,6 +844,8 @@ export class JourneyService {
         design: (design?.content as DesignArtifact | undefined) ?? defaultDesign, locale: ctx.project.locale, draft: !acceptedOnly,
         images: await this.imageInfo(ctx.project.id, contentImageIds(content.content)),
         booking,
+        contractVersion: (techplan?.content as TechPlan | undefined)?.planVersion ?? null,
+        expectedContractVersion: ctx.route.includes('techplan') ? TECHPLAN_VERSION : null,
       },
     };
   }
@@ -856,6 +879,7 @@ export class JourneyService {
     if (!inputsSatisfied(ctx.route, ctx.dep, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const version = await this.versionContent(versionId);
     if (!version) throw new NotFoundException('VERSION_NOT_FOUND');
+    if (definition.artifactType === 'techplan' && !sameTechPlan(await this.techPlanFor(ctx, stageKey, null), version.content as unknown as TechPlan)) throw new ConflictException('TECHPLAN_OUTDATED');
     const notices: Array<{ targetKey: StageKey }> = [];
     if (definition.artifactType === 'site') {
       const site = version.content as unknown as SiteArtifact;
@@ -1208,6 +1232,11 @@ export class JourneyService {
     if (site?.meta?.hasForm) lines.push('', '> Форма заявки работает, когда сайт опубликован на BuildPath. На другом хостинге форму нужно подключить к своему обработчику.');
     const files = [{ name: 'project.md', mimeType: 'text/markdown', content: `${lines.join('\n')}\n` }];
     if (site) files.push({ name: 'site.html', mimeType: 'text/html', content: await this.inline(projectId, site.html) });
+    const plan = get<TechPlan>('techplan');
+    if (plan) {
+      files.push({ name: 'techplan.md', mimeType: 'text/markdown', content: techPlanMarkdown(plan) });
+      files.push({ name: 'booking-api.yaml', mimeType: 'text/yaml', content: plan.api || bookingApiContract() });
+    }
     files.push({
       name: 'project.json', mimeType: 'application/json',
       content: JSON.stringify({

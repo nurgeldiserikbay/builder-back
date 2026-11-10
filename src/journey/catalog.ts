@@ -1,10 +1,10 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.2.0';
+export const ROUTE_CATALOG_VERSION = '1.3.0';
 
-export type StageKey = 'goal' | 'offer' | 'schedule' | 'content' | 'design' | 'build';
-export type ArtifactType = 'brief' | 'offer' | 'schedule' | 'content' | 'design' | 'site';
+export type StageKey = 'goal' | 'offer' | 'schedule' | 'techplan' | 'content' | 'design' | 'build';
+export type ArtifactType = 'brief' | 'offer' | 'schedule' | 'techplan' | 'content' | 'design' | 'site';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'booking';
 
@@ -161,6 +161,25 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     importHint: null,
     playbook: { version: '1.0.0', instructions: [] },
   },
+  techplan: {
+    key: 'techplan',
+    version: '1.0.0',
+    title: 'Технический план',
+    purpose: 'Покажем простыми словами, что именно будет сделано: какие страницы, кто чем пользуется, какие данные хранятся и где всё будет работать. Для разработчиков здесь же — точное описание (контракт API).',
+    outcome: 'План приложения записи и контракт API: на него опирается сборка, его можно передать разработчику.',
+    artifactType: 'techplan',
+    inputs: ['goal', 'schedule'],
+    ai: {
+      level: 'none',
+      whatItDoes: 'План составляет платформа по принятым этапам, без ИИ: так он всегда совпадает с тем, что будет собрано. Вы можете добавить заметки для разработчиков.',
+      instructionExamples: [],
+    },
+    acceptance: ['Понятно, что будет на сайте и как работает запись', 'Ограничения этой версии вас устраивают или записаны в заметках'],
+    acceptExplanation: 'План станет договорённостью для сборки. Если позже изменить расписание, план попросит обновиться.',
+    importHint: null,
+    contract: { explanation: 'Технический план — договорённость о том, что собирается. Сборка проверяет, что программа записи соответствует версии плана. Когда меняется расписание, план получает уведомление и обновляется по новым данным.' },
+    playbook: { version: '1.0.0', instructions: [] },
+  },
   content: {
     key: 'content',
     version: '1.0.0',
@@ -218,7 +237,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     outcome: 'Готовая страница сайта, отчёт проверок и файлы для скачивания.',
     artifactType: 'site',
     // schedule exists only on the online booking route; inputs are limited to the stages of the route.
-    inputs: ['content', 'design', 'schedule'],
+    inputs: ['content', 'design', 'schedule', 'techplan'],
     ai: {
       level: 'none',
       whatItDoes: 'Сборку делает платформа по правилам, без ИИ: так результат всегда одинаковый и проверяемый.',
@@ -256,7 +275,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Сайт с записью: клиент выбирает услугу, мастера и свободное время, а вы получаете запись в Telegram и видите все записи в проекте.',
     goodFor: 'Салонам красоты, барбершопам, массажу, тренерам, репетиторам — всем, кто работает по времени.',
     examples: ['Барбершоп', 'Маникюр', 'Массаж', 'Автомойка'],
-    stages: ['goal', 'offer', 'schedule', 'content', 'design', 'build'],
+    stages: ['goal', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт с онлайн-записью, список услуг, расписание и все тексты проекта. Запись работает, когда сайт опубликован на BuildPath.',
   },
 };

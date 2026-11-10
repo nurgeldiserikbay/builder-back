@@ -93,6 +93,10 @@ export function describeChanges(key: StageKey, beforeRaw: unknown, afterRaw: unk
     : type === 'content' ? contentChanges(before, after)
       : type === 'design' ? designChanges(before, after)
         : type === 'schedule' ? scheduleChanges(before, after)
+          : type === 'techplan' ? [
+            ...(JSON.stringify({ ...before, ownerNotes: null }) !== JSON.stringify({ ...after, ownerNotes: null }) ? ['План обновлён по новым данным'] : []),
+            ...(before.ownerNotes !== after.ownerNotes ? ['Изменены заметки владельца'] : []),
+          ]
         : fieldChanges(key, before, after);
   if (!lines.length && JSON.stringify(beforeRaw) !== JSON.stringify(afterRaw)) lines.push('Мелкие изменения');
   return lines.length > 12 ? [...lines.slice(0, 11), `И ещё изменений: ${lines.length - 11}`] : lines;
