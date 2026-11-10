@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Header, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Header, HttpCode, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { ChoicesService } from './choices.service.js';
@@ -49,6 +49,33 @@ export class ChoicesController {
     return this.choices.connect(request.user.id, projectId, { provider: input.provider, repoUrl: str(input.repoUrl, 'REPO_URL_INVALID', 500), token: str(input.token, 'REPO_TOKEN_INVALID', 400) });
   }
 
+  @Post('repository/github/start')
+  @HttpCode(200)
+  githubStart(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.choices.githubStart(request.user.id, projectId);
+  }
+
+  @Get('repository/github/repos')
+  @Header('Cache-Control', 'no-store')
+  githubRepos(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.choices.githubRepos(request.user.id, projectId);
+  }
+
+  @Post('repository/github/connect')
+  @HttpCode(200)
+  githubConnect(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw, ['repo', 'create', 'confirm']);
+    let create: { name: string; isPrivate: boolean } | null = null;
+    if (input.create !== undefined && input.create !== null) {
+      const value = input.create as Record<string, unknown>;
+      if (typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => key !== 'name' && key !== 'isPrivate') || typeof value.isPrivate !== 'boolean') throw new BadRequestException('INVALID_CREATE');
+      create = { name: str(value.name, 'REPO_NAME_INVALID', 100), isPrivate: value.isPrivate };
+    }
+    const repo = input.repo === undefined || input.repo === null ? null : str(input.repo, 'REPO_URL_INVALID', 201);
+    if (Boolean(repo) === Boolean(create)) throw new BadRequestException('REPO_OR_CREATE_REQUIRED');
+    return this.choices.githubConnect(request.user.id, projectId, { repo, create, confirm: input.confirm === true });
+  }
+
   @Delete('repository')
   @HttpCode(200)
   disconnect(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
@@ -80,5 +107,32 @@ export class ChoicesController {
   @Header('Cache-Control', 'no-store')
   package(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
     return this.choices.serverPackage(request.user.id, projectId);
+  }
+}
+
+/** GitHub redirects the browser here after consent; no session is needed (see ChoicesService.githubCallback). */
+@Controller('oauth/github')
+export class GithubOauthController {
+  constructor(private readonly choices: ChoicesService) {}
+
+  @Get('callback')
+  async callback(@Query() query: Record<string, unknown>, @Res() response: { redirect: (status: number, url: string) => void; setHeader: (name: string, value: string) => void }) {
+    const pick = (key: string) => (typeof query[key] === 'string' ? query[key] as string : undefined);
+    const target = await this.choices.githubCallback({ code: pick('code'), state: pick('state'), error: pick('error') });
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+    response.redirect(303, target);
+  }
+}
+
+@Controller('me/git-accounts')
+@UseGuards(AuthGuard)
+export class GitAccountsController {
+  constructor(private readonly choices: ChoicesService) {}
+
+  @Delete('github')
+  @HttpCode(200)
+  forget(@Req() request: AuthenticatedRequest) {
+    return this.choices.githubForget(request.user.id);
   }
 }

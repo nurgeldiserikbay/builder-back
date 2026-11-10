@@ -201,6 +201,8 @@ model User {
   @@index([createdAt], map: "users_created_idx")
   @@index([deletionRequestedAt], map: "users_deletion_requested_idx")
   @@map("users")
+  gitAccounts        GitAccount[]
+  oauthStates        OAuthState[]
 }
 
 model UserSession {
@@ -1188,6 +1190,8 @@ model CodeRepository {
   defaultBranch    String    @map("default_branch") @db.VarChar(120)
   isPrivate        Boolean   @map("is_private")
   tokenEncrypted   String    @map("token_encrypted")
+  /// token (pasted access token) | oauth (connected GitHub account)
+  connectedVia   String   @default("token") @map("connected_via") @db.VarChar(10)
   tokenHint        String    @map("token_hint") @db.VarChar(8)
   connectedByUserId String   @map("connected_by_user_id") @db.Uuid
   verifiedAt       DateTime  @map("verified_at") @db.Timestamptz(3)
@@ -1285,3 +1289,36 @@ model Booking {
   @@index([projectId, startsAt], map: "bookings_project_start_idx")
   @@map("bookings")
 }
+
+/// A person's connected account at a code host (GitHub OAuth). The token is encrypted with CODE_HOSTING_TOKEN_ENCRYPTION_KEY and never returned.
+model GitAccount {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  provider       String   @db.VarChar(20)
+  login          String   @db.VarChar(100)
+  tokenEncrypted String   @map("token_encrypted")
+  tokenHint      String   @map("token_hint") @db.VarChar(8)
+  scopes         String   @default("") @db.VarChar(200)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, provider], map: "git_accounts_user_provider_key")
+  @@map("git_accounts")
+}
+
+/// Single-use OAuth state: only its hash is stored; expires after 10 minutes.
+model OAuthState {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stateHash String   @unique(map: "oauth_states_state_hash_key") @map("state_hash") @db.VarChar(64)
+  userId    String   @map("user_id") @db.Uuid
+  projectId String   @map("project_id") @db.Uuid
+  provider  String   @db.VarChar(20)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt], map: "oauth_states_expires_idx")
+  @@map("oauth_states")
+}
+
