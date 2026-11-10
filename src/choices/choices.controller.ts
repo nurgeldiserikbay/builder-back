@@ -67,4 +67,18 @@ export class ChoicesController {
     const input = body(raw, ['confirm']);
     return this.choices.push(request.user.id, projectId, input.confirm === true);
   }
+
+  @Post('deployment/verify')
+  @HttpCode(200)
+  verify(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw, ['url']);
+    const url = input.url === undefined || input.url === null || input.url === '' ? null : str(input.url, 'SITE_URL_INVALID', 500);
+    return this.choices.verifyDeployment(request.user.id, projectId, url);
+  }
+
+  @Get('deployment/package')
+  @Header('Cache-Control', 'no-store')
+  package(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.choices.serverPackage(request.user.id, projectId);
+  }
 }

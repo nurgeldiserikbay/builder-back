@@ -2,6 +2,7 @@ import {
   BadGatewayException, BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus,
   Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException,
 } from '@nestjs/common';
+import { WorktimeService } from './worktime.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 import {
   ROUTE_CATALOG_VERSION, projectTypeOf, projectTypes, routeAncestors, routeInputs, stageDefinitions, statusExplanations,
@@ -15,6 +16,7 @@ import {
 import { inlineImages } from '../images/image-processing.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderSite, siteMeta, type ImageInfo } from './site-renderer.js';
 import { describeChanges } from './change-summary.js';
+import { costOf } from '../budget/budget.js';
 import { StageAiError, buildStagePrompt, configuredStageProvider, type StageAiProvider } from './stage-ai.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
 import { BillingService } from '../billing/billing.service.js';
@@ -50,7 +52,7 @@ function validationError(error: unknown): never {
 export class JourneyService {
   private provider: StageAiProvider | null | undefined;
 
-  constructor(private readonly prisma: PrismaService, private readonly billing: BillingService) {}
+  constructor(private readonly prisma: PrismaService, private readonly billing: BillingService, private readonly worktime: WorktimeService) {}
 
   /** Tests may inject a provider; production reads environment configuration. */
   setProvider(provider: StageAiProvider | null): void { this.provider = provider; }
@@ -446,6 +448,7 @@ export class JourneyService {
       await this.event(tx, projectId, userId, 'stage_draft_saved', key, { versionNumber: created.versionNumber, changed });
       return created;
     });
+    await this.worktime.recordAction(userId, projectId, key);
     return { data: { versionId: version.id, versionNumber: version.versionNumber, changed } };
   }
 
@@ -538,13 +541,14 @@ export class JourneyService {
       current: base?.content ?? null, lockedKeys: stage.lockedKeys, targetKey: input.targetKey, rules: ruleTexts, instruction: instruction?.text ?? null,
     });
     // Tokens are spent even when the output is rejected, so failures record usage too.
+    const pricing = await this.prisma.aiPricing.findUnique({ where: { id: 1 } });
     let usage: { inputTokens: number | null; outputTokens: number | null } | null = null;
     const recordFailure = async (code: string) => {
       await this.prisma.generationRun.create({ data: {
         projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
         targetKey: input.targetKey, instructionId: instruction?.id ?? null, ruleIds: rules.map((rule) => rule.id), inputVersionIds: Object.values(inputs).map((item) => item.versionId),
         baseVersionId: base?.id ?? null, status: 'failed', safeErrorCode: code, durationMs: Date.now() - started, source,
-        inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null,
+        inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null, costTiyn: costOf(usage, pricing),
       } });
     };
     let merged: unknown;
@@ -572,7 +576,7 @@ export class JourneyService {
         projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
         targetKey: input.targetKey, instructionId: instruction?.id ?? null, ruleIds: rules.map((rule) => rule.id), inputVersionIds: Object.values(inputs).map((item) => item.versionId),
         baseVersionId: base?.id ?? null, status: 'succeeded', durationMs: Date.now() - started, source,
-        inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null,
+        inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null, costTiyn: costOf(usage, pricing),
       }, select: { id: true } });
       const created = await this.createVersion(tx, {
         projectId, stage, artifactType: definition.artifactType, content: merged, origin: 'ai_generated',
@@ -583,6 +587,7 @@ export class JourneyService {
       if (assignment) await tx.stageAssignment.update({ where: { id: assignment.id }, data: { aiUsed: { increment: 1 } } });
       return created;
     });
+    await this.worktime.recordAction(userId, projectId, key);
     return { data: { versionId: version.id, versionNumber: version.versionNumber, provider: provider.name } };
   }
 
@@ -607,7 +612,7 @@ export class JourneyService {
     const runs = await this.prisma.generationRun.findMany({
       where: { ...where, ...(instructionMatch ? { instructionId: { in: instructionMatch } } : {}) },
       orderBy: { createdAt: 'desc' }, take: filter.limit + 1,
-      select: { id: true, stageId: true, requestedByUserId: true, provider: true, model: true, targetKey: true, instructionId: true, ruleIds: true, resultVersionId: true, status: true, safeErrorCode: true, durationMs: true, source: true, inputTokens: true, outputTokens: true, createdAt: true },
+      select: { id: true, stageId: true, requestedByUserId: true, provider: true, model: true, targetKey: true, instructionId: true, ruleIds: true, resultVersionId: true, status: true, safeErrorCode: true, durationMs: true, source: true, inputTokens: true, outputTokens: true, costTiyn: true, createdAt: true },
     });
     const page = runs.slice(0, filter.limit);
     const instructionIds = [...new Set(page.map((run) => run.instructionId).filter((id): id is string => Boolean(id)))];
@@ -639,6 +644,7 @@ export class JourneyService {
         model: run.model, source: run.source,
         tokens: run.inputTokens === null && run.outputTokens === null ? null : { input: run.inputTokens, output: run.outputTokens },
         durationMs: run.durationMs,
+        cost: run.costTiyn === null ? null : run.costTiyn / 100,
         result: version ? { versionNumber: version.versionNumber } : null,
         outcome, errorCode: run.safeErrorCode,
       };
@@ -728,8 +734,9 @@ export class JourneyService {
       content = definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : importContentText(text);
     } catch (error) { validationError(error); }
     const issues = completenessIssues(definition.artifactType, content);
-    // Imported material counts as accepted only when it is complete and its own inputs are accepted.
-    const complete = issues.length === 0 && inputsSatisfied(ctx.route, ctx.dep, stageKey);
+    // Imported material counts as accepted only when it is complete, its own inputs are accepted and the person importing
+    // may accept stages. A specialist's import is a draft like any other: the owner accepts it, and that is when they are paid.
+    const complete = issues.length === 0 && inputsSatisfied(ctx.route, ctx.dep, stageKey) && ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role);
     const result = await this.prisma.$transaction(async (tx) => {
       const created = await this.createVersion(tx, {
         projectId, stage, artifactType: definition.artifactType, content, origin: 'imported', note: 'Ваши материалы', userId,
@@ -739,6 +746,7 @@ export class JourneyService {
       await this.event(tx, projectId, userId, 'stage_imported', key, { versionNumber: created.versionNumber, complete });
       return created;
     });
+    await this.worktime.recordAction(userId, projectId, key);
     return { data: { versionId: result.id, versionNumber: result.versionNumber, status: complete ? 'imported' : 'in_progress', issues } };
   }
 
@@ -847,6 +855,8 @@ export class JourneyService {
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.projectStage.update({ where: { id: stage.id }, data: { status: 'approved', approvedVersionId: versionId, approvedAt: new Date(), approvedByUserId: userId, reviewNote: null } });
+      // What paid specialists are owed is fixed at acceptance: the fixed price, or approved minutes × rate within the limit.
+      await this.worktime.paymentsOnAccept(tx, stage.id, version.versionNumber);
       // Specialists keep read access for a grace period after acceptance; writing and AI use stop now.
       const completed = await tx.stageAssignment.updateMany({
         where: { stageId: stage.id, status: 'active' },
@@ -1054,6 +1064,7 @@ export class JourneyService {
       await this.event(tx, projectId, userId, 'stage_submitted', key, { versionNumber: version?.versionNumber ?? null });
     });
     await this.notifyUser(ctx.project.ownerUserId, `Этап «${definition.title}» в проекте «${ctx.project.name}» отправлен вам на приёмку. ${this.stageLink(projectId, key)}`.trim()).catch(() => undefined);
+    await this.worktime.recordAction(userId, projectId, key);
     return this.journey(userId, projectId);
   }
 
@@ -1086,6 +1097,7 @@ export class JourneyService {
       await this.event(tx, projectId, userId, 'suggestion_added', key, { suggestionId: suggestion.id });
       return suggestion;
     });
+    await this.worktime.recordAction(userId, projectId, key);
     return { data: created };
   }
 

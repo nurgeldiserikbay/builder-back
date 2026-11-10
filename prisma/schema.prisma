@@ -876,6 +876,8 @@ model GenerationRun {
   /// Provider-reported usage; null for templates and providers that do not report it.
   inputTokens       Int?                @map("input_tokens")
   outputTokens      Int?                @map("output_tokens")
+  /// Price for the customer at the time of the request, in tiyn (1/100 ₸); null when tokens or prices were unknown.
+  costTiyn          Int?                @map("cost_tiyn")
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   project           Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
   stage             ProjectStage        @relation(fields: [stageId], references: [id], onDelete: Cascade)
@@ -984,6 +986,17 @@ model StageAssignment {
   inviteExpiresAt DateTime              @map("invite_expires_at") @db.Timestamptz(3)
   aiBudget        Int?                  @map("ai_budget")
   aiUsed          Int                   @default(0) @map("ai_used")
+  /// Terms seen by the specialist before accepting: none (settled outside), fixed price or hourly rate. Amounts in tiyn.
+  payKind         String                @default("none") @map("pay_kind") @db.VarChar(10)
+  fixedAmountTiyn Int?                  @map("fixed_amount_tiyn")
+  hourlyRateTiyn  Int?                  @map("hourly_rate_tiyn")
+  hourLimit       Int?                  @map("hour_limit")
+  weeklyHourLimit Int?                  @map("weekly_hour_limit")
+  revisionsIncluded Int?                @map("revisions_included")
+  onlyResultTime  Boolean               @default(false) @map("only_result_time")
+  limitWarnedAt   DateTime?             @map("limit_warned_at") @db.Timestamptz(3)
+  timeEntries     TimeEntry[]
+  payments        StagePayment[]
   invitedByUserId String                @map("invited_by_user_id") @db.Uuid
   acceptedAt      DateTime?             @map("accepted_at") @db.Timestamptz(3)
   completedAt     DateTime?             @map("completed_at") @db.Timestamptz(3)
@@ -1151,6 +1164,8 @@ model ProjectChoice {
   optionKey      String   @map("option_key") @db.VarChar(40)
   reason         String?  @db.VarChar(500)
   stepsDone      String[] @default([]) @map("steps_done") @db.VarChar(40)
+  /// Last automatic check of the result (for deployment: address, outcome, time).
+  verification   Json?
   chosenByUserId String   @map("chosen_by_user_id") @db.Uuid
   chosenAt       DateTime @default(now()) @map("chosen_at") @db.Timestamptz(3)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -1182,4 +1197,56 @@ model CodeRepository {
   project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@map("code_repositories")
+}
+
+/// Single-row customer prices for AI usage (id = 1), set in the admin console. Each request stores its own cost.
+model AiPricing {
+  id                   Int      @id @default(1) @db.SmallInt
+  inputPerMillionTiyn  Int      @map("input_per_million_tiyn")
+  outputPerMillionTiyn Int      @map("output_per_million_tiyn")
+  updatedByStaffId     String?  @map("updated_by_staff_id") @db.Uuid
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("ai_pricing")
+}
+
+/// Time a specialist worked on a stage. Tracked entries are built by the server from activity on the stage; manual ones need the owner's approval.
+model TimeEntry {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assignmentId    String          @map("assignment_id") @db.Uuid
+  projectId       String          @map("project_id") @db.Uuid
+  startedAt       DateTime        @map("started_at") @db.Timestamptz(3)
+  endedAt         DateTime        @map("ended_at") @db.Timestamptz(3)
+  source          String          @db.VarChar(10)
+  /// Edits, AI requests, submissions and suggestions made during the interval.
+  actions         Int             @default(0)
+  note            String?         @db.VarChar(500)
+  status          String          @default("pending") @db.VarChar(12)
+  ownerComment    String?         @map("owner_comment") @db.VarChar(1000)
+  specialistReply String?         @map("specialist_reply") @db.VarChar(1000)
+  decidedAt       DateTime?       @map("decided_at") @db.Timestamptz(3)
+  createdAt       DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  assignment      StageAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([assignmentId, startedAt(sort: Desc)], map: "time_entries_assignment_started_idx")
+  @@map("time_entries")
+}
+
+/// Money due to a specialist when the owner accepts the stage.
+model StagePayment {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assignmentId   String          @map("assignment_id") @db.Uuid
+  projectId      String          @map("project_id") @db.Uuid
+  basis          String          @db.VarChar(10)
+  minutes        Int?
+  amountTiyn     Int             @map("amount_tiyn")
+  status         String          @default("due") @db.VarChar(12)
+  stageVersion   Int?            @map("stage_version")
+  paidAt         DateTime?       @map("paid_at") @db.Timestamptz(3)
+  markedByUserId String?         @map("marked_by_user_id") @db.Uuid
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  assignment     StageAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status], map: "stage_payments_project_status_idx")
+  @@map("stage_payments")
 }

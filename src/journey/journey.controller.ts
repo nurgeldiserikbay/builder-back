@@ -2,7 +2,8 @@ import { BadRequestException, Body, Controller, Get, HttpCode, Param, Post, Put,
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { JourneyService } from './journey.service.js';
-import { SpecialistsService } from './specialists.service.js';
+import { SpecialistsService, type SpecialistTerms } from './specialists.service.js';
+import { WorktimeService } from './worktime.service.js';
 
 function body(value: unknown, fields: string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('INVALID_REQUEST_BODY');
@@ -20,10 +21,70 @@ function stageKey(value: string): string {
   return value;
 }
 
+function whole(value: unknown, field: string, min: number, max: number, optional: boolean): number | null {
+  if (optional && (value === undefined || value === null)) return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) throw new BadRequestException(`INVALID_${field.toUpperCase()}`);
+  return value;
+}
+/** Payment terms for a specialist; amounts are whole tenge. */
+function termsInput(input: Record<string, unknown>): SpecialistTerms {
+  const payKind = input.payKind ?? 'none';
+  if (payKind !== 'none' && payKind !== 'fixed' && payKind !== 'hourly') throw new BadRequestException('INVALID_PAYKIND');
+  if (input.onlyResultTime !== undefined && typeof input.onlyResultTime !== 'boolean') throw new BadRequestException('INVALID_ONLYRESULTTIME');
+  return {
+    payKind,
+    fixedAmount: whole(input.fixedAmount, 'fixedAmount', 1000, 100_000_000, payKind !== 'fixed'),
+    hourlyRate: whole(input.hourlyRate, 'hourlyRate', 500, 1_000_000, payKind !== 'hourly'),
+    hourLimit: whole(input.hourLimit, 'hourLimit', 1, 1000, payKind !== 'hourly'),
+    weeklyHourLimit: whole(input.weeklyHourLimit, 'weeklyHourLimit', 1, 80, true),
+    revisionsIncluded: whole(input.revisionsIncluded, 'revisionsIncluded', 0, 20, true),
+    onlyResultTime: input.onlyResultTime === true,
+  };
+}
+function uuid(value: string, code: string): string {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new BadRequestException(code);
+  return value;
+}
+
 @Controller()
 @UseGuards(AuthGuard)
 export class JourneyController {
-  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService) {}
+  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService) {}
+
+  @Post('projects/:projectId/stages/:stageKey/activity')
+  @HttpCode(200)
+  activity(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
+    return this.worktime.heartbeat(request.user.id, uuid(projectId, 'INVALID_PROJECT_ID'), stageKey(key));
+  }
+
+  @Get('projects/:projectId/stages/:stageKey/timesheet')
+  timesheet(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
+    return this.worktime.timesheet(request.user.id, uuid(projectId, 'INVALID_PROJECT_ID'), stageKey(key));
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/timesheet/entries')
+  addTime(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw, ['date', 'minutes', 'note']);
+    const date = typeof input.date === 'string' ? new Date(input.date) : new Date(NaN);
+    if (Number.isNaN(date.getTime())) throw new BadRequestException('INVALID_DATE');
+    return this.worktime.addManual(request.user.id, uuid(projectId, 'INVALID_PROJECT_ID'), stageKey(key), { date, minutes: whole(input.minutes, 'minutes', 5, 600, false)!, note: text(input.note, 'note', 5, 500)! });
+  }
+
+  @Post('projects/:projectId/time-entries/:entryId')
+  @HttpCode(200)
+  decideTime(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('entryId') entryId: string, @Body() raw: unknown) {
+    const input = body(raw, ['action', 'comment']);
+    const id = uuid(entryId, 'INVALID_ENTRY_ID');
+    if (input.action === 'reply') return this.worktime.replyToDispute(request.user.id, uuid(projectId, 'INVALID_PROJECT_ID'), id, text(input.comment, 'comment', 2, 500)!);
+    if (input.action !== 'approve' && input.action !== 'dispute') throw new BadRequestException('INVALID_ACTION');
+    return this.worktime.decideEntry(request.user.id, uuid(projectId, 'INVALID_PROJECT_ID'), id, input.action === 'approve' ? 'approved' : 'disputed', text(input.comment, 'comment', 2, 500, true));
+  }
+
+  @Post('projects/:projectId/payments/:paymentId/mark-paid')
+  @HttpCode(200)
+  markPaid(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('paymentId') paymentId: string) {
+    return this.worktime.markPaid(request.user.id, uuid(projectId, 'INVALID_PROJECT_ID'), uuid(paymentId, 'INVALID_PAYMENT_ID'));
+  }
 
   @Post('projects/:projectId/stages/:stageKey/submit')
   @HttpCode(200)
@@ -59,13 +120,13 @@ export class JourneyController {
 
   @Post('projects/:projectId/stages/:stageKey/assignments')
   invite(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
-    const input = body(raw, ['email', 'role', 'aiBudget']);
+    const input = body(raw, ['email', 'role', 'aiBudget', 'payKind', 'fixedAmount', 'hourlyRate', 'hourLimit', 'weeklyHourLimit', 'revisionsIncluded', 'onlyResultTime']);
     const email = text(input.email, 'email', 3, 254)!;
     if (!/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(email)) throw new BadRequestException('INVALID_EMAIL');
     if (input.role !== 'lead' && input.role !== 'consultant') throw new BadRequestException('INVALID_ROLE');
     const aiBudget = input.aiBudget ?? null;
     if (aiBudget !== null && (!Number.isInteger(aiBudget) || (aiBudget as number) < 0 || (aiBudget as number) > 1000)) throw new BadRequestException('INVALID_AIBUDGET');
-    return this.specialists.invite(request.user.id, projectId, stageKey(key), { email, role: input.role, aiBudget: aiBudget as number | null });
+    return this.specialists.invite(request.user.id, projectId, stageKey(key), { email, role: input.role, aiBudget: aiBudget as number | null, terms: termsInput(input) });
   }
 
   @Post('projects/:projectId/assignments/:assignmentId/revoke')
