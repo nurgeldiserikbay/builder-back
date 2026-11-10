@@ -1,5 +1,5 @@
 export const capabilityManifest = {
-  revision: '1.2.0',
+  revision: '1.3.0',
   statuses: [
     { id: 'supported', label: 'Supported', description: 'Implemented and available in the current product.' },
     { id: 'limited', label: 'Limited', description: 'Available with stated configuration, scope, or verification limits.' },
@@ -150,6 +150,22 @@ export const capabilityManifest = {
       status: 'unsupported',
       summary: 'The review worker cannot sign in to customer sites or retain browser sessions.',
       conditions: ['Authenticated pages require a separate explicitly authorized test-session feature.'],
+    },
+    {
+      id: 'online-booking',
+      category: 'Generated sites',
+      name: 'Online booking on BuildPath hosting',
+      status: 'supported',
+      summary: 'Sites of the online booking route take bookings by service, master and free time; the owner sees and manages them in the project.',
+      conditions: ['Works for sites published on BuildPath.', 'Weekly working hours only: no breaks, days off by date, reminders or prepayment yet.', 'Client notifications are not sent; the client keeps a private link to view or cancel.'],
+    },
+    {
+      id: 'booking-app-export',
+      category: 'Generated sites',
+      name: 'Booking app for an own server',
+      status: 'limited',
+      summary: 'Download the site with a dependency-free booking program (Node.js 22+), Caddy config and instructions to run it on your own server.',
+      conditions: ['One instance only; bookings are stored in a JSON file on that server and backups are the owner\'s task.', 'The owner page is protected by one password (HTTP Basic over HTTPS).', 'Docker Compose files are provided; BuildPath does not deploy to the server itself.'],
     },
   ],
 } as const;

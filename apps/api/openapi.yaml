@@ -1528,8 +1528,9 @@ paths:
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
-        '200': { description: 'folder and files: site/index.html, Caddyfile (automatic HTTPS), compose.yaml, README.md with commands' }
+        '200': { description: 'folder, kind and files. kind static — site/index.html, Caddyfile (automatic HTTPS), compose.yaml, README.md. kind booking_app (online booking route) — app/server.mjs (bundled booking program, Node.js 22+), app/config.json, app/index.html, Caddyfile (reverse proxy), compose.yaml, .env.example, README.md.' }
         '409': { $ref: '#/components/responses/Problem' }
+        '503': { description: 'EXPORT_NOT_BUILT — the booking bundle is missing from this API build (run npm run build).' }
   /projects/{projectId}/bookings:
     get:
       tags: [Publishing]
