@@ -6,6 +6,8 @@ import { JourneyService } from '../journey/journey.service.js';
 import { ReviewTargetPolicyError, resolveAndValidateReviewTarget } from '../reviews/url-target-policy.js';
 import { choiceCards, recommend, type CardKey } from './cards.js';
 import { checkSite } from './site-check.js';
+import { bookingBundle, bookingPackageFiles } from '../export/booking-package.js';
+import type { SiteArtifact } from '../journey/artifacts.js';
 import { GitHubClient, GitLabClient, GitProviderError, parseRepoUrl, type GitFile, type GitProviderKey } from './git-providers.js';
 
 const isCard = (key: string): key is CardKey => key in choiceCards;
@@ -284,6 +286,14 @@ export class ChoicesService {
     const result = (await this.journey.result(userId, projectId)).data as { files: Array<{ name: string; content: string }> };
     const site = result.files.find((file) => file.name === 'site.html')?.content;
     if (!site) throw new ConflictException('SITE_NOT_ACCEPTED');
+    const build = await this.prisma.projectStage.findFirst({ where: { projectId, stageKey: 'build' }, select: { approvedVersionId: true } });
+    const artifact = build?.approvedVersionId ? (await this.prisma.stageArtifactVersion.findUnique({ where: { id: build.approvedVersionId }, select: { content: true } }))?.content as unknown as SiteArtifact | undefined : undefined;
+    if (artifact?.meta?.booking) {
+      // Online booking needs a program on the server, not just a page: ship the bundled booking app with the accepted schedule.
+      let bundle: string;
+      try { bundle = await bookingBundle(); } catch { throw new ServiceUnavailableException('EXPORT_NOT_BUILT'); }
+      return { data: { folder: 'buildpath-site', kind: 'booking_app', files: bookingPackageFiles(artifact, bundle) } };
+    }
     const caddy = ['# Замените ВАШ-ДОМЕН.kz на свой домен. Caddy сам получит HTTPS-сертификат.', 'ВАШ-ДОМЕН.kz {', '\troot * /srv', '\tfile_server', '\tencode gzip', '\theader {', '\t\tX-Content-Type-Options nosniff', '\t\tReferrer-Policy strict-origin-when-cross-origin', '\t}', '}', ''].join('\n');
     const compose = ['services:', '  site:', '    image: caddy:2', '    restart: unless-stopped', '    ports: ["80:80", "443:443"]', '    volumes:', '      - ./Caddyfile:/etc/caddy/Caddyfile:ro', '      - ./site:/srv:ro', '      - caddy_data:/data', 'volumes:', '  caddy_data: {}', ''].join('\n');
     const readme = [
@@ -299,7 +309,7 @@ export class ChoicesService {
     ].join('\n');
     return {
       data: {
-        folder: 'buildpath-site',
+        folder: 'buildpath-site', kind: 'static',
         files: [
           { name: 'site/index.html', mimeType: 'text/html', content: site },
           { name: 'Caddyfile', mimeType: 'text/plain', content: caddy },
