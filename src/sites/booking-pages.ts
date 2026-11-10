@@ -9,7 +9,8 @@ export const BOOKING_CANCEL_PATH = '/__forms/booking-cancel';
 
 const style = `<style>.steps{color:inherit;opacity:.75;font-size:14px;margin:0 0 6px}.choices{list-style:none;padding:0;margin:16px 0;display:grid;gap:10px}
 .choices a,.choices span.off{display:flex;justify-content:space-between;gap:12px;padding:14px 16px;border:1px solid rgba(0,0,0,.15);border-radius:12px;text-decoration:none;font-weight:700;min-height:48px;align-items:center}
-.choices a[aria-current="true"]{outline:3px solid currentColor}.choices small{font-weight:400;opacity:.8}.times{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;list-style:none;padding:0;margin:12px 0}
+.choices a[aria-current="true"],.days a[aria-current="true"]{outline:3px solid currentColor}.days{list-style:none;padding:0;margin:12px 0;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.days a{display:flex;flex-direction:column;align-items:center;padding:10px 4px;border:1px solid rgba(0,0,0,.15);border-radius:10px;text-decoration:none;font-weight:700;font-size:15px}.days small{font-weight:400;opacity:.8;font-size:12px}.choices small{font-weight:400;opacity:.8}.times{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px;list-style:none;padding:0;margin:12px 0}
 .times a{display:block;text-align:center;padding:12px 0;border:1px solid rgba(0,0,0,.2);border-radius:10px;text-decoration:none;font-weight:700}
 form{display:grid;gap:14px;margin:18px 0}label{display:grid;gap:6px;font-weight:700;font-size:15px}input,textarea{font:inherit;font-size:16px;padding:12px;border:1px solid rgba(0,0,0,.25);border-radius:10px;background:#fff;color:#111}
 .consent{display:flex;gap:10px;align-items:flex-start;font-weight:400;font-size:14px}.consent input{width:22px;height:22px;flex:none;margin-top:2px}.hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
@@ -24,6 +25,13 @@ function shell(meta: SiteMeta, title: string, body: string): string {
 function minutesText(minutes: number): string {
   const hours = Math.floor(minutes / 60);
   return [hours ? `${hours} ч` : '', minutes % 60 ? `${minutes % 60} мин` : ''].filter(Boolean).join(' ');
+}
+
+const shortMonths = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+/** «Ср, 11 ноя» — fits three in a row on a phone. */
+function shortDay(day: string): string {
+  const [, month, date] = day.split('-').map(Number) as [number, number, number];
+  return `${dayLabel(day).split(',')[0]}, ${date} ${shortMonths[month - 1]}`;
 }
 
 export interface BookingQuery { service: number | null; master: string | null; day: string | null; start: Date | null }
@@ -70,7 +78,7 @@ export function timesPage(meta: SiteMeta, config: BookingConfig, query: { servic
   const day = selected && days.some((item) => item.day === selected) ? selected : days[0]!.day;
   const timeLinks = slots.map((slot) => `<li><a href="${link({ s: query.service, m: query.master, t: slot.startsAt.toISOString() })}">${localClock(slot.startsAt, config.schedule.timezone)}</a></li>`).join('');
   return shell(meta, 'Выберите время', `<p class="steps">Шаг 3 из 3 · ${escapeHtml(service.name)} · ${escapeHtml(masterName)}</p><h1>Когда вам удобно?</h1>
-<ul class="choices">${days.slice(0, 14).map((item) => `<li><a href="${link({ s: query.service, m: query.master, d: item.day })}"${item.day === day ? ' aria-current="true"' : ''}>${escapeHtml(dayLabel(item.day))}<small>свободно: ${item.free}</small></a></li>`).join('')}</ul>
+<ul class="days">${days.slice(0, 21).map((item) => `<li><a href="${link({ s: query.service, m: query.master, d: item.day })}#times"${item.day === day ? ' aria-current="true"' : ''}>${escapeHtml(shortDay(item.day))}<small>${item.free} своб.</small></a></li>`).join('')}</ul>
 <h2 id="times">${escapeHtml(dayLabel(day))}</h2><ul class="times">${timeLinks}</ul><a class="back" href="${back}">← Назад</a>`);
 }
 
