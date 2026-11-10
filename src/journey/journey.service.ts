@@ -14,11 +14,12 @@ import {
 } from './artifacts.js';
 import { inlineImages } from '../images/image-processing.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderSite, siteMeta, type ImageInfo } from './site-renderer.js';
+import { describeChanges } from './change-summary.js';
 import { StageAiError, buildStagePrompt, configuredStageProvider, type StageAiProvider } from './stage-ai.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
 import { BillingService } from '../billing/billing.service.js';
 import {
-  canEdit, inputsSatisfied, isSatisfied, nextStage, reopenStage, unlockDependents, type StageStatus, type StatusMap,
+  canEdit, directDependents, effectiveStatuses, inputsSatisfied, isSatisfied, nextStage, reopenStage, unlockDependents, type StageStatus, type StatusMap,
 } from './stage-state.js';
 
 const writeRoles = new Set(['owner', 'manager', 'contributor']);
@@ -103,7 +104,19 @@ export class JourneyService {
     const role = member?.role ?? 'specialist';
     const route = type.stages.filter((key) => stages.some((stage) => stage.stageKey === key));
     const statuses: StatusMap = Object.fromEntries(stages.map((stage) => [stage.stageKey, stage.status]));
-    const ctx = { project, type, role, viewer, stages, route, statuses };
+    // What dependent stages see: a stage being changed again still provides its last accepted version.
+    const dep = effectiveStatuses(statuses, (key) => Boolean(stages.find((stage) => stage.stageKey === key)?.approvedVersionId));
+    // Undecided change notices pin the target stage to the source version it was built on.
+    const openNotices = await this.prisma.changeNotice.findMany({ where: { projectId, status: { in: ['open', 'discussing'] } }, select: { id: true, sourceStageId: true, targetStageId: true, previousVersionId: true, status: true } });
+    const keyById = new Map(stages.map((stage) => [stage.id, stage.stageKey as StageKey]));
+    const pins = new Map<StageKey, Map<StageKey, string>>();
+    for (const notice of openNotices) {
+      const target = keyById.get(notice.targetStageId); const source = keyById.get(notice.sourceStageId);
+      if (!target || !source) continue;
+      if (!pins.has(target)) pins.set(target, new Map());
+      pins.get(target)!.set(source, notice.previousVersionId);
+    }
+    const ctx = { project, type, role, viewer, stages, route, statuses, dep, pins, openNotices: openNotices.map((notice) => ({ ...notice, sourceKey: keyById.get(notice.sourceStageId)!, targetKey: keyById.get(notice.targetStageId)! })) };
     if (stageKey !== undefined && !this.canRead(ctx, stageKey)) throw new NotFoundException('STAGE_NOT_FOUND');
     if (access === 'write' && !(stageKey !== undefined ? this.canWrite(ctx, stageKey) : viewer.kind === 'member' && writeRoles.has(role))) throw new ForbiddenException('STAGE_WRITE_FORBIDDEN');
     if (access === 'accept' && !(viewer.kind === 'member' && acceptRoles.has(role))) throw new ForbiddenException('STAGE_ACCEPT_FORBIDDEN');
@@ -147,11 +160,18 @@ export class JourneyService {
     return this.prisma.stageArtifactVersion.findUnique({ where: { id }, select: { id: true, versionNumber: true, content: true } });
   }
 
-  private async acceptedInputs(ctx: { route: StageKey[]; stages: StageRow[] }, key: StageKey) {
+  /** Accepted version of a stage as seen by `forKey`: pinned by an undecided change notice, otherwise the latest accepted one. */
+  private acceptedVersionId(ctx: { stages: StageRow[]; dep: StatusMap; pins: Map<StageKey, Map<StageKey, string>> }, input: StageKey, forKey: StageKey): string | null {
+    const pinned = ctx.pins.get(forKey)?.get(input);
+    if (pinned) return pinned;
+    const stage = this.stageOf(ctx, input);
+    return isSatisfied(ctx.dep[input]) ? stage.approvedVersionId : null;
+  }
+
+  private async acceptedInputs(ctx: { route: StageKey[]; stages: StageRow[]; dep: StatusMap; pins: Map<StageKey, Map<StageKey, string>> }, key: StageKey) {
     const result: Record<string, { versionId: string; versionNumber: number; content: unknown }> = {};
     for (const input of routeInputs(ctx.route, key)) {
-      const stage = this.stageOf(ctx, input);
-      const version = isSatisfied(stage.status) ? await this.versionContent(stage.approvedVersionId) : null;
+      const version = await this.versionContent(this.acceptedVersionId(ctx, input, key));
       if (version) result[input] = { versionId: version.id, versionNumber: version.versionNumber, content: version.content };
     }
     return result;
@@ -183,6 +203,7 @@ export class JourneyService {
     const nextStatus = next ? ctx.statuses[next] : null;
     const title = next ? stageDefinitions[next].title : '';
     const nextText = !next ? (specialist ? 'Ваш этап принят владельцем. Спасибо за работу!' : 'Все этапы приняты. Опубликуйте сайт или скачайте результат ниже. Вернуться к любому этапу можно в любой момент.')
+      : next && ctx.openNotices.some((notice) => notice.targetKey === next) ? `Изменился этап, на котором построен «${title}». Посмотрите, что изменилось, и решите: принять, оставить как есть или обсудить.`
       : nextStatus === 'stale' ? `Изменился предыдущий этап. Проверьте «${title}» и подтвердите или обновите.`
         : nextStatus === 'in_review' ? (specialist ? `Этап «${title}» на приёмке у владельца. Пока он проверяет, вносить изменения нельзя.` : `Специалист отправил этап «${title}» на приёмку. Проверьте и примите или верните на доработку.`)
           : nextStatus === 'changes_requested' ? `Владелец попросил доработать этап «${title}».`
@@ -205,8 +226,20 @@ export class JourneyService {
       }
     }
     const canAccept = ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role);
+    const discussing = ctx.openNotices.filter((notice) => notice.status === 'discussing').map((notice) => notice.id);
+    const lastSides = discussing.length ? await this.prisma.changeMessage.findMany({ where: { noticeId: { in: discussing } }, orderBy: { createdAt: 'desc' }, distinct: ['noticeId'], select: { noticeId: true, side: true } }) : [];
+    const actsFor = (key: StageKey) => {
+      if (specialist) { const mine = this.assignmentFor(ctx, key); return mine?.role === 'lead' && mine.status === 'active'; }
+      // When a specialist leads the stage, they decide; the owner can step in from the stage page.
+      return canAccept && !leads.has(key);
+    };
     const needsYou = (key: StageKey): string | null => {
       const status = ctx.statuses[key];
+      const incoming = ctx.openNotices.filter((notice) => notice.targetKey === key);
+      if (incoming.some((notice) => notice.status === 'open') && actsFor(key)) return 'Изменился вход — решите';
+      if (incoming.some((notice) => notice.status === 'discussing' && lastSides.find((row) => row.noticeId === notice.id)?.side === 'source') && actsFor(key)) return 'Есть ответ — решите';
+      const waitingForSource = ctx.openNotices.some((notice) => notice.sourceKey === key && notice.status === 'discussing' && lastSides.find((row) => row.noticeId === notice.id)?.side !== 'source');
+      if (waitingForSource && actsFor(key)) return 'Ответьте на вопрос по изменению';
       if (specialist) {
         const mine = this.assignmentFor(ctx, key);
         return mine?.role === 'lead' && mine.status === 'active' && (status === 'in_progress' || status === 'changes_requested' || status === 'ready') ? 'Ваш ход' : null;
@@ -233,7 +266,7 @@ export class JourneyService {
           return {
             key, title: definition.title, purpose: definition.purpose, outcome: definition.outcome, aiLevel: definition.ai.level,
             status: stage.status, statusLabel: statusExplanations[stage.status].label, statusExplanation: statusExplanations[stage.status].explanation,
-            inputs: routeInputs(ctx.route, key).map((input) => ({ key: input, title: stageDefinitions[input].title, satisfied: isSatisfied(ctx.statuses[input]) })),
+            inputs: routeInputs(ctx.route, key).map((input) => ({ key: input, title: stageDefinitions[input].title, satisfied: isSatisfied(ctx.dep[input]) })),
             currentVersionNumber: numberOf(stage.currentVersionId), acceptedVersionNumber: numberOf(stage.approvedVersionId),
             acceptedAt: stage.approvedAt, updatedAt: stage.updatedAt,
             people: {
@@ -241,6 +274,10 @@ export class JourneyService {
               consultants: consultants.get(key) ?? 0,
             },
             needsYou: needsYou(key),
+            changes: {
+              incoming: ctx.openNotices.filter((notice) => notice.targetKey === key).map((notice) => ({ id: notice.id, sourceKey: notice.sourceKey, status: notice.status })),
+              outgoing: ctx.openNotices.filter((notice) => notice.sourceKey === key).map((notice) => ({ id: notice.id, targetKey: notice.targetKey, status: notice.status })),
+            },
           };
         }),
         ai: { configured: Boolean(ai), provider: ai?.name ?? null, remainingToday: ai ? await this.remainingAiRuns(projectId) : 0, month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null },
@@ -253,6 +290,7 @@ export class JourneyService {
     const stage = this.stageOf(ctx, key);
     const stageKey = key as StageKey;
     const definition = stageDefinitions[stageKey];
+    const changesPending = ctx.openNotices.some((notice) => notice.targetKey === stageKey);
     const inputs = await this.acceptedInputs(ctx, stageKey);
     const [current, versions, instructions] = await Promise.all([
       this.prisma.stageArtifactVersion.findUnique({ where: { id: stage.currentVersionId ?? '00000000-0000-4000-8000-000000000000' }, select: { id: true, versionNumber: true, content: true, origin: true, note: true, createdAt: true, createdByUserId: true, generationRunId: true } }),
@@ -290,19 +328,20 @@ export class JourneyService {
           acceptance: definition.acceptance, acceptExplanation: definition.acceptExplanation, importHint: definition.importHint,
           fields: definition.fields ?? null, lockedKeys: stage.lockedKeys, acceptedVersionId: stage.approvedVersionId,
           canEdit: writable,
-          canAccept: owner && Boolean(stage.currentVersionId)
-            && ['in_progress', 'stale', 'changes_requested', 'in_review'].includes(stage.status) && inputsSatisfied(ctx.route, ctx.statuses, stageKey),
+          canAccept: owner && Boolean(stage.currentVersionId) && !changesPending
+            && ['in_progress', 'stale', 'changes_requested', 'in_review'].includes(stage.status) && inputsSatisfied(ctx.route, ctx.dep, stageKey),
+          changesPending,
           canReopen: owner && (stage.status === 'approved' || stage.status === 'imported'),
           canImport: Boolean(definition.importHint) && writable,
-          canSubmit: Boolean(assignment) && writable && Boolean(stage.currentVersionId) && stage.status !== 'in_review',
+          canSubmit: Boolean(assignment) && writable && Boolean(stage.currentVersionId) && stage.status !== 'in_review' && !changesPending,
           canRequestChanges: owner && stage.status === 'in_review',
           canInvite: owner,
           canSuggest: assignment?.role === 'consultant' && assignment.status === 'active' && !['approved', 'imported'].includes(stage.status),
           reviewNote: stage.reviewNote,
-          inputsReady: inputsSatisfied(ctx.route, ctx.statuses, stageKey),
+          inputsReady: inputsSatisfied(ctx.route, ctx.dep, stageKey),
         },
         inputs: routeInputs(ctx.route, stageKey).map((input) => ({
-          key: input, title: stageDefinitions[input].title, satisfied: isSatisfied(ctx.statuses[input]),
+          key: input, title: stageDefinitions[input].title, satisfied: isSatisfied(ctx.dep[input]),
           versionNumber: inputs[input]?.versionNumber ?? null, content: inputs[input]?.content ?? null,
         })),
         current: current ? {
@@ -428,7 +467,7 @@ export class JourneyService {
     const definition = stageDefinitions[stageKey];
     if (definition.ai.level === 'none') throw new BadRequestException('AI_NOT_USED_FOR_STAGE');
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
-    if (!inputsSatisfied(ctx.route, ctx.statuses, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+    if (!inputsSatisfied(ctx.route, ctx.dep, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const base = await this.versionContent(stage.currentVersionId);
     if (input.targetKey && (!base || !lockableKeys(definition.artifactType, base.content).includes(input.targetKey))) throw new NotFoundException('TARGET_NOT_FOUND');
     if (stageKey === 'goal' && !base && !input.instruction) throw new BadRequestException('DESCRIPTION_REQUIRED');
@@ -666,7 +705,7 @@ export class JourneyService {
     } catch (error) { validationError(error); }
     const issues = completenessIssues(definition.artifactType, content);
     // Imported material counts as accepted only when it is complete and its own inputs are accepted.
-    const complete = issues.length === 0 && inputsSatisfied(ctx.route, ctx.statuses, stageKey);
+    const complete = issues.length === 0 && inputsSatisfied(ctx.route, ctx.dep, stageKey);
     const result = await this.prisma.$transaction(async (tx) => {
       const created = await this.createVersion(tx, {
         projectId, stage, artifactType: definition.artifactType, content, origin: 'imported', note: 'Ваши материалы', userId,
@@ -683,7 +722,7 @@ export class JourneyService {
     const ctx = await this.load(userId, projectId, 'write', 'build');
     const stage = this.stageOf(ctx, 'build');
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
-    if (!inputsSatisfied(ctx.route, ctx.statuses, 'build')) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+    if (!inputsSatisfied(ctx.route, ctx.dep, 'build')) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const sources = await this.renderSources(ctx, true);
     const renderInput = { ...sources.input, draft: false };
     const site: SiteArtifact = { html: renderSite(renderInput), meta: siteMeta(renderInput), checks: checkSite(renderInput), sourceVersionIds: sources.versionIds, compiledAt: new Date().toISOString() };
@@ -717,11 +756,11 @@ export class JourneyService {
     return { projectId: ctx.project.id, ownerUserId: ctx.project.ownerUserId };
   }
 
-  private async renderSources(ctx: { route: StageKey[]; stages: StageRow[]; project: { id: string; locale: string } }, acceptedOnly: boolean, draftKeys?: string[]) {
+  private async renderSources(ctx: { route: StageKey[]; stages: StageRow[]; dep: StatusMap; pins: Map<StageKey, Map<StageKey, string>>; project: { id: string; locale: string } }, acceptedOnly: boolean, draftKeys?: string[]) {
     const pick = async (key: StageKey) => {
       if (!ctx.route.includes(key)) return null;
       const stage = this.stageOf(ctx, key);
-      const accepted = isSatisfied(stage.status) ? stage.approvedVersionId : null;
+      const accepted = this.acceptedVersionId(ctx, key, 'build');
       const useDraft = !acceptedOnly && (!draftKeys || draftKeys.includes(key));
       const id = useDraft ? stage.currentVersionId ?? stage.approvedVersionId : accepted;
       return this.versionContent(id);
@@ -766,9 +805,11 @@ export class JourneyService {
     const definition = stageDefinitions[stageKey];
     if (!['in_progress', 'stale', 'changes_requested', 'in_review'].includes(stage.status)) throw new ConflictException('STAGE_NOT_ACCEPTABLE');
     if (stage.currentVersionId !== versionId) throw new ConflictException('STAGE_VERSION_CONFLICT');
-    if (!inputsSatisfied(ctx.route, ctx.statuses, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+    if (ctx.openNotices.some((notice) => notice.targetKey === stageKey)) throw new ConflictException('CHANGE_NOTICE_OPEN');
+    if (!inputsSatisfied(ctx.route, ctx.dep, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const version = await this.versionContent(versionId);
     if (!version) throw new NotFoundException('VERSION_NOT_FOUND');
+    const notices: Array<{ targetKey: StageKey }> = [];
     if (definition.artifactType === 'site') {
       const site = version.content as unknown as SiteArtifact;
       if (site.checks.some((check) => check.required && check.status === 'failed')) throw new UnprocessableEntityException('REQUIRED_CHECKS_FAILED');
@@ -788,18 +829,169 @@ export class JourneyService {
       if (completed.count) await this.event(tx, projectId, userId, 'assignments_completed', key, { count: completed.count });
       await this.writeStatuses(tx, { project: ctx.project, statuses: { ...ctx.statuses, [stageKey]: 'approved' } }, unlockDependents(ctx.route, { ...ctx.statuses, [stageKey]: 'approved' }));
       await this.event(tx, projectId, userId, 'stage_accepted', key, { versionNumber: version.versionNumber });
+      notices.push(...await this.createChangeNotices(tx, ctx, stageKey, stage.approvedVersionId, version, userId));
     });
+    for (const notice of notices) await this.notifyChange(ctx, notice.targetKey, `В проекте «${ctx.project.name}» изменился этап «${definition.title}», на котором построен этап «${stageDefinitions[notice.targetKey].title}». Посмотрите, что изменилось, и решите: принять или обсудить. ${this.stageLink(projectId, notice.targetKey)}`.trim(), 'target');
     return this.journey(userId, projectId);
+  }
+
+  /**
+   * A new accepted version of `key` creates a change notice for every stage built directly on it that already has work.
+   * The notice pins that stage to the version it was built on until its lead decides (section 11 of the stage model).
+   */
+  private async createChangeNotices(
+    tx: Pick<PrismaService, 'changeNotice' | 'projectStage' | 'projectEvent'>,
+    ctx: { project: { id: string }; route: StageKey[]; stages: StageRow[]; statuses: StatusMap },
+    key: StageKey, previousApprovedId: string | null, accepted: { id: string; content: unknown }, userId: string,
+  ): Promise<Array<{ targetKey: StageKey }>> {
+    const created: Array<{ targetKey: StageKey }> = [];
+    const source = this.stageOf(ctx, key);
+    for (const dependent of directDependents(ctx.route, key)) {
+      const target = this.stageOf(ctx, dependent);
+      const existing = await tx.changeNotice.findFirst({ where: { sourceStageId: source.id, targetStageId: target.id, status: { in: ['open', 'discussing'] } }, select: { id: true, previousVersionId: true } });
+      const builtOn = existing?.previousVersionId ?? previousApprovedId;
+      if (!builtOn || builtOn === accepted.id) {
+        // Back to the version the dependent stage was built on: nothing to decide any more.
+        if (existing) await tx.changeNotice.update({ where: { id: existing.id }, data: { status: 'superseded', decidedAt: new Date() } });
+        if (existing && target.status === 'stale') {
+          const others = await tx.changeNotice.count({ where: { targetStageId: target.id, status: { in: ['open', 'discussing'] }, id: { not: existing.id } } });
+          if (!others) await tx.projectStage.update({ where: { id: target.id }, data: { status: 'approved' } });
+        }
+        continue;
+      }
+      const hasWork = Boolean(target.currentVersionId) || ['approved', 'imported', 'stale'].includes(target.status);
+      if (!hasWork) continue;
+      const before = await tx.projectStage.findFirst({ where: { id: source.id }, select: { versions: { where: { id: builtOn }, select: { content: true }, take: 1 } } });
+      const changes = describeChanges(key, before?.versions[0]?.content ?? null, accepted.content);
+      if (!changes.length) continue;
+      if (existing) await tx.changeNotice.update({ where: { id: existing.id }, data: { status: 'superseded', decidedAt: new Date() } });
+      await tx.changeNotice.create({ data: { projectId: ctx.project.id, sourceStageId: source.id, targetStageId: target.id, previousVersionId: builtOn, newVersionId: accepted.id, changes, createdByUserId: userId } });
+      if (target.status === 'approved' || target.status === 'imported') await tx.projectStage.update({ where: { id: target.id }, data: { status: 'stale' } });
+      await this.event(tx, ctx.project.id, userId, 'change_notice_created', dependent, { sourceStageKey: key, changes: changes.length });
+      created.push({ targetKey: dependent });
+    }
+    return created;
+  }
+
+  /** Who acts for a stage: its active lead specialist, otherwise owners and managers. */
+  private async stageSide(ctx: { viewer: Viewer; role: string; stages: StageRow[] }, key: StageKey, userId: string): Promise<{ allowed: boolean; asOwner: boolean; leadUserId: string | null }> {
+    const stage = this.stageOf(ctx, key);
+    const lead = await this.prisma.stageAssignment.findFirst({ where: { stageId: stage.id, role: 'lead', status: 'active' }, select: { userId: true } });
+    const owner = ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role);
+    return { allowed: owner || (lead?.userId === userId), asOwner: owner, leadUserId: lead?.userId ?? null };
+  }
+
+  private async notifyChange(ctx: { project: { ownerUserId: string }; stages: StageRow[] }, key: StageKey, text: string, _side: 'target' | 'source'): Promise<void> {
+    const stage = this.stageOf(ctx, key);
+    const lead = await this.prisma.stageAssignment.findFirst({ where: { stageId: stage.id, role: 'lead', status: 'active' }, select: { userId: true } });
+    const recipients = new Set([ctx.project.ownerUserId, ...(lead?.userId ? [lead.userId] : [])]);
+    for (const recipient of recipients) await this.notifyUser(recipient, text).catch(() => undefined);
+  }
+
+  /** Change notices where the stage is the one that changed (outgoing) or the one built on it (incoming). */
+  async changeNotices(userId: string, projectId: string, key: string) {
+    const ctx = await this.load(userId, projectId, 'read', key);
+    const stage = this.stageOf(ctx, key);
+    const rows = await this.prisma.changeNotice.findMany({
+      where: { projectId, OR: [{ targetStageId: stage.id }, { sourceStageId: stage.id }], status: { not: 'superseded' } },
+      orderBy: { createdAt: 'desc' }, take: 20,
+      select: {
+        id: true, status: true, changes: true, createdAt: true, decidedAt: true, decidedByOwner: true, createdByUserId: true, decidedByUserId: true,
+        sourceStageId: true, targetStageId: true, previousVersionId: true, newVersionId: true,
+        messages: { orderBy: { createdAt: 'asc' }, select: { id: true, authorUserId: true, side: true, resolution: true, text: true, createdAt: true } },
+      },
+    });
+    const keyById = new Map(ctx.stages.map((item) => [item.id, item.stageKey as StageKey]));
+    const versionIds = rows.flatMap((row) => [row.previousVersionId, row.newVersionId]);
+    const versions = await this.prisma.stageArtifactVersion.findMany({ where: { id: { in: versionIds } }, select: { id: true, versionNumber: true } });
+    const number = (id: string) => versions.find((version) => version.id === id)?.versionNumber ?? null;
+    const people = await this.historyPeople(ctx, projectId, userId);
+    const person = (id: string | null) => (id ? people.get(id) ?? { id, name: 'Удалённый участник', kind: 'former' as const } : null);
+    const sides = new Map<StageKey, Awaited<ReturnType<JourneyService['stageSide']>>>();
+    const side = async (stageKey: StageKey) => {
+      if (!sides.has(stageKey)) sides.set(stageKey, await this.stageSide(ctx, stageKey, userId));
+      return sides.get(stageKey)!;
+    };
+    const items = [];
+    for (const row of rows) {
+      const sourceKey = keyById.get(row.sourceStageId)!; const targetKey = keyById.get(row.targetStageId)!;
+      const open = row.status === 'open' || row.status === 'discussing';
+      items.push({
+        id: row.id, status: row.status, direction: row.targetStageId === stage.id ? 'incoming' as const : 'outgoing' as const,
+        source: { key: sourceKey, title: stageDefinitions[sourceKey].title, fromVersion: number(row.previousVersionId), toVersion: number(row.newVersionId) },
+        target: { key: targetKey, title: stageDefinitions[targetKey].title },
+        changes: row.changes, createdAt: row.createdAt, createdBy: person(row.createdByUserId),
+        decidedAt: row.decidedAt, decidedBy: person(row.decidedByUserId), decidedByOwner: row.decidedByOwner,
+        messages: row.messages.map((message) => ({ ...message, author: person(message.authorUserId) })),
+        can: {
+          decide: open && (await side(targetKey)).allowed,
+          discuss: open && (await side(targetKey)).allowed,
+          reply: row.status === 'discussing' && (await side(sourceKey)).allowed,
+        },
+      });
+    }
+    return { data: { items } };
+  }
+
+  async actOnChange(userId: string, projectId: string, noticeId: string, input: { action: 'accept' | 'accept_no_change' | 'discuss' | 'reply'; text: string | null; resolution: 'kept' | 'will_revise' | 'escalate' | null }) {
+    const notice = await this.prisma.changeNotice.findFirst({ where: { id: noticeId, projectId }, select: { id: true, status: true, sourceStageId: true, targetStageId: true } });
+    if (!notice) throw new NotFoundException('CHANGE_NOTICE_NOT_FOUND');
+    const ctx = await this.load(userId, projectId, 'read');
+    const sourceKey = ctx.stages.find((item) => item.id === notice.sourceStageId)!.stageKey as StageKey;
+    const targetKey = ctx.stages.find((item) => item.id === notice.targetStageId)!.stageKey as StageKey;
+    if (!this.canRead(ctx, sourceKey) && !this.canRead(ctx, targetKey)) throw new NotFoundException('CHANGE_NOTICE_NOT_FOUND');
+    if (!editableProject(ctx.project.status)) throw new ConflictException('PROJECT_NOT_ACTIVE');
+    if (notice.status !== 'open' && notice.status !== 'discussing') throw new ConflictException('CHANGE_NOTICE_CLOSED');
+    const targetSide = await this.stageSide(ctx, targetKey, userId);
+    const sourceSide = await this.stageSide(ctx, sourceKey, userId);
+    const target = this.stageOf(ctx, targetKey);
+    const sourceTitle = stageDefinitions[sourceKey].title; const targetTitle = stageDefinitions[targetKey].title;
+
+    if (input.action === 'accept' || input.action === 'accept_no_change') {
+      if (!targetSide.allowed) throw new ForbiddenException('CHANGE_DECISION_FORBIDDEN');
+      const byOwnerOverLead = targetSide.asOwner && Boolean(targetSide.leadUserId) && targetSide.leadUserId !== userId;
+      await this.prisma.$transaction(async (tx) => {
+        await tx.changeNotice.update({ where: { id: notice.id }, data: { status: input.action === 'accept' ? 'accepted' : 'accepted_no_change', decidedByUserId: userId, decidedAt: new Date(), decidedByOwner: byOwnerOverLead } });
+        if (input.text) await tx.changeMessage.create({ data: { noticeId: notice.id, authorUserId: userId, side: byOwnerOverLead ? 'owner' : 'target', text: input.text } });
+        const others = await tx.changeNotice.count({ where: { targetStageId: target.id, status: { in: ['open', 'discussing'] } } });
+        if (target.status === 'stale' && !others) {
+          // Accepting the change means updating this stage; accepting without changes keeps its accepted result.
+          await tx.projectStage.update({ where: { id: target.id }, data: { status: input.action === 'accept' ? 'in_progress' : 'approved' } });
+        }
+        await this.event(tx, projectId, userId, input.action === 'accept' ? 'change_accepted' : 'change_accepted_no_change', targetKey, { sourceStageKey: sourceKey, byOwner: byOwnerOverLead });
+      });
+      if (byOwnerOverLead && targetSide.leadUserId) await this.notifyUser(targetSide.leadUserId, `Владелец проекта «${ctx.project.name}» решил по изменению этапа «${sourceTitle}»: ${input.action === 'accept' ? 'обновить' : 'оставить без изменений'} этап «${targetTitle}». ${this.stageLink(projectId, targetKey)}`.trim()).catch(() => undefined);
+    } else if (input.action === 'discuss') {
+      if (!targetSide.allowed) throw new ForbiddenException('CHANGE_DECISION_FORBIDDEN');
+      if (!input.text) throw new BadRequestException('TEXT_REQUIRED');
+      await this.prisma.$transaction(async (tx) => {
+        await tx.changeMessage.create({ data: { noticeId: notice.id, authorUserId: userId, side: 'target', text: input.text! } });
+        await tx.changeNotice.update({ where: { id: notice.id }, data: { status: 'discussing' } });
+        await this.event(tx, projectId, userId, 'change_discussed', targetKey, { sourceStageKey: sourceKey });
+      });
+      await this.notifyChange(ctx, sourceKey, `По изменению этапа «${sourceTitle}» в проекте «${ctx.project.name}» есть вопрос от этапа «${targetTitle}»: ${input.text} ${this.stageLink(projectId, sourceKey)}`.trim(), 'source');
+    } else {
+      if (!sourceSide.allowed) throw new ForbiddenException('CHANGE_REPLY_FORBIDDEN');
+      if (notice.status !== 'discussing') throw new ConflictException('CHANGE_NOT_DISCUSSED');
+      if (!input.text || !input.resolution) throw new BadRequestException('TEXT_REQUIRED');
+      await this.prisma.$transaction(async (tx) => {
+        await tx.changeMessage.create({ data: { noticeId: notice.id, authorUserId: userId, side: 'source', resolution: input.resolution, text: input.text! } });
+        await this.event(tx, projectId, userId, 'change_replied', sourceKey, { targetStageKey: targetKey, resolution: input.resolution });
+      });
+      const what = input.resolution === 'will_revise' ? 'выпустит исправленную версию' : input.resolution === 'kept' ? 'оставляет изменение как есть' : 'просит решить владельца';
+      await this.notifyChange(ctx, targetKey, `Ответ по изменению этапа «${sourceTitle}» в проекте «${ctx.project.name}»: ${what}. ${input.text} ${this.stageLink(projectId, targetKey)}`.trim(), 'target');
+    }
+    return this.changeNotices(userId, projectId, targetSide.allowed || this.canRead(ctx, targetKey) ? targetKey : sourceKey);
   }
 
   async reopen(userId: string, projectId: string, key: string) {
     const ctx = await this.load(userId, projectId, 'accept', key);
     const stage = this.stageOf(ctx, key);
     if (stage.status !== 'approved' && stage.status !== 'imported') throw new ConflictException('STAGE_NOT_ACCEPTED');
-    const next = reopenStage(ctx.route, ctx.statuses, key as StageKey, (dependent) => Boolean(this.stageOf(ctx, dependent).currentVersionId));
+    const next = reopenStage(ctx.statuses, key as StageKey);
     await this.prisma.$transaction(async (tx) => {
       await this.writeStatuses(tx, ctx, next);
-      await this.event(tx, projectId, userId, 'stage_reopened', key, { staleStages: Object.entries(next).filter(([, status]) => status === 'stale').map(([item]) => item) });
+      await this.event(tx, projectId, userId, 'stage_reopened', key, {});
     });
     return this.journey(userId, projectId);
   }
@@ -823,7 +1015,8 @@ export class JourneyService {
     const stageKey = key as StageKey;
     if (!['in_progress', 'stale', 'changes_requested'].includes(stage.status)) throw new ConflictException('STAGE_NOT_SUBMITTABLE');
     if (stage.currentVersionId !== versionId) throw new ConflictException('STAGE_VERSION_CONFLICT');
-    if (!inputsSatisfied(ctx.route, ctx.statuses, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+    if (ctx.openNotices.some((notice) => notice.targetKey === stageKey)) throw new ConflictException('CHANGE_NOTICE_OPEN');
+    if (!inputsSatisfied(ctx.route, ctx.dep, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const version = await this.versionContent(versionId);
     const definition = stageDefinitions[stageKey];
     if (version && definition.artifactType !== 'site') {
@@ -915,7 +1108,7 @@ export class JourneyService {
     const ctx = await this.load(userId, projectId, 'members');
     const stages = await Promise.all(ctx.route.map(async (key) => {
       const stage = this.stageOf(ctx, key);
-      const accepted = isSatisfied(stage.status) ? await this.versionContent(stage.approvedVersionId) : null;
+      const accepted = isSatisfied(ctx.dep[key]) ? await this.versionContent(stage.approvedVersionId) : null;
       return { key, title: stageDefinitions[key].title, status: stage.status, statusLabel: statusExplanations[stage.status].label, accepted };
     }));
     const get = <T>(key: StageKey) => stages.find((stage) => stage.key === key)?.accepted?.content as T | undefined;

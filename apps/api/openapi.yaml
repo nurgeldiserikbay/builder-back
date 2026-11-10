@@ -1329,6 +1329,57 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/changes:
+    get:
+      tags: [Journey]
+      operationId: getStageChanges
+      summary: Change notices of a stage
+      description: |
+        A new accepted version of a stage creates a notice for every stage built directly on it that already has work, with a plain-language
+        list of changes. While a notice is open the target stage keeps using the source version it was built on and cannot be accepted or
+        submitted (409 CHANGE_NOTICE_OPEN); an accepted target becomes stale. Reopening a stage alone changes nothing for its dependents.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: stageKey, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'items: id, status (open, discussing, accepted, accepted_no_change), direction (incoming, outgoing), source (key, title, fromVersion, toVersion), target, changes, createdBy, decidedBy, decidedByOwner, messages (side target/source/owner, resolution, text, author), can (decide, discuss, reply)' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/changes/{noticeId}:
+    post:
+      tags: [Journey]
+      operationId: actOnChange
+      summary: Decide on or discuss a change notice
+      description: |
+        Target side (active lead specialist of the target stage, or owner/manager): accept (a stale target goes back to work), accept_no_change
+        (a stale target is accepted again), discuss (text required). Source side (lead of the changed stage, or owner/manager): reply with text
+        and resolution kept, will_revise or escalate. A new accepted source version supersedes the notice and keeps the original pin;
+        returning to the pinned version closes it. Participants are notified in Telegram.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: noticeId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action]
+              properties:
+                action: { type: string, enum: [accept, accept_no_change, discuss, reply] }
+                text: { type: [string, 'null'], maxLength: 2000 }
+                resolution: { type: [string, 'null'], enum: [kept, will_revise, escalate, null] }
+      responses:
+        '200': { description: Change notices of the target stage after the action }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem', description: CHANGE_NOTICE_CLOSED, CHANGE_NOT_DISCUSSED, PROJECT_NOT_ACTIVE }
   /projects/{projectId}/journey:
     get:
       tags: [Journey]
@@ -4089,6 +4140,12 @@ components:
                           kind: { type: string, enum: [owner, specialist, invited, you] }
                           name: { type: [string, 'null'] }
                       consultants: { type: integer }
+                  changes:
+                    type: object
+                    description: Undecided change notices where this stage is built on a changed stage (incoming) or is the changed one (outgoing).
+                    properties:
+                      incoming: { type: array, items: { type: object, properties: { id: { type: string, format: uuid }, sourceKey: { type: string }, status: { type: string, enum: [open, discussing] } } } }
+                      outgoing: { type: array, items: { type: object, properties: { id: { type: string, format: uuid }, targetKey: { type: string }, status: { type: string, enum: [open, discussing] } } } }
                   needsYou:
                     type: [string, 'null']
                     description: Short reason when the viewer must act on this stage (accept, confirm a changed input, continue); null otherwise.

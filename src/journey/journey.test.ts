@@ -6,7 +6,8 @@ import {
   normalizeContent, templateContent, type Brief, type ContentArtifact,
 } from './artifacts.js';
 import { checkSite, contactLinks, contrastRatio, palettes, renderSite } from './site-renderer.js';
-import { canEdit, initialStatuses, inputsSatisfied, nextStage, reopenStage, unlockDependents } from './stage-state.js';
+import { canEdit, directDependents, effectiveStatuses, initialStatuses, inputsSatisfied, nextStage, reopenStage, unlockDependents } from './stage-state.js';
+import { describeChanges } from './change-summary.js';
 import { roleAccess } from './specialists.service.js';
 import { OpenAiStageProvider, StageAiError, buildStagePrompt } from './stage-ai.js';
 import { stageDefinitions } from './catalog.js';
@@ -43,10 +44,25 @@ describe('stage state', () => {
     const afterOffer = unlockDependents(route2, { ...afterGoal, offer: 'imported' });
     assert.equal(afterOffer.content, 'ready');
   });
-  it('reopening marks accepted dependents stale and closes untouched ones', () => {
-    const next = reopenStage(route, { goal: 'approved', content: 'approved', design: 'ready', build: 'locked' }, 'goal', () => false);
-    assert.deepEqual(next, { goal: 'in_progress', content: 'stale', design: 'locked', build: 'locked' });
+  it('reopening changes only that stage; dependents keep its accepted version', () => {
+    const next = reopenStage({ goal: 'approved', content: 'approved', design: 'ready', build: 'locked' }, 'goal');
+    assert.deepEqual(next, { goal: 'in_progress', content: 'approved', design: 'ready', build: 'locked' });
     assert.equal(inputsSatisfied(route, next, 'content'), false);
+    const seen = effectiveStatuses(next, (key) => key === 'goal');
+    assert.equal(inputsSatisfied(route, seen, 'content'), true);
+    // A stage that was never accepted does not count.
+    assert.equal(effectiveStatuses({ goal: 'in_progress' }, () => false).goal, 'in_progress');
+  });
+  it('finds direct dependents only', () => {
+    assert.deepEqual(directDependents(route, 'goal'), ['content']);
+    assert.deepEqual(directDependents(route, 'content'), ['design', 'build']);
+  });
+  it('describes changes between accepted versions in plain language', () => {
+    const before = { services: [{ name: 'Маникюр', description: null, price: '5 000 ₸' }, { name: 'Педикюр', description: null, price: null }], hours: 'Пн–Пт' };
+    const after = { services: [{ name: 'Маникюр', description: null, price: '6 000 ₸' }, { name: 'Наращивание', description: null, price: null }], hours: 'Пн–Пт' };
+    assert.deepEqual(describeChanges('offer', before, after), ['«Маникюр»: цена 5 000 ₸ → 6 000 ₸', 'Добавлена услуга «Наращивание»', 'Убрана услуга «Педикюр»']);
+    assert.deepEqual(describeChanges('goal', { businessName: 'A', tone: 'friendly' }, { businessName: 'B', tone: 'formal' }), ['Название бизнеса или проекта: «A» → «B»', 'Как говорить с клиентами?: «Дружелюбно» → «Официально»']);
+    assert.deepEqual(describeChanges('design', { palette: 'forest' }, { palette: 'forest' }), []);
   });
   it('locks a stage while the owner reviews it, but not while waiting for an invited lead', () => {
     assert.equal(canEdit('in_review'), false);
