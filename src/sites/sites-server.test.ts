@@ -16,7 +16,7 @@ const fakePrisma = {
 
 const server = createSitesServer(fakePrisma, {
   baseDomain: 'sites.example.kz', urlFor: (slug) => `https://${slug}.sites.example.kz`, trustProxy: true, ipSalt: 'salt', retentionDays: 365,
-  https: true, perIpPerHour: 5, perSitePerDay: 200, notify: async () => undefined,
+  https: true, perIpPerHour: 5, perSitePerDay: 200, notify: async () => undefined, notifyBooking: async () => undefined,
 }).server;
 let base = '';
 before(async () => { await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve)); base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; });

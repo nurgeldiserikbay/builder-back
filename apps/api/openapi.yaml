@@ -1530,6 +1530,41 @@ paths:
       responses:
         '200': { description: 'folder and files: site/index.html, Caddyfile (automatic HTTPS), compose.yaml, README.md with commands' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/bookings:
+    get:
+      tags: [Publishing]
+      operationId: listBookings
+      summary: Client bookings of the published site (owner or manager)
+      description: Online booking route. Upcoming (ending in the last 12 hours or later, by start time) or past (newest first), at most 200. Times are UTC; timezone is the schedule zone used for display.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: scope, in: query, required: false, schema: { type: string, enum: [upcoming, past], default: upcoming } }
+      responses:
+        '200': { description: 'bookings (id, serviceName, minutes, price, masterName, startsAt, endsAt, timezone, clientName, clientPhone, comment, status booked|cancelled_by_client|cancelled_by_owner|done|no_show, telegramStatus, cancelledAt, createdAt), live, siteUrl' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/bookings/{bookingId}/status:
+    post:
+      tags: [Publishing]
+      operationId: setBookingStatus
+      summary: Owner cancels a booking or marks the visit
+      description: cancelled_by_owner only for an active booking (the time becomes free); done and no_show only after the start time. The client is not notified automatically — the owner calls them.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: bookingId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [status], properties: { status: { type: string, enum: [cancelled_by_owner, done, no_show] } } }
+      responses:
+        '200': { description: Bookings list }
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/budget:
     get:
       tags: [Budget]

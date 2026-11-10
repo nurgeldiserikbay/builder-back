@@ -1,5 +1,6 @@
 // Deterministic renderer: typed brief/content/design -> one self-contained, script-free HTML page.
 import type { Brief, ContentArtifact, DesignArtifact, Offer, SiteMeta } from './artifacts.js';
+import { doable, scheduleIssues, type BookingConfig } from './schedule.js';
 
 export interface Palette { id: string; label: string; hint: string; background: string; surface: string; text: string; muted: string; accent: string; accentText: string }
 export interface FontPreset { id: string; label: string; hint: string; stack: string; headingWeight: number }
@@ -83,6 +84,8 @@ export interface RenderInput {
   brief: Brief; offer: Offer | null; content: ContentArtifact; design: DesignArtifact; locale: string; draft: boolean;
   /** Photos referenced by content sections; rendered as /img/<id>.webp. */
   images?: Record<string, ImageInfo>;
+  /** Online booking route: buttons lead to the booking pages served by the BuildPath sites server. */
+  booking?: BookingConfig | null;
 }
 
 function photo(id: string | null, images: Record<string, ImageInfo> | undefined, eager: boolean): string {
@@ -97,7 +100,7 @@ export function renderSite(input: RenderInput): string {
   const font = fonts.find((item) => item.id === design.font) ?? fonts[0];
   const radius = design.corners === 'sharp' ? '2px' : '16px';
   const align = design.heroLayout === 'left' ? 'left' : 'center';
-  const actionHref = primaryActionHref(brief);
+  const actionHref = input.booking ? BOOKING_PATH : primaryActionHref(brief);
   const links = contactLinks(brief);
 
   const sectionHtml = content.sections.map((section) => {
@@ -121,6 +124,7 @@ export function renderSite(input: RenderInput): string {
     }
     return `<section class="section ${escapeHtml(section.type)}" id="${escapeHtml(section.key)}"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${photo(section.imageId, input.images, false)}${paragraphs(section.text)}${items}${button}</div></section>`;
   }).join('\n');
+  const bookingHtml = input.booking ? bookingSection(input.booking, input.draft) : '';
 
   const css = `:root{--bg:${palette.background};--surface:${palette.surface};--text:${palette.text};--muted:${palette.muted};--accent:${palette.accent};--accent-text:${palette.accentText};--radius:${radius}}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0;background:var(--bg);color:var(--text);font-family:${font.stack};font-size:17px;line-height:1.6}
@@ -136,6 +140,7 @@ p{margin:0 0 12px;color:var(--muted)}.hero{padding:64px 0 56px;text-align:${alig
 .lead-form .hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}.lead-form button{border:0;cursor:pointer;font:inherit;font-weight:700}
 .contact-list{list-style:none;padding:0;margin:16px 0;display:grid;gap:10px}.contact-list li{display:flex;flex-direction:column}.contact-list span{font-size:14px;color:var(--muted)}.contact-list a{color:var(--accent);font-weight:700}
 .photo{display:block;width:100%;height:auto;border-radius:var(--radius);margin:18px 0 6px;background:var(--surface)}.hero .photo{margin-top:28px}
+.booking-list{list-style:none;padding:0;margin:16px 0;display:grid;gap:10px}.booking-list li{display:flex;justify-content:space-between;gap:12px;background:var(--surface);border:1px solid rgba(0,0,0,.08);border-radius:var(--radius);padding:14px 16px}.booking-list span{color:var(--muted);white-space:nowrap}.booking-note{font-size:14px}
 footer{padding:28px 0;color:var(--muted);font-size:14px;text-align:center}.draft{background:#fff3cd;color:#5c4400;text-align:center;font-size:14px;padding:8px}
 @media(min-width:720px){.items{grid-template-columns:repeat(2,1fr)}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}`;
 
@@ -145,14 +150,14 @@ footer{padding:28px 0;color:var(--muted);font-size:14px;text-align:center}.draft
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="${pageCsp(input.brief.mainAction === 'form')}">
+<meta http-equiv="Content-Security-Policy" content="${pageCsp(input.brief.mainAction === 'form' || Boolean(input.booking))}">
 <title>${escapeHtml(content.seo.title)}</title>
 <meta name="description" content="${escapeHtml(content.seo.description)}">
 <style>${css}</style>
 </head>
 <body>
 ${input.draft ? '<div class="draft">Черновик — не опубликован</div>\n' : ''}<main>
-${sectionHtml}
+${placeBooking(sectionHtml, bookingHtml)}
 </main>
 <footer>© ${escapeHtml(brief.businessName)}</footer>
 </body>
@@ -161,6 +166,27 @@ ${sectionHtml}
 }
 
 /** Same-origin form posts are allowed only when the page has a lead form; it posts to the BuildPath sites server. */
+export const BOOKING_PATH = '/book';
+
+function duration(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  return [hours ? `${hours} ч` : '', minutes % 60 ? `${minutes % 60} мин` : ''].filter(Boolean).join(' ');
+}
+
+/** Services clients can book, with duration and price, and the button to the booking pages. */
+function bookingSection(booking: BookingConfig, draft: boolean): string {
+  const bookable = booking.schedule.services.filter((service) => booking.schedule.masters.some((master) => doable(booking.schedule, master).includes(service)));
+  const rows = bookable.map((service) => `<li><strong>${escapeHtml(service.name)}</strong><span>${escapeHtml(duration(service.minutes))}${booking.prices[service.name] ? ` · ${escapeHtml(booking.prices[service.name]!)}` : ''}</span></li>`).join('');
+  const note = draft ? '<p class="booking-note">В предпросмотре запись не работает — она заработает, когда сайт будет опубликован на BuildPath.</p>' : '';
+  return `<section class="section booking" id="booking"><div class="wrap"><h2>Онлайн-запись</h2><p>Выберите услугу, мастера и свободное время — запись займёт минуту.</p><ul class="booking-list">${rows}</ul><a class="button" href="${BOOKING_PATH}">Выбрать время</a>${note}</div></section>`;
+}
+
+function placeBooking(sections: string, booking: string): string {
+  if (!booking) return sections;
+  const contacts = sections.indexOf('<section class="section contacts"');
+  return contacts >= 0 ? `${sections.slice(0, contacts)}${booking}\n${sections.slice(contacts)}` : `${sections}\n${booking}`;
+}
+
 export function pageCsp(hasForm: boolean): string {
   return `default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action ${hasForm ? "'self'" : "'none'"}`;
 }
@@ -187,9 +213,10 @@ export function siteMeta(input: RenderInput): SiteMeta {
   if (input.brief.email) ownerContacts.push({ label: 'Email', value: input.brief.email });
   if (input.brief.address) ownerContacts.push({ label: 'Адрес', value: input.brief.address });
   return {
-    businessName: input.brief.businessName, locale: ['ru', 'kk', 'en'].includes(input.locale) ? input.locale : 'ru', hasForm: input.brief.mainAction === 'form',
+    businessName: input.brief.businessName, locale: ['ru', 'kk', 'en'].includes(input.locale) ? input.locale : 'ru', hasForm: input.brief.mainAction === 'form' || Boolean(input.booking),
     theme: { background: palette.background, text: palette.text, muted: palette.muted, accent: palette.accent, accentText: palette.accentText, font: font.stack, radius: input.design.corners === 'sharp' ? '2px' : '16px' },
     ownerContacts,
+    ...(input.booking ? { booking: input.booking } : {}),
   };
 }
 
@@ -203,7 +230,17 @@ export function checkSite(input: RenderInput): SiteCheck[] {
   };
   const hero = content.sections.find((section) => section.type === 'hero');
   add('hero', true, Boolean(hero?.title), 'Первый экран', 'Есть заголовок первого экрана.', 'Нет первого экрана с заголовком. Добавьте блок «Первый экран» на этапе текстов.');
-  const href = primaryActionHref(brief);
+  const href = input.booking ? BOOKING_PATH : primaryActionHref(brief);
+  if (input.booking) {
+    const issues = scheduleIssues(input.booking.schedule);
+    add('booking', true, issues.length === 0, 'Онлайн-запись', 'Каждую услугу для записи делает хотя бы один мастер, и у всех мастеров есть рабочие часы.', `${issues.map((issue) => issue.message).join(' ')} Исправьте на этапе «Расписание и запись».`);
+    const missing = (input.offer?.services ?? []).filter((service) => !input.booking!.schedule.services.some((item) => item.name === service.name));
+    add('booking-services', false, missing.length === 0, 'Все услуги доступны для записи', 'Все услуги из списка можно забронировать.',
+      `На ${missing.map((service) => `«${service.name}»`).join(', ')} записаться нельзя: их нет в расписании. Добавьте длительность на этапе «Расписание и запись», если на них нужна запись.`, true);
+    const ownerContact = Boolean(brief.phone || brief.email || brief.messenger || brief.address);
+    add('booking-privacy', true, ownerContact, 'Запись и согласие', 'Запись просит согласие на обработку данных и ведёт на страницу о данных с вашими контактами.',
+      'Для онлайн-записи нужен хотя бы один ваш контакт (телефон, email или мессенджер) — он будет на странице о данных и в подтверждении записи.');
+  }
   add('main-action', true, Boolean(href), 'Главная кнопка работает', 'Кнопка ведёт по вашему контакту.',
     'Для выбранного главного действия не указан корректный контакт. Проверьте телефон, мессенджер или email на этапе «Цель сайта».');
   add('button-present', true, content.sections.some((section) => section.buttonLabel), 'Кнопка видна посетителю', 'На странице есть кнопка главного действия.', 'Ни в одном блоке нет кнопки. Добавьте текст кнопки в первый экран.');

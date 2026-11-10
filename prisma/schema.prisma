@@ -309,6 +309,7 @@ model Project {
   telegramChats    TelegramChatState[]
   images           ProjectImage[]
   leads            SiteLead[]
+  bookings         Booking[]
   changeNotices    ChangeNotice[]
   choices          ProjectChoice[]
   repository       CodeRepository?
@@ -922,6 +923,7 @@ model SitePublication {
   updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
   project           Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   leads             SiteLead[]
+  bookings          Booking[]
 
   @@map("site_publications")
 }
@@ -1249,4 +1251,37 @@ model StagePayment {
 
   @@index([projectId, status], map: "stage_payments_project_status_idx")
   @@map("stage_payments")
+}
+
+/// A client's booking made on a published site of the online booking route. Overlaps per master are prevented in a locked transaction.
+model Booking {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId      String          @map("project_id") @db.Uuid
+  publicationId  String          @map("publication_id") @db.Uuid
+  serviceName    String          @map("service_name") @db.VarChar(80)
+  minutes        Int
+  price          String?         @db.VarChar(40)
+  masterKey      String          @map("master_key") @db.VarChar(12)
+  masterName     String          @map("master_name") @db.VarChar(60)
+  startsAt       DateTime        @map("starts_at") @db.Timestamptz(3)
+  endsAt         DateTime        @map("ends_at") @db.Timestamptz(3)
+  timezone       String          @db.VarChar(40)
+  clientName     String          @map("client_name") @db.VarChar(80)
+  clientPhone    String          @map("client_phone") @db.VarChar(30)
+  comment        String?         @db.VarChar(300)
+  /// booked | cancelled_by_client | cancelled_by_owner | done | no_show
+  status         String          @default("booked") @db.VarChar(20)
+  /// SHA-256 of the client's cancel link token; the token itself is only in the link.
+  tokenHash      String          @unique(map: "bookings_token_hash_key") @map("token_hash") @db.VarChar(64)
+  consentAt      DateTime        @map("consent_at") @db.Timestamptz(3)
+  ipHash         String          @map("ip_hash") @db.VarChar(64)
+  telegramStatus String          @default("pending") @map("telegram_status") @db.VarChar(20)
+  cancelledAt    DateTime?       @map("cancelled_at") @db.Timestamptz(3)
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  publication    SitePublication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@index([publicationId, masterKey, startsAt], map: "bookings_publication_master_start_idx")
+  @@index([projectId, startsAt], map: "bookings_project_start_idx")
+  @@map("bookings")
 }

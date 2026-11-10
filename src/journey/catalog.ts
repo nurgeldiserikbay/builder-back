@@ -1,12 +1,12 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.1.0';
+export const ROUTE_CATALOG_VERSION = '1.2.0';
 
-export type StageKey = 'goal' | 'offer' | 'content' | 'design' | 'build';
-export type ArtifactType = 'brief' | 'offer' | 'content' | 'design' | 'site';
+export type StageKey = 'goal' | 'offer' | 'schedule' | 'content' | 'design' | 'build';
+export type ArtifactType = 'brief' | 'offer' | 'schedule' | 'content' | 'design' | 'site';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
-export type ProjectTypeKey = 'landing' | 'company_site';
+export type ProjectTypeKey = 'landing' | 'company_site' | 'booking';
 
 export interface FieldOption { value: string; label: string; hint: string }
 
@@ -143,6 +143,24 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
       ],
     },
   },
+  schedule: {
+    key: 'schedule',
+    version: '1.0.0',
+    title: 'Расписание и запись',
+    purpose: 'Настроим онлайн-запись: сколько длится каждая услуга, кто из мастеров её делает и в какие дни и часы к вам можно записаться. Клиент увидит только свободное время.',
+    outcome: 'Длительность услуг, мастера с рабочими часами и правила записи: шаг времени, за сколько можно записаться и до какого срока отменить.',
+    artifactType: 'schedule',
+    inputs: ['offer'],
+    ai: {
+      level: 'none',
+      whatItDoes: 'Здесь ИИ не нужен: расписание — это ваши факты. Мы заполнили услуги из прошлого этапа и типичный рабочий день — поправьте под себя.',
+      instructionExamples: [],
+    },
+    acceptance: ['У каждой услуги указана настоящая длительность', 'У каждого мастера верные рабочие дни и часы', 'Правила записи и отмены вас устраивают'],
+    acceptExplanation: 'После сборки и публикации клиенты смогут записываться на свободное время. Изменения расписания вступят в силу, когда вы примете новую версию и пересоберёте сайт.',
+    importHint: null,
+    playbook: { version: '1.0.0', instructions: [] },
+  },
   content: {
     key: 'content',
     version: '1.0.0',
@@ -199,7 +217,8 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     purpose: 'Соберём сайт из принятых текстов и стиля и проверим его. Если что-то не так, вернитесь к нужному этапу — сборку можно повторить.',
     outcome: 'Готовая страница сайта, отчёт проверок и файлы для скачивания.',
     artifactType: 'site',
-    inputs: ['content', 'design'],
+    // schedule exists only on the online booking route; inputs are limited to the stages of the route.
+    inputs: ['content', 'design', 'schedule'],
     ai: {
       level: 'none',
       whatItDoes: 'Сборку делает платформа по правилам, без ИИ: так результат всегда одинаковый и проверяемый.',
@@ -230,6 +249,15 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     examples: ['Автосервис', 'Стоматология', 'Юридическая консультация', 'Студия йоги'],
     stages: ['goal', 'offer', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница компании в виде файла, список услуг и все тексты проекта.',
+  },
+  booking: {
+    key: 'booking',
+    title: 'Онлайн-запись к мастеру',
+    description: 'Сайт с записью: клиент выбирает услугу, мастера и свободное время, а вы получаете запись в Telegram и видите все записи в проекте.',
+    goodFor: 'Салонам красоты, барбершопам, массажу, тренерам, репетиторам — всем, кто работает по времени.',
+    examples: ['Барбершоп', 'Маникюр', 'Массаж', 'Автомойка'],
+    stages: ['goal', 'offer', 'schedule', 'content', 'design', 'build'],
+    resultExplanation: 'Опубликованный сайт с онлайн-записью, список услуг, расписание и все тексты проекта. Запись работает, когда сайт опубликован на BuildPath.',
   },
 };
 

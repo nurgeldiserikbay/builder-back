@@ -147,4 +147,33 @@ export class PublishingService {
     if (deleted.count !== 1) throw new NotFoundException('LEAD_NOT_FOUND');
     await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'lead_deleted', details: { leadId } } });
   }
+
+  /** Client bookings of the published site: upcoming (from today, by time) or past (newest first). */
+  async bookings(userId: string, projectId: string, scope: 'upcoming' | 'past') {
+    const { project } = await this.load(userId, projectId, true);
+    const now = new Date();
+    const dayAgo = new Date(now.getTime() - 12 * 3_600_000);
+    const rows = await this.prisma.booking.findMany({
+      where: { projectId, ...(scope === 'upcoming' ? { endsAt: { gte: dayAgo } } : { endsAt: { lt: dayAgo } }) },
+      orderBy: { startsAt: scope === 'upcoming' ? 'asc' : 'desc' }, take: 200,
+      select: { id: true, serviceName: true, minutes: true, price: true, masterName: true, startsAt: true, endsAt: true, timezone: true, clientName: true, clientPhone: true, comment: true, status: true, telegramStatus: true, cancelledAt: true, createdAt: true },
+    });
+    const live = project.publication?.status === 'live';
+    return { data: { bookings: rows, live, siteUrl: live && project.publication ? sitesConfig().urlFor(project.publication.slug) : null } };
+  }
+
+  /** Owner marks a booking: cancel it (the time becomes free again), or after the visit — came or did not come. */
+  async setBookingStatus(userId: string, projectId: string, bookingId: string, status: 'cancelled_by_owner' | 'done' | 'no_show') {
+    await this.load(userId, projectId, true);
+    if (!isUuid(bookingId)) throw new NotFoundException('BOOKING_NOT_FOUND');
+    const booking = await this.prisma.booking.findFirst({ where: { id: bookingId, projectId }, select: { id: true, status: true, startsAt: true } });
+    if (!booking) throw new NotFoundException('BOOKING_NOT_FOUND');
+    const allowed = status === 'cancelled_by_owner' ? booking.status === 'booked' : ['booked', 'done', 'no_show'].includes(booking.status) && booking.startsAt <= new Date();
+    if (!allowed) throw new ConflictException(status === 'cancelled_by_owner' ? 'BOOKING_NOT_ACTIVE' : 'BOOKING_NOT_STARTED');
+    await this.prisma.$transaction([
+      this.prisma.booking.update({ where: { id: booking.id }, data: { status, ...(status === 'cancelled_by_owner' ? { cancelledAt: new Date() } : {}) } }),
+      this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'booking_status_changed', details: { bookingId, status } } }),
+    ]);
+    return this.bookings(userId, projectId, booking.startsAt.getTime() > Date.now() - 12 * 3_600_000 ? 'upcoming' : 'past');
+  }
 }
