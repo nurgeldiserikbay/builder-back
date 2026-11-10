@@ -82,3 +82,10 @@ export function freedomReply(config: FreedomConfig, resultUrl: string, status: '
   const sig = freedomSignature(scriptOf(resultUrl), fields, config.secret);
   return `<?xml version="1.0" encoding="utf-8"?>\n<response><pg_status>${status}</pg_status><pg_description>${escapeXml(description)}</pg_description><pg_salt>${fields.pg_salt}</pg_salt><pg_sig>${sig}</pg_sig></response>`;
 }
+
+/** Which provider takes payments here: Freedom Pay when configured; the mock only outside production when asked for. */
+export function activeProvider(env = process.env): ProviderKey | null {
+  if (env.PAYMENTS_PROVIDER === 'mock') return env.NODE_ENV === 'production' ? null : 'mock';
+  if (env.PAYMENTS_PROVIDER === 'freedompay' || (!env.PAYMENTS_PROVIDER && freedomConfig(env))) return freedomConfig(env) ? 'freedompay' : null;
+  return null;
+}

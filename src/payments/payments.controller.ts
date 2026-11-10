@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Header, HttpCode, Param, Post, Put, Req, Res, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { StaffAuthGuard, type StaffRequest } from '../admin/staff-auth.guard.js';
@@ -44,16 +44,16 @@ export class PaymentsCallbackController {
     response.status(xml ? 200 : 404).send(xml);
   }
 
-  @Get('mock/:topUpId')
-  async mockPage(@Param('topUpId') topUpId: string, @Res() response: RawResponse) {
+  @Get('mock/:orderId')
+  async mockPage(@Param('orderId') topUpId: string, @Res() response: RawResponse) {
     const html = await this.payments.mockPage(topUpId);
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
     response.setHeader('Cache-Control', 'no-store');
     response.status(200).send(html);
   }
 
-  @Post('mock/:topUpId')
-  async mockComplete(@Param('topUpId') topUpId: string, @Body() raw: unknown, @Res() response: RawResponse) {
+  @Post('mock/:orderId')
+  async mockComplete(@Param('orderId') topUpId: string, @Body() raw: unknown, @Res() response: RawResponse) {
     response.redirect(303, await this.payments.mockComplete(topUpId, fields(raw).result ?? ''));
   }
 }
@@ -74,9 +74,72 @@ export class AdminBillingModeController {
   @StaffRoles('super_admin')
   update(@Body() raw: unknown, @Req() request: StaffRequest) {
     const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
-    if (!input || Object.keys(input).some((key) => key !== 'mode' && key !== 'minTopUp')) throw new BadRequestException('UNKNOWN_FIELD');
+    if (!input || Object.keys(input).some((key) => !['mode', 'minTopUp', 'specialistFeePercent'].includes(key))) throw new BadRequestException('UNKNOWN_FIELD');
     if (input.mode !== 'off' && input.mode !== 'prepaid') throw new BadRequestException('INVALID_MODE');
     if (typeof input.minTopUp !== 'number') throw new BadRequestException('INVALID_MIN_TOP_UP');
-    return this.payments.updateBillingMode(request.staff.id, input.mode, input.minTopUp);
+    const fee = input.specialistFeePercent === undefined ? 0 : input.specialistFeePercent;
+    if (typeof fee !== 'number') throw new BadRequestException('INVALID_SPECIALIST_FEE');
+    return this.payments.updateBillingMode(request.staff.id, input.mode, input.minTopUp, fee);
+  }
+}
+
+@Controller()
+@UseGuards(AuthGuard)
+export class SpecialistPaymentsController {
+  constructor(private readonly payments: PaymentsService) {}
+
+  @Get('me/payout-details')
+  @Header('Cache-Control', 'no-store')
+  details(@Req() request: AuthenticatedRequest) {
+    return this.payments.payoutDetails(request.user.id);
+  }
+
+  @Put('me/payout-details')
+  save(@Req() request: AuthenticatedRequest, @Body() raw: unknown) {
+    const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+    if (!input || Object.keys(input).some((key) => key !== 'holderName' && key !== 'iban') || typeof input.holderName !== 'string' || typeof input.iban !== 'string' || input.iban.length > 60) throw new BadRequestException('INVALID_REQUEST_BODY');
+    return this.payments.savePayoutDetails(request.user.id, { holderName: input.holderName, iban: input.iban });
+  }
+
+  @Delete('me/payout-details')
+  @HttpCode(200)
+  remove(@Req() request: AuthenticatedRequest) {
+    return this.payments.deletePayoutDetails(request.user.id);
+  }
+
+  @Post('projects/:projectId/payments/:paymentId/checkout')
+  @HttpCode(200)
+  checkout(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('paymentId') paymentId: string) {
+    return this.payments.stageCheckout(request.user.id, projectId, paymentId);
+  }
+}
+
+@Controller('admin/payouts')
+@UseGuards(StaffAuthGuard, StaffRolesGuard)
+export class AdminPayoutsController {
+  constructor(private readonly payments: PaymentsService) {}
+
+  @Get()
+  @Header('Cache-Control', 'no-store')
+  @StaffRoles('super_admin', 'operations_auditor')
+  list() {
+    return this.payments.payoutQueue();
+  }
+
+  @Post(':paymentId/account')
+  @HttpCode(200)
+  @Header('Cache-Control', 'no-store')
+  @StaffRoles('super_admin')
+  account(@Param('paymentId') paymentId: string, @Req() request: StaffRequest) {
+    return this.payments.revealPayoutAccount(request.staff.id, paymentId);
+  }
+
+  @Post(':paymentId/paid-out')
+  @HttpCode(200)
+  @StaffRoles('super_admin')
+  paidOut(@Param('paymentId') paymentId: string, @Body() raw: unknown, @Req() request: StaffRequest) {
+    const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+    if (!input || Object.keys(input).some((key) => key !== 'reference') || typeof input.reference !== 'string') throw new BadRequestException('PAYOUT_REFERENCE_INVALID');
+    return this.payments.markPaidOut(request.staff.id, paymentId, input.reference);
   }
 }

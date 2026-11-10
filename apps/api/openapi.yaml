@@ -1638,6 +1638,91 @@ paths:
         '200': { description: Bookings list }
         '400': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /me/payout-details:
+    get:
+      tags: [Billing]
+      operationId: getPayoutDetails
+      summary: Where the specialist receives payouts (holder name and last characters only)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'details (holderName, iban masked, updatedAt) or null, canSave' }
+    put:
+      tags: [Billing]
+      operationId: savePayoutDetails
+      summary: Save holder name and Kazakhstan IBAN (encrypted)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [holderName, iban], properties: { holderName: { type: string, minLength: 3, maxLength: 120 }, iban: { type: string, maxLength: 60 } } }
+      responses:
+        '200': { description: Payout details }
+        '400': { description: 'IBAN_INVALID, HOLDER_NAME_INVALID' }
+        '503': { description: PAYOUTS_NOT_CONFIGURED }
+    delete:
+      tags: [Billing]
+      operationId: deletePayoutDetails
+      summary: Remove payout details
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: Payout details (null) }
+  /projects/{projectId}/payments/{paymentId}/checkout:
+    post:
+      tags: [Billing]
+      operationId: payStagePayment
+      summary: Owner pays what a specialist is owed through BuildPath
+      description: Fixes the platform fee and the specialist part, returns the provider payment page. The signed provider callback moves the payment to held; staff then transfer the money and record the reference.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: paymentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'redirectUrl, fee, payout (tenge)' }
+        '409': { description: PAYMENT_NOT_DUE }
+        '503': { description: PAYMENTS_NOT_CONFIGURED }
+  /admin/payouts:
+    get:
+      tags: [Admin]
+      operationId: payoutQueue
+      summary: Payments held for specialists and recent payouts
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      responses:
+        '200': { description: 'id, status held|paid_out, amount, fee, payout, project, stage, specialist, account (holderName, ibanHint)' }
+  /admin/payouts/{paymentId}/account:
+    post:
+      tags: [Admin]
+      operationId: revealPayoutAccount
+      summary: Full IBAN for a held payment (super_admin, audited)
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: paymentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'holderName, iban' }
+        '409': { description: PAYOUT_DETAILS_MISSING }
+  /admin/payouts/{paymentId}/paid-out:
+    post:
+      tags: [Admin]
+      operationId: markPaidOut
+      summary: Record the bank transfer to the specialist (super_admin, audited)
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: paymentId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [reference], properties: { reference: { type: string, minLength: 3, maxLength: 100 } } }
+      responses:
+        '200': { description: Payout queue }
+        '409': { description: PAYMENT_NOT_HELD }
   /projects/{projectId}/wallet:
     get:
       tags: [Billing]
@@ -1702,7 +1787,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, required: [mode, minTopUp], properties: { mode: { type: string, enum: [off, prepaid] }, minTopUp: { type: integer, minimum: 100, maximum: 100000 } } }
+            schema: { type: object, additionalProperties: false, required: [mode, minTopUp], properties: { mode: { type: string, enum: [off, prepaid] }, minTopUp: { type: integer, minimum: 100, maximum: 100000 }, specialistFeePercent: { type: number, minimum: 0, maximum: 30, description: Platform fee on specialist payments through BuildPath } } }
       responses:
         '200': { description: Billing mode }
         '409': { description: 'AI_PRICING_NOT_SET, PAYMENTS_NOT_CONFIGURED' }

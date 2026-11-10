@@ -3,12 +3,12 @@ import type { PrismaClient } from '../generated/prisma/client.js';
 
 type Db = Pick<PrismaClient, 'aiPricing' | 'projectTopUp' | 'generationRun'>;
 
-export interface BillingSettings { mode: 'off' | 'prepaid'; prepaidSince: Date | null; minTopUpTiyn: number; priced: boolean; inputPerMillionTiyn: number; outputPerMillionTiyn: number }
+export interface BillingSettings { mode: 'off' | 'prepaid'; prepaidSince: Date | null; minTopUpTiyn: number; specialistFeeBp: number; priced: boolean; inputPerMillionTiyn: number; outputPerMillionTiyn: number }
 
 export async function billingSettings(db: Db): Promise<BillingSettings> {
   const row = await db.aiPricing.findUnique({ where: { id: 1 } });
   return {
-    mode: row?.billingMode === 'prepaid' ? 'prepaid' : 'off', prepaidSince: row?.prepaidSince ?? null, minTopUpTiyn: row?.minTopUpTiyn ?? 100_000,
+    mode: row?.billingMode === 'prepaid' ? 'prepaid' : 'off', prepaidSince: row?.prepaidSince ?? null, minTopUpTiyn: row?.minTopUpTiyn ?? 100_000, specialistFeeBp: row?.specialistFeeBp ?? 0,
     priced: Boolean(row), inputPerMillionTiyn: row?.inputPerMillionTiyn ?? 0, outputPerMillionTiyn: row?.outputPerMillionTiyn ?? 0,
   };
 }

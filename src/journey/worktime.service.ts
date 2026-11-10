@@ -2,6 +2,8 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { PrismaService } from '../database/prisma.service.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
 import { stageDefinitions, type StageKey } from './catalog.js';
+import { activeProvider } from '../payments/providers.js';
+import { billingSettings } from '../payments/wallet.js';
 import { IDLE_MS, WARN_SHARE, effectiveStatus, minutesOf, plannedAmount, summarize, withoutResult, type Terms } from './worktime.js';
 
 const managers = new Set(['owner', 'manager']);
@@ -86,14 +88,16 @@ export class WorktimeService {
         id: true, role: true, status: true, email: true, userId: true, weeklyHourLimit: true, revisionsIncluded: true, ...termsSelect,
         user: { select: { name: true } },
         timeEntries: { orderBy: { startedAt: 'desc' }, take: 200 },
-        payments: { orderBy: { createdAt: 'desc' }, select: { id: true, basis: true, minutes: true, amountTiyn: true, status: true, paidAt: true, stageVersion: true, createdAt: true } },
+        payments: { orderBy: { createdAt: 'desc' }, select: { id: true, basis: true, minutes: true, amountTiyn: true, feeTiyn: true, payoutTiyn: true, status: true, paidAt: true, paidOutAt: true, stageVersion: true, createdAt: true } },
       },
     });
     if (!viewer.manager && rows.length === 0 && !viewer.member) throw new NotFoundException('STAGE_NOT_FOUND');
     const now = new Date();
+    const settings = await billingSettings(this.prisma);
     return {
       data: {
         canDecide: viewer.manager,
+        payOnline: activeProvider() !== null, specialistFeePercent: settings.specialistFeeBp / 100,
         assignments: rows.map((row) => {
           const terms: Terms = row;
           const summary = summarize(row.timeEntries, terms, now);
@@ -108,7 +112,7 @@ export class WorktimeService {
               id: entry.id, startedAt: entry.startedAt, endedAt: entry.endedAt, minutes: minutesOf(entry), source: entry.source, actions: entry.actions,
               withoutResult: withoutResult(entry), note: entry.note, status: effectiveStatus(entry, now), ownerComment: entry.ownerComment, specialistReply: entry.specialistReply,
             })),
-            payments: row.payments.map((payment) => ({ ...payment, amount: tenge(payment.amountTiyn) })),
+            payments: row.payments.map((payment) => ({ ...payment, amount: tenge(payment.amountTiyn), fee: payment.feeTiyn === null ? null : tenge(payment.feeTiyn), payout: payment.payoutTiyn === null ? null : tenge(payment.payoutTiyn) })),
           };
         }),
       },
@@ -169,7 +173,7 @@ export class WorktimeService {
     if (!(await this.viewer(userId, projectId)).manager) throw new ForbiddenException('PAYMENT_FORBIDDEN');
     const payment = await this.prisma.stagePayment.findFirst({ where: { id: paymentId, projectId }, select: { id: true, status: true, amountTiyn: true, assignment: { select: { userId: true, stage: { select: { stageKey: true } } } } } });
     if (!payment) throw new NotFoundException('PAYMENT_NOT_FOUND');
-    if (payment.status !== 'due') throw new ConflictException('PAYMENT_NOT_DUE');
+    if (payment.status !== 'due' && payment.status !== 'checkout') throw new ConflictException('PAYMENT_NOT_DUE');
     await this.prisma.$transaction([
       this.prisma.stagePayment.update({ where: { id: payment.id }, data: { status: 'paid_direct', paidAt: new Date(), markedByUserId: userId } }),
       this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'specialist_paid_direct', stageKey: payment.assignment.stage.stageKey, details: { paymentId, amount: tenge(payment.amountTiyn) } } }),
@@ -184,7 +188,7 @@ export class WorktimeService {
     let planned = 0, due = 0, paid = 0;
     for (const row of rows) {
       planned += plannedAmount(row);
-      for (const payment of row.payments) { if (payment.status === 'due') due += payment.amountTiyn; if (payment.status === 'paid_direct' || payment.status === 'paid') paid += payment.amountTiyn; }
+      for (const payment of row.payments) { if (payment.status === 'due' || payment.status === 'checkout') due += payment.amountTiyn; if (['paid_direct', 'paid', 'held', 'paid_out'].includes(payment.status)) paid += payment.amountTiyn; }
     }
     return { specialists: rows.length, planned: tenge(planned), due: tenge(due), paid: tenge(paid) };
   }
