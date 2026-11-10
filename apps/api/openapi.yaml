@@ -1380,6 +1380,124 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem', description: CHANGE_NOTICE_CLOSED, CHANGE_NOT_DISCUSSED, PROJECT_NOT_ACTIVE }
+  /projects/{projectId}/choices/{cardKey}:
+    get:
+      tags: [Choices]
+      operationId: getChoiceCard
+      summary: Choice card with options, recommendation and the project's decision
+      description: Options explain pros, limits, cost, upkeep and how easy it is to leave, with step-by-step instructions. The recommendation is deterministic and has a reason. Any project member can read; owners and managers decide.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting] } }
+      responses:
+        '200': { description: 'card, recommendation (optionKey, reason), choice (optionKey, reason, stepsDone, chosenAt, cardVersion) or null, repository (no token, only tokenHint) or null, canDecide, connectAvailable' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Choices]
+      operationId: makeChoice
+      summary: Choose an option (owners and managers)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [optionKey], properties: { optionKey: { type: string }, reason: { type: [string, 'null'], maxLength: 500 } } }
+      responses:
+        '200': { description: Card after the choice }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/choices/{cardKey}/steps:
+    post:
+      tags: [Choices]
+      operationId: markChoiceStep
+      summary: Mark a manual step done or not done
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: cardKey, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [stepKey, done], properties: { stepKey: { type: string }, done: { type: boolean } } }
+      responses:
+        '200': { description: Card }
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/repository:
+    post:
+      tags: [Choices]
+      operationId: connectRepository
+      summary: Connect a GitHub or GitLab repository with an access token
+      description: |
+        The chosen code_hosting option must match the provider. The address is parsed from what the user copied (GitHub only on github.com;
+        GitLab on gitlab.com or an own server, which must resolve to public addresses). The token is checked against the provider; the
+        connection is stored only when writing is allowed (422 REPO_WRITE_NOT_ALLOWED otherwise). The token is encrypted with
+        CODE_HOSTING_TOKEN_ENCRYPTION_KEY (503 REPO_CONNECT_NOT_CONFIGURED without it) and never returned.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [provider, repoUrl, token], properties: { provider: { type: string, enum: [github, gitlab] }, repoUrl: { type: string, maxLength: 500 }, token: { type: string, maxLength: 400, writeOnly: true } } }
+      responses:
+        '200': { description: Card with the connected repository }
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem', description: 'REPO_TOKEN_INVALID, REPO_ACCESS_DENIED, REPO_NOT_FOUND, REPO_WRITE_NOT_ALLOWED, REPO_PROVIDER_UNAVAILABLE' }
+        '503': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Choices]
+      operationId: disconnectRepository
+      summary: Disconnect the repository and delete the stored token
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Card }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/repository/push:
+    get:
+      tags: [Choices]
+      operationId: previewRepositoryPush
+      summary: Files and branch that a push would send
+      description: Only accepted results — the same as the downloadable package — as index.html, project.md, project.json and README.md.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'repository, branch, files (path, bytes), siteIncluded, complete' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Choices]
+      operationId: pushRepository
+      summary: Send accepted results to the repository as one commit
+      description: Requires confirm=true every time (owners and managers). Recorded as repository_pushed with the commit address.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [confirm], properties: { confirm: { type: boolean, enum: [true] } } }
+      responses:
+        '200': { description: Card with lastPushAt and lastCommitUrl }
+        '400': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/journey:
     get:
       tags: [Journey]

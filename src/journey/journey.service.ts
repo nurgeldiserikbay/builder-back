@@ -1130,6 +1130,12 @@ export class JourneyService {
     return this.journey(userId, projectId);
   }
 
+  /** Project membership for other modules: role, whether the viewer may decide for the project, name and status. */
+  async projectAccess(userId: string, projectId: string) {
+    const ctx = await this.load(userId, projectId, 'members');
+    return { role: ctx.role, canDecide: acceptRoles.has(ctx.role), name: ctx.project.name, status: ctx.project.status, hasSpecialists: (await this.prisma.stageAssignment.count({ where: { projectId, status: { in: ['invited', 'active', 'completed'] } } })) > 0 };
+  }
+
   async result(userId: string, projectId: string) {
     const ctx = await this.load(userId, projectId, 'members');
     const stages = await Promise.all(ctx.route.map(async (key) => {
