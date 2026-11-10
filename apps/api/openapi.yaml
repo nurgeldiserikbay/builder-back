@@ -1262,6 +1262,73 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/JourneyCatalogResponse' }
         '401': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/ai-history:
+    get:
+      tags: [Journey]
+      operationId: getAiHistory
+      summary: History of AI requests in the project
+      description: |
+        Every AI request and template draft with who asked, stage and block, source (app or Telegram), model, provider-reported tokens,
+        resulting version and what happened to it (accepted, current draft, replaced, failed). Owners and managers see the whole project;
+        a specialist sees only the stages they are assigned to and other people as roles. Summaries by participant and by stage cover the
+        same filter without paging and text search.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: stageKey, in: query, schema: { type: string } }
+        - { name: authorId, in: query, schema: { type: string, format: uuid } }
+        - { name: q, in: query, description: Text search in the request, schema: { type: string, maxLength: 200 } }
+        - { name: before, in: query, description: Cursor from nextBefore, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [items, nextBefore, summary, filters]
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string, format: uuid }
+                            createdAt: { type: string, format: date-time }
+                            stage: { type: object, properties: { key: { type: string }, title: { type: string } } }
+                            author: { $ref: '#/components/schemas/HistoryPerson' }
+                            text: { type: [string, 'null'], description: The request text; null for a draft without instructions }
+                            savedAs: { type: [string, 'null'], enum: [one_off, stage_rule, project_rule, null] }
+                            targetKey: { type: [string, 'null'] }
+                            rulesApplied: { type: integer }
+                            kind: { type: string, enum: [ai, template] }
+                            model: { type: [string, 'null'] }
+                            source: { type: string, enum: [app, telegram] }
+                            tokens: { type: [object, 'null'], properties: { input: { type: [integer, 'null'] }, output: { type: [integer, 'null'] } } }
+                            durationMs: { type: integer }
+                            result: { type: [object, 'null'], properties: { versionNumber: { type: integer } } }
+                            outcome: { type: string, enum: [accepted, current, replaced, failed] }
+                            errorCode: { type: [string, 'null'] }
+                      nextBefore: { type: [string, 'null'], format: date-time }
+                      summary:
+                        type: object
+                        properties:
+                          byAuthor: { type: array, items: { type: object, properties: { author: { $ref: '#/components/schemas/HistoryPerson' }, requests: { type: integer }, failed: { type: integer }, tokens: { type: integer } } } }
+                          byStage: { type: array, items: { type: object, properties: { stage: { type: object }, requests: { type: integer }, failed: { type: integer }, tokens: { type: integer } } } }
+                          tokensReported: { type: boolean }
+                      filters:
+                        type: object
+                        properties:
+                          stages: { type: array, items: { type: object, properties: { key: { type: string }, title: { type: string } } } }
+                          authors: { type: array, items: { $ref: '#/components/schemas/HistoryPerson' } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/journey:
     get:
       tags: [Journey]
@@ -2674,6 +2741,13 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
   schemas:
+    HistoryPerson:
+      type: object
+      required: [id, name, kind]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, description: Name or e-mail; for a specialist viewer other people are shown as roles }
+        kind: { type: string, enum: [you, owner, member, specialist, former] }
     ProjectImage:
       type: object
       required: [id, width, height, sizeBytes, alt, createdAt, inUse]

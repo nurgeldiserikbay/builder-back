@@ -866,12 +866,18 @@ model GenerationRun {
   status            GenerationRunStatus
   safeErrorCode     String?             @map("safe_error_code") @db.VarChar(80)
   durationMs        Int                 @map("duration_ms")
+  /// Where the request was made: app or telegram.
+  source            String              @default("app") @db.VarChar(20)
+  /// Provider-reported usage; null for templates and providers that do not report it.
+  inputTokens       Int?                @map("input_tokens")
+  outputTokens      Int?                @map("output_tokens")
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   project           Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
   stage             ProjectStage        @relation(fields: [stageId], references: [id], onDelete: Cascade)
 
   @@index([projectId, provider, createdAt(sort: Desc)], map: "generation_runs_project_provider_created_idx")
   @@index([stageId, createdAt(sort: Desc)], map: "generation_runs_stage_created_idx")
+  @@index([projectId, requestedByUserId, createdAt(sort: Desc)], map: "generation_runs_project_user_created_idx")
   @@map("generation_runs")
 }
 

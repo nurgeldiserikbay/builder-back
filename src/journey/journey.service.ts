@@ -418,7 +418,8 @@ export class JourneyService {
     return { data: { id: ruleId, status } };
   }
 
-  async generate(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null }) {
+  async generate(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram' }) {
+    const source = input.source ?? 'app';
     const ctx = await this.load(userId, projectId, 'write', key);
     const assignment = this.assignmentFor(ctx, key);
     if (input.saveAs === 'project_rule' && assignment) throw new ForbiddenException('PROJECT_RULE_FORBIDDEN');
@@ -446,7 +447,7 @@ export class JourneyService {
       const version = await this.prisma.$transaction(async (tx) => {
         const run = await tx.generationRun.create({ data: {
           projectId, stageId: stage.id, requestedByUserId: userId, provider: 'template', model: null, playbookVersion: definition.playbook.version,
-          inputVersionIds: Object.values(inputs).map((item) => item.versionId), baseVersionId: base?.id ?? null, status: 'succeeded', durationMs: Date.now() - started,
+          inputVersionIds: Object.values(inputs).map((item) => item.versionId), baseVersionId: base?.id ?? null, status: 'succeeded', durationMs: Date.now() - started, source,
         }, select: { id: true } });
         const created = await this.createVersion(tx, { projectId, stage, artifactType: definition.artifactType, content: merged, origin: 'template', note: 'Черновик по шаблону (ИИ не подключён)', userId, generationRunId: run.id });
         await tx.generationRun.update({ where: { id: run.id }, data: { resultVersionId: created.id } });
@@ -473,16 +474,21 @@ export class JourneyService {
       inputs: Object.fromEntries(Object.entries(inputs).map(([inputKey, value]) => [inputKey, value.content])),
       current: base?.content ?? null, lockedKeys: stage.lockedKeys, targetKey: input.targetKey, rules: ruleTexts, instruction: instruction?.text ?? null,
     });
+    // Tokens are spent even when the output is rejected, so failures record usage too.
+    let usage: { inputTokens: number | null; outputTokens: number | null } | null = null;
     const recordFailure = async (code: string) => {
       await this.prisma.generationRun.create({ data: {
         projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
         targetKey: input.targetKey, instructionId: instruction?.id ?? null, ruleIds: rules.map((rule) => rule.id), inputVersionIds: Object.values(inputs).map((item) => item.versionId),
-        baseVersionId: base?.id ?? null, status: 'failed', safeErrorCode: code, durationMs: Date.now() - started,
+        baseVersionId: base?.id ?? null, status: 'failed', safeErrorCode: code, durationMs: Date.now() - started, source,
+        inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null,
       } });
     };
     let merged: unknown;
     try {
-      const raw = await provider.generate(prompt);
+      const detailed = provider.generateDetailed ? await provider.generateDetailed(prompt) : { output: await provider.generate(prompt), usage: null };
+      usage = detailed.usage;
+      const raw = detailed.output;
       let proposal: unknown;
       if (definition.artifactType === 'content' && input.targetKey) {
         const section = (raw as { section?: unknown })?.section;
@@ -502,7 +508,8 @@ export class JourneyService {
       const run = await tx.generationRun.create({ data: {
         projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
         targetKey: input.targetKey, instructionId: instruction?.id ?? null, ruleIds: rules.map((rule) => rule.id), inputVersionIds: Object.values(inputs).map((item) => item.versionId),
-        baseVersionId: base?.id ?? null, status: 'succeeded', durationMs: Date.now() - started,
+        baseVersionId: base?.id ?? null, status: 'succeeded', durationMs: Date.now() - started, source,
+        inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null,
       }, select: { id: true } });
       const created = await this.createVersion(tx, {
         projectId, stage, artifactType: definition.artifactType, content: merged, origin: 'ai_generated',
@@ -514,6 +521,119 @@ export class JourneyService {
       return created;
     });
     return { data: { versionId: version.id, versionNumber: version.versionNumber, provider: provider.name } };
+  }
+
+  /**
+   * History of AI requests (and template drafts) with filters. Owners and managers see the whole project;
+   * a specialist sees requests on the stages they are assigned to.
+   */
+  async aiHistory(userId: string, projectId: string, filter: { stageKey: string | null; authorId: string | null; query: string | null; before: Date | null; limit: number }) {
+    const ctx = await this.load(userId, projectId, 'read');
+    const readable = ctx.route.filter((key) => this.canRead(ctx, key));
+    if (filter.stageKey && !readable.includes(filter.stageKey as StageKey)) throw new NotFoundException('STAGE_NOT_FOUND');
+    const stageIds = (filter.stageKey ? [filter.stageKey] : readable).map((key) => this.stageOf(ctx, key).id);
+    const keyOf = new Map(ctx.stages.map((stage) => [stage.id, stage.stageKey]));
+    const where = {
+      projectId, stageId: { in: stageIds },
+      ...(filter.authorId ? { requestedByUserId: filter.authorId } : {}),
+      ...(filter.before ? { createdAt: { lt: filter.before } } : {}),
+    };
+    const instructionMatch = filter.query
+      ? (await this.prisma.stageInstruction.findMany({ where: { projectId, stageId: { in: stageIds }, text: { contains: filter.query, mode: 'insensitive' } }, select: { id: true }, take: 500 })).map((row) => row.id)
+      : null;
+    const runs = await this.prisma.generationRun.findMany({
+      where: { ...where, ...(instructionMatch ? { instructionId: { in: instructionMatch } } : {}) },
+      orderBy: { createdAt: 'desc' }, take: filter.limit + 1,
+      select: { id: true, stageId: true, requestedByUserId: true, provider: true, model: true, targetKey: true, instructionId: true, ruleIds: true, resultVersionId: true, status: true, safeErrorCode: true, durationMs: true, source: true, inputTokens: true, outputTokens: true, createdAt: true },
+    });
+    const page = runs.slice(0, filter.limit);
+    const instructionIds = [...new Set(page.map((run) => run.instructionId).filter((id): id is string => Boolean(id)))];
+    const versionIds = [...new Set(page.map((run) => run.resultVersionId).filter((id): id is string => Boolean(id)))];
+    const [instructions, versions, accepted] = await Promise.all([
+      this.prisma.stageInstruction.findMany({ where: { id: { in: instructionIds } }, select: { id: true, text: true, kind: true } }),
+      this.prisma.stageArtifactVersion.findMany({ where: { id: { in: versionIds } }, select: { id: true, stageId: true, versionNumber: true } }),
+      this.prisma.projectEvent.findMany({ where: { projectId, type: 'stage_accepted', stageKey: { in: [...new Set(page.map((run) => keyOf.get(run.stageId) ?? ''))] } }, select: { stageKey: true, details: true } }),
+    ]);
+    const acceptedVersions = new Set(accepted.map((event) => `${event.stageKey}:${(event.details as { versionNumber?: number } | null)?.versionNumber}`));
+    const people = await this.historyPeople(ctx, projectId, userId);
+    const items = page.map((run) => {
+      const key = keyOf.get(run.stageId) as StageKey;
+      const stage = this.stageOf(ctx, key);
+      const version = versions.find((item) => item.id === run.resultVersionId);
+      const instruction = instructions.find((item) => item.id === run.instructionId);
+      const outcome = run.status === 'failed' ? 'failed'
+        : version && acceptedVersions.has(`${key}:${version.versionNumber}`) ? 'accepted'
+          : version && stage.currentVersionId === version.id ? 'current'
+            : 'replaced';
+      return {
+        id: run.id, createdAt: run.createdAt,
+        stage: { key, title: stageDefinitions[key].title },
+        author: people.get(run.requestedByUserId) ?? { id: run.requestedByUserId, name: 'Удалённый участник', kind: 'former' as const },
+        text: instruction?.text ?? null,
+        savedAs: instruction?.kind ?? null,
+        targetKey: run.targetKey, rulesApplied: run.ruleIds.length,
+        kind: run.provider === 'template' ? 'template' as const : 'ai' as const,
+        model: run.model, source: run.source,
+        tokens: run.inputTokens === null && run.outputTokens === null ? null : { input: run.inputTokens, output: run.outputTokens },
+        durationMs: run.durationMs,
+        result: version ? { versionNumber: version.versionNumber } : null,
+        outcome, errorCode: run.safeErrorCode,
+      };
+    });
+
+    // Summaries over the same filter (without paging and text search).
+    const grouped = await this.prisma.generationRun.groupBy({
+      by: ['requestedByUserId', 'stageId', 'status'], where, _count: { _all: true }, _sum: { inputTokens: true, outputTokens: true },
+    });
+    const sum = <K extends string>(keyFn: (row: (typeof grouped)[number]) => K) => {
+      const totals = new Map<K, { requests: number; failed: number; tokens: number }>();
+      for (const row of grouped) {
+        const id = keyFn(row);
+        const total = totals.get(id) ?? { requests: 0, failed: 0, tokens: 0 };
+        total.requests += row._count._all;
+        if (row.status === 'failed') total.failed += row._count._all;
+        total.tokens += (row._sum.inputTokens ?? 0) + (row._sum.outputTokens ?? 0);
+        totals.set(id, total);
+      }
+      return totals;
+    };
+    const byAuthor = [...sum((row) => row.requestedByUserId)].map(([id, total]) => ({ author: people.get(id) ?? { id, name: 'Удалённый участник', kind: 'former' as const }, ...total }));
+    const byStage = [...sum((row) => row.stageId)].map(([id, total]) => {
+      const key = keyOf.get(id) as StageKey;
+      return { stage: { key, title: stageDefinitions[key].title }, ...total };
+    });
+    return {
+      data: {
+        items,
+        nextBefore: runs.length > filter.limit ? page[page.length - 1].createdAt : null,
+        summary: { byAuthor, byStage, tokensReported: grouped.some((row) => row._sum.inputTokens !== null || row._sum.outputTokens !== null) },
+        filters: {
+          stages: readable.map((key) => ({ key, title: stageDefinitions[key].title })),
+          authors: [...people.values()],
+        },
+      },
+    };
+  }
+
+  /** Names for the history: owner and members by name, specialists by name or email. A specialist viewer sees others as roles only. */
+  private async historyPeople(ctx: { viewer: Viewer; project: { ownerUserId: string } }, projectId: string, viewerId: string) {
+    const people = new Map<string, { id: string; name: string; kind: 'you' | 'owner' | 'member' | 'specialist' | 'former' }>();
+    const [members, specialists] = await Promise.all([
+      this.prisma.projectMember.findMany({ where: { projectId }, select: { userId: true, user: { select: { name: true, email: true } } } }),
+      this.prisma.stageAssignment.findMany({ where: { projectId, userId: { not: null } }, select: { userId: true, email: true, user: { select: { name: true, email: true } } } }),
+    ]);
+    const hide = ctx.viewer.kind === 'specialist';
+    for (const row of members) {
+      const owner = row.userId === ctx.project.ownerUserId;
+      people.set(row.userId, { id: row.userId, kind: owner ? 'owner' : 'member', name: hide ? (owner ? 'Владелец' : 'Участник') : row.user.name || row.user.email });
+    }
+    for (const row of specialists) {
+      if (!row.userId || people.has(row.userId)) continue;
+      people.set(row.userId, { id: row.userId, kind: 'specialist', name: hide ? 'Специалист' : row.user?.name || row.user?.email || row.email });
+    }
+    const self = people.get(viewerId);
+    if (self) people.set(viewerId, { ...self, kind: 'you', name: 'Вы' });
+    return people;
   }
 
   async restore(userId: string, projectId: string, key: string, versionId: string) {

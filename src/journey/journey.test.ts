@@ -170,4 +170,13 @@ describe('stage AI adapter', () => {
     const ok = new OpenAiStageProvider('key', 'model', (async () => new Response(JSON.stringify({ output_text: '{"a":1}' }), { status: 200 })) as typeof fetch);
     assert.deepEqual(await ok.generate({ system: '', user: '', schemaName: 'x', schema: {} }), { a: 1 });
   });
+  it('reports token usage when the provider returns it', async () => {
+    const request = { system: '', user: '', schemaName: 'x', schema: {} };
+    const withUsage = new OpenAiStageProvider('key', 'model', (async () => new Response(JSON.stringify({ output_text: '{"a":1}', usage: { input_tokens: 812, output_tokens: 240 } }), { status: 200 })) as typeof fetch);
+    assert.deepEqual(await withUsage.generateDetailed(request), { output: { a: 1 }, usage: { inputTokens: 812, outputTokens: 240 } });
+    const odd = new OpenAiStageProvider('key', 'model', (async () => new Response(JSON.stringify({ output_text: '{}', usage: { input_tokens: -1, output_tokens: 'x' } }), { status: 200 })) as typeof fetch);
+    assert.deepEqual((await odd.generateDetailed(request)).usage, { inputTokens: null, outputTokens: null });
+    const none = new OpenAiStageProvider('key', 'model', (async () => new Response(JSON.stringify({ output_text: '{}' }), { status: 200 })) as typeof fetch);
+    assert.equal((await none.generateDetailed(request)).usage, null);
+  });
 });

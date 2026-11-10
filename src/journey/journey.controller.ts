@@ -93,6 +93,21 @@ export class JourneyController {
     return this.journey.journey(request.user.id, projectId);
   }
 
+  @Get('projects/:projectId/ai-history')
+  aiHistory(
+    @Req() request: AuthenticatedRequest, @Param('projectId') projectId: string,
+    @Query('stageKey') stage?: string, @Query('authorId') authorId?: string, @Query('q') query?: string, @Query('before') before?: string, @Query('limit') limit?: string,
+  ) {
+    const uuid = /^[0-9a-f-]{36}$/i;
+    if (authorId && !uuid.test(authorId)) throw new BadRequestException('INVALID_AUTHOR');
+    const beforeDate = before ? new Date(before) : null;
+    if (beforeDate && Number.isNaN(beforeDate.getTime())) throw new BadRequestException('INVALID_CURSOR');
+    const size = limit ? Number(limit) : 30;
+    if (!Number.isInteger(size) || size < 1 || size > 100) throw new BadRequestException('INVALID_LIMIT');
+    const q = query?.trim() ? query.trim().slice(0, 200) : null;
+    return this.journey.aiHistory(request.user.id, projectId, { stageKey: stage ? stageKey(stage) : null, authorId: authorId ?? null, query: q, before: beforeDate, limit: size });
+  }
+
   @Get('projects/:projectId/stages/:stageKey')
   stage(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
     return this.journey.stage(request.user.id, projectId, stageKey(key));
