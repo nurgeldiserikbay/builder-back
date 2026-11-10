@@ -38,6 +38,11 @@ export interface StageDefinition {
   importHint: string | null;
   fields?: FieldDefinition[];
   playbook: { version: string; instructions: string[] };
+  /**
+   * A contract stage fixes what the next stages build on, so they can run at the same time. The owner approves it;
+   * a new approved version notifies every stage built on it (change notices).
+   */
+  contract?: { explanation: string };
 }
 
 export interface ProjectTypeDefinition {
@@ -94,6 +99,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
       { key: 'address', label: 'Адрес', kind: 'text', required: false, maxLength: 160, why: 'Нужен, если к вам приходят лично.', example: 'ул. Абая 10, офис 5' },
       { key: 'tone', label: 'Как говорить с клиентами?', kind: 'choice', required: true, why: 'От этого зависит стиль всех текстов на сайте.', example: 'Дружелюбно', options: toneOptions },
     ],
+    contract: { explanation: 'Цель сайта — договорённость для всех следующих этапов. После утверждения по ней одновременно готовятся содержание сайта и внешний вид — их могут делать разные люди или ИИ. Если позже поменять цель, каждый этап, построенный на ней, получит уведомление и решит, что делать.' },
     playbook: {
       version: '1.0.0',
       instructions: [
@@ -166,12 +172,13 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
   },
   design: {
     key: 'design',
-    version: '1.0.0',
+    version: '1.1.0',
     title: 'Внешний вид',
     purpose: 'Выберем цвета, шрифт и форму элементов. Посмотреть результат можно сразу в предпросмотре.',
     outcome: 'Стиль сайта: цветовая палитра, шрифт, скругления и расположение первого экрана.',
     artifactType: 'design',
-    inputs: ['content'],
+    // The style depends on the business and tone from the goal, not on the texts: it runs in parallel with them.
+    inputs: ['goal'],
     ai: {
       level: 'ai_full',
       whatItDoes: 'ИИ подберёт стиль под ваш бизнес и тон. Или выберите сами — все варианты проверены на читаемость.',
