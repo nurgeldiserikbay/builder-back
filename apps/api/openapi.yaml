@@ -1541,7 +1541,7 @@ paths:
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
-        '200': { description: 'pricingConfigured, perRequest, estimate (min, max, remainingMin, remainingMax, basedOnRequests), spent (total, requests, unpricedRequests), stages, participants, currency KZT' }
+        '200': { description: 'pricingConfigured, perRequest, estimate (min, max, remainingMin, remainingMax, basedOnRequests), spent (total, requests, unpricedRequests), stages, participants, specialists (planned, due, paid in tenge; only for the owner and managers, otherwise null), currency KZT' }
         '404': { $ref: '#/components/responses/Problem' }
   /admin/ai-pricing:
     get:
@@ -2307,6 +2307,100 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/OkResponse' }
         '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/activity:
+    post:
+      tags: [Specialists]
+      operationId: stageActivity
+      summary: Heartbeat from an open stage page with recent input
+      description: For an active assignment of the caller on the stage, extends the current tracked interval (if the last activity was within 5 minutes) or starts a new one. Stops at the hour or weekly limit; warns the owner and the specialist in Telegram at 80% of the hour limit. A no-op for everyone else. Actions made through the API (drafts, AI requests, imports, submissions, suggestions) are recorded the same way and counted.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200': { description: 'tracking, limitReached' }
+  /projects/{projectId}/stages/{stageKey}/timesheet:
+    get:
+      tags: [Specialists]
+      operationId: stageTimesheet
+      summary: Time and payments of specialists on the stage
+      description: The owner or a manager sees every active or completed assignment; a specialist sees only their own. Each assignment has terms, a summary (tracked, approved, pending, disputed, without-result, payable minutes, limit, amount due in tenge), entries (with withoutResult for tracked intervals without actions; pending entries older than 3 days are shown as auto_approved) and payments.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200': { description: 'canDecide, assignments' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/timesheet/entries:
+    post:
+      tags: [Specialists]
+      operationId: addManualTime
+      summary: Specialist adds time worked outside the platform
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [date, minutes, note]
+              properties:
+                date: { type: string, format: date-time, description: Start; not in the future and at most 14 days ago. }
+                minutes: { type: integer, minimum: 5, maximum: 600 }
+                note: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        '201': { description: Timesheet }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/time-entries/{entryId}:
+    post:
+      tags: [Specialists]
+      operationId: decideTimeEntry
+      summary: Owner approves or disputes an entry; the specialist replies to a dispute
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: entryId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action]
+              properties:
+                action: { type: string, enum: [approve, dispute, reply] }
+                comment: { type: string, minLength: 2, maxLength: 500, description: Required for dispute and reply. }
+      responses:
+        '200': { description: Timesheet }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/payments/{paymentId}/mark-paid:
+    post:
+      tags: [Specialists]
+      operationId: markSpecialistPaid
+      summary: Owner marks a due payment as paid directly
+      description: Payments are created when the owner accepts the stage (fixed price, or approved minutes within the limit × rate). Until payments go through the platform, the owner pays the specialist directly and marks it here.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: paymentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Timesheet }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/stages/{stageKey}/assignments:
     get:
       tags: [Specialists]
@@ -4660,6 +4754,13 @@ components:
         email: { type: string, format: email, maxLength: 254 }
         role: { type: string, enum: [lead, consultant] }
         aiBudget: { type: [integer, 'null'], minimum: 0, maximum: 1000, description: Maximum AI generations for this assignment; null means only the project daily limit applies. }
+        payKind: { type: string, enum: [none, fixed, hourly], default: none, description: How the specialist is paid for this stage. Nothing is paid upfront; what is owed is fixed when the owner accepts the stage. }
+        fixedAmount: { type: integer, minimum: 1000, maximum: 100000000, description: Whole tenge; required for fixed. }
+        hourlyRate: { type: integer, minimum: 500, maximum: 1000000, description: Whole tenge per hour; required for hourly. }
+        hourLimit: { type: integer, minimum: 1, maximum: 1000, description: Hours for the stage; required for hourly. Tracking stops at the limit. }
+        weeklyHourLimit: { type: integer, minimum: 1, maximum: 80 }
+        revisionsIncluded: { type: integer, minimum: 0, maximum: 20, description: Revision rounds included in a fixed price. }
+        onlyResultTime: { type: boolean, default: false, description: For hourly — pay only tracked intervals with actions on the stage. }
     StageAssignment:
       type: object
       required: [id, email, role, status]

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
+import { WorktimeService } from '../journey/worktime.service.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { stageDefinitions, type StageKey } from '../journey/catalog.js';
 import { DEFAULT_TOKENS, estimateRoute, tenge } from './budget.js';
@@ -8,7 +9,7 @@ const MAX_PRICE_TENGE = 1_000_000;
 
 @Injectable()
 export class BudgetService {
-  constructor(private readonly prisma: PrismaService, private readonly journey: JourneyService) {}
+  constructor(private readonly prisma: PrismaService, private readonly journey: JourneyService, private readonly worktime: WorktimeService) {}
 
   async pricing() {
     const row = await this.prisma.aiPricing.findUnique({ where: { id: 1 } });
@@ -41,7 +42,7 @@ export class BudgetService {
 
   /** Estimate for the route and what was spent, by stage and by participant. Members of the project only. */
   async projectBudget(userId: string, projectId: string) {
-    await this.journey.projectAccess(userId, projectId);
+    const access = await this.journey.projectAccess(userId, projectId);
     const [row, stages, runs, byAuthor] = await Promise.all([
       this.prisma.aiPricing.findUnique({ where: { id: 1 } }),
       this.prisma.projectStage.findMany({ where: { projectId }, orderBy: { position: 'asc' }, select: { id: true, stageKey: true, status: true } }),
@@ -75,6 +76,8 @@ export class BudgetService {
           const user = users.find((candidate) => candidate.id === item.requestedByUserId);
           return { id: item.requestedByUserId, name: item.requestedByUserId === userId ? 'Вы' : user?.name || user?.email || 'Удалённый участник', spent: tenge(item._sum.costTiyn ?? 0), requests: item._count._all };
         }),
+        // Rates and amounts of other people are for those who decide on the project.
+        specialists: access.canDecide ? await this.worktime.projectSummary(projectId) : null,
         currency: 'KZT',
       },
     };

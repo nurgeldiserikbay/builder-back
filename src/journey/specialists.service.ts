@@ -41,6 +41,53 @@ function maskEmail(email: string): string {
   return `${name.slice(0, 2)}${'•'.repeat(Math.max(1, name.length - 2))}@${domain}`;
 }
 
+export type SpecialistTerms = {
+  payKind: 'none' | 'fixed' | 'hourly'; fixedAmount: number | null; hourlyRate: number | null;
+  hourLimit: number | null; weeklyHourLimit: number | null; revisionsIncluded: number | null; onlyResultTime: boolean;
+};
+const termsSelect = { payKind: true, fixedAmountTiyn: true, hourlyRateTiyn: true, hourLimit: true, weeklyHourLimit: true, revisionsIncluded: true, onlyResultTime: true } as const;
+type TermsRow = { payKind: string; fixedAmountTiyn: number | null; hourlyRateTiyn: number | null; hourLimit: number | null; weeklyHourLimit: number | null; revisionsIncluded: number | null; onlyResultTime: boolean };
+
+function termsData(terms: SpecialistTerms) {
+  return {
+    payKind: terms.payKind,
+    fixedAmountTiyn: terms.payKind === 'fixed' && terms.fixedAmount !== null ? Math.round(terms.fixedAmount * 100) : null,
+    hourlyRateTiyn: terms.payKind === 'hourly' && terms.hourlyRate !== null ? Math.round(terms.hourlyRate * 100) : null,
+    hourLimit: terms.payKind === 'hourly' ? terms.hourLimit : null,
+    weeklyHourLimit: terms.payKind === 'hourly' ? terms.weeklyHourLimit : null,
+    revisionsIncluded: terms.payKind === 'fixed' ? terms.revisionsIncluded : null,
+    onlyResultTime: terms.payKind === 'hourly' ? terms.onlyResultTime : false,
+  };
+}
+function termsView(row: TermsRow): SpecialistTerms {
+  return {
+    payKind: (['fixed', 'hourly'].includes(row.payKind) ? row.payKind : 'none') as SpecialistTerms['payKind'],
+    fixedAmount: row.fixedAmountTiyn === null ? null : row.fixedAmountTiyn / 100, hourlyRate: row.hourlyRateTiyn === null ? null : row.hourlyRateTiyn / 100,
+    hourLimit: row.hourLimit, weeklyHourLimit: row.weeklyHourLimit, revisionsIncluded: row.revisionsIncluded, onlyResultTime: row.onlyResultTime,
+  };
+}
+const money = (value: number) => `${value.toLocaleString('ru-RU')} ₸`;
+/** One plain sentence for the invite page, the e-mail and the list of specialists. */
+export function termsText(terms: SpecialistTerms): string {
+  if (terms.payKind === 'fixed') {
+    return `Фиксированная цена за этап: ${money(terms.fixedAmount ?? 0)}. Оплата после того, как владелец примет результат${terms.revisionsIncluded !== null ? `; в цену входит правок: ${terms.revisionsIncluded}` : ''}.`;
+  }
+  if (terms.payKind === 'hourly') {
+    const parts = [`Почасовая ставка: ${money(terms.hourlyRate ?? 0)} в час, не больше ${terms.hourLimit} ч на этап`];
+    if (terms.weeklyHourLimit) parts.push(`до ${terms.weeklyHourLimit} ч в неделю`);
+    parts.push(terms.onlyResultTime ? 'оплачивается только время, в которое были действия на этапе' : 'оплачивается подтверждённое время');
+    return `${parts.join(', ')}. Платформа считает время, пока вы работаете на этапе; оплата после того, как владелец примет результат.`;
+  }
+  return 'Без оплаты через платформу: условия вы обсуждаете с владельцем сами.';
+}
+const TIME_RULES = [
+  'Время считается, пока страница этапа открыта и вы что-то делаете. Через 5 минут без действий учёт останавливается.',
+  'Владелец видит табель: когда вы работали и были ли в это время действия на этапе (черновики, запросы к ИИ, отправка на проверку).',
+  'Если вы работали вне платформы, можно добавить время вручную с пояснением — владелец его подтвердит или оспорит.',
+  'Записи, которые владелец не оспорил за 3 дня, считаются подтверждёнными.',
+  'Когда лимит часов закончится, учёт остановится, пока владелец его не увеличит.',
+];
+
 @Injectable()
 export class SpecialistsService {
   constructor(private readonly prisma: PrismaService, private readonly billing: BillingService) {}
@@ -67,17 +114,20 @@ export class SpecialistsService {
     const { stage } = await this.manager(userId, projectId, stageKey);
     const rows = await this.prisma.stageAssignment.findMany({
       where: { stageId: stage!.id, status: { not: 'revoked' } }, orderBy: { createdAt: 'desc' },
-      select: { id: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, user: { select: { name: true } } },
+      select: { id: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, user: { select: { name: true } }, ...termsSelect },
     });
     return {
       data: {
-        assignments: rows.map(({ user, ...row }) => ({ ...row, name: user?.name ?? null, inviteExpired: row.status === 'invited' && row.inviteExpiresAt < new Date() })),
+        assignments: rows.map(({ user, payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime, ...row }) => {
+          const terms = termsView({ payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime });
+          return { ...row, name: user?.name ?? null, inviteExpired: row.status === 'invited' && row.inviteExpiresAt < new Date(), terms, termsText: termsText(terms) };
+        }),
         roles: roleAccess,
       },
     };
   }
 
-  async invite(userId: string, projectId: string, stageKey: string, input: { email: string; role: 'lead' | 'consultant'; aiBudget: number | null }) {
+  async invite(userId: string, projectId: string, stageKey: string, input: { email: string; role: 'lead' | 'consultant'; aiBudget: number | null; terms: SpecialistTerms }) {
     const { project, stage } = await this.manager(userId, projectId, stageKey);
     if (!['active', 'live'].includes(project.status)) throw new ConflictException('PROJECT_NOT_ACTIVE');
     if (stage!.status === 'approved' || stage!.status === 'imported') throw new ConflictException('STAGE_ACCEPTED_REOPEN_FIRST');
@@ -92,11 +142,11 @@ export class SpecialistsService {
     const token = randomBytes(24).toString('base64url');
     const assignment = await this.prisma.$transaction(async (tx) => {
       const created = await tx.stageAssignment.create({
-        data: { projectId, stageId: stage!.id, email, role: input.role, inviteTokenHash: digest(token), inviteExpiresAt: new Date(Date.now() + INVITE_TTL_MS), aiBudget: input.aiBudget, invitedByUserId: userId },
+        data: { projectId, stageId: stage!.id, email, role: input.role, inviteTokenHash: digest(token), inviteExpiresAt: new Date(Date.now() + INVITE_TTL_MS), aiBudget: input.aiBudget, invitedByUserId: userId, ...termsData(input.terms) },
         select: { id: true, email: true, role: true, status: true, aiBudget: true, inviteExpiresAt: true },
       });
       if (input.role === 'lead' && stage!.status === 'ready') await tx.projectStage.update({ where: { id: stage!.id }, data: { status: 'awaiting_lead' } });
-      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'specialist_invited', stageKey, details: { assignmentId: created.id, role: input.role, aiBudget: input.aiBudget } } });
+      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'specialist_invited', stageKey, details: { assignmentId: created.id, role: input.role, aiBudget: input.aiBudget, payKind: input.terms.payKind } } });
       return created;
     });
     const appUrl = process.env.PUBLIC_APP_URL ?? 'http://localhost:3000';
@@ -105,7 +155,7 @@ export class SpecialistsService {
     const stageTitle = stageDefinitions[stageKey as StageKey].title;
     const inviter = project.owner.name ?? project.owner.email;
     const emailSent = mail ? await sendEmail(mail, email, `Приглашение в проект «${project.name}»`,
-      `<p>${escapeHtml(inviter)} приглашает вас в проект «${escapeHtml(project.name)}» на этап «${escapeHtml(stageTitle)}» как ${escapeHtml(roleAccess[input.role].title.toLowerCase())}.</p><p><a href="${escapeHtml(inviteUrl)}">Открыть приглашение</a></p><p>Ссылка действует 7 дней.</p>`) : false;
+      `<p>${escapeHtml(inviter)} приглашает вас в проект «${escapeHtml(project.name)}» на этап «${escapeHtml(stageTitle)}» как ${escapeHtml(roleAccess[input.role].title.toLowerCase())}.</p><p>${escapeHtml(termsText(input.terms))}</p><p><a href="${escapeHtml(inviteUrl)}">Открыть приглашение</a></p><p>Ссылка действует 7 дней.</p>`) : false;
     return { data: { assignment, inviteUrl, emailSent } };
   }
 
@@ -126,7 +176,7 @@ export class SpecialistsService {
     const assignment = await this.prisma.stageAssignment.findUnique({
       where: { inviteTokenHash: digest(token) },
       select: {
-        id: true, email: true, role: true, status: true, aiBudget: true, inviteExpiresAt: true, userId: true, projectId: true, stageId: true,
+        id: true, email: true, role: true, status: true, aiBudget: true, inviteExpiresAt: true, userId: true, projectId: true, stageId: true, ...termsSelect,
         stage: { select: { stageKey: true, status: true } },
         project: { select: { name: true, owner: { select: { name: true, email: true } } } },
       },
@@ -145,6 +195,7 @@ export class SpecialistsService {
         role: invite.role, roleTitle: roleAccess[invite.role].title, roleExplanation: roleAccess[invite.role].forSpecialist.explanation,
         can: roleAccess[invite.role].forSpecialist.can, cannot: roleAccess.cannot, afterAcceptance: roleAccess.afterAcceptanceForSpecialist,
         aiBudget: invite.aiBudget, email: maskEmail(invite.email), status: invite.status,
+        terms: termsView(invite), termsText: termsText(termsView(invite)), timeRules: TIME_RULES,
         expired: invite.status === 'invited' && invite.inviteExpiresAt < new Date(), projectId: invite.status === 'active' ? invite.projectId : null,
       },
     };
