@@ -321,6 +321,8 @@ model Project {
   @@index([ownerUserId, createdAt(sort: Desc)], map: "projects_owner_created_idx")
   @@map("projects")
   topUps            ProjectTopUp[]
+  /// Days the next stage has to answer a change notice (1–14).
+  changeResponseDays Int            @default(3) @map("change_response_days")
 }
 
 model ProjectMember {
@@ -1134,6 +1136,13 @@ model ChangeNotice {
   decidedByUserId   String?            @map("decided_by_user_id") @db.Uuid
   decidedByOwner    Boolean            @default(false) @map("decided_by_owner")
   decidedAt         DateTime?          @map("decided_at") @db.Timestamptz(3)
+  /// The target side is asked to decide by this time; then reminded once, and two days later the owner is asked to decide.
+  respondBy         DateTime?          @map("respond_by") @db.Timestamptz(3)
+  remindedAt        DateTime?          @map("reminded_at") @db.Timestamptz(3)
+  escalatedAt       DateTime?          @map("escalated_at") @db.Timestamptz(3)
+  /// On-demand AI explanation for the target side (untrusted text, validated shape); never a decision.
+  aiExplanation     Json?              @map("ai_explanation")
+  aiExplainedAt     DateTime?          @map("ai_explained_at") @db.Timestamptz(3)
   createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
   project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -1142,6 +1151,7 @@ model ChangeNotice {
   messages          ChangeMessage[]
 
   @@index([targetStageId, status], map: "change_notices_target_status_idx")
+  @@index([status, respondBy], map: "change_notices_status_respond_idx")
   @@index([sourceStageId, status], map: "change_notices_source_status_idx")
   @@map("change_notices")
 }
