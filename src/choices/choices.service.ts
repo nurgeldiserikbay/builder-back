@@ -1,9 +1,11 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
+import { Prisma } from '../generated/prisma/client.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { ReviewTargetPolicyError, resolveAndValidateReviewTarget } from '../reviews/url-target-policy.js';
 import { choiceCards, recommend, type CardKey } from './cards.js';
+import { checkSite } from './site-check.js';
 import { GitHubClient, GitLabClient, GitProviderError, parseRepoUrl, type GitFile, type GitProviderKey } from './git-providers.js';
 
 const isCard = (key: string): key is CardKey => key in choiceCards;
@@ -70,11 +72,14 @@ export class ChoicesService {
       this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey } } }),
       cardKey === 'code_hosting' ? this.prisma.codeRepository.findUnique({ where: { projectId } }) : null,
     ]);
+    const met = await this.requirementsMet(projectId, cardKey);
     return {
       data: {
         card: choiceCards[cardKey],
         recommendation: recommend(cardKey, access),
-        choice: choice ? { optionKey: choice.optionKey, reason: choice.reason, stepsDone: choice.stepsDone, chosenAt: choice.chosenAt, cardVersion: choice.cardVersion } : null,
+        choice: choice ? { optionKey: choice.optionKey, reason: choice.reason, stepsDone: choice.stepsDone, chosenAt: choice.chosenAt, cardVersion: choice.cardVersion, verification: choice.verification ?? null } : null,
+        available: met,
+        context: cardKey === 'deployment' ? await this.deploymentContext(projectId) : null,
         repository: this.repositoryView(repo),
         canDecide: access.canDecide,
         connectAvailable: Boolean(this.key()),
@@ -87,12 +92,13 @@ export class ChoicesService {
     await this.access(userId, projectId, true);
     const card = choiceCards[cardKey];
     if (!card.options.some((option) => option.key === optionKey)) throw new BadRequestException('CHOICE_OPTION_INVALID');
+    if ((await this.requirementsMet(projectId, cardKey))[optionKey] === false) throw new ConflictException('CHOICE_REQUIREMENT_NOT_MET');
     const previous = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey } }, select: { optionKey: true } });
     await this.prisma.$transaction([
       this.prisma.projectChoice.upsert({
         where: { projectId_cardKey: { projectId, cardKey } },
         create: { projectId, cardKey, cardVersion: card.version, optionKey, reason, chosenByUserId: userId },
-        update: { cardVersion: card.version, optionKey, reason, chosenByUserId: userId, chosenAt: new Date(), ...(previous?.optionKey !== optionKey ? { stepsDone: [] } : {}) },
+        update: { cardVersion: card.version, optionKey, reason, chosenByUserId: userId, chosenAt: new Date(), ...(previous?.optionKey !== optionKey ? { stepsDone: [], verification: Prisma.DbNull } : {}) },
       }),
       this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'choice_made', details: { cardKey, optionKey, previous: previous?.optionKey ?? null } } }),
     ]);
@@ -105,7 +111,8 @@ export class ChoicesService {
     const choice = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey } } });
     if (!choice) throw new ConflictException('CHOICE_NOT_MADE');
     const step = choiceCards[cardKey].options.find((option) => option.key === choice.optionKey)?.steps.find((item) => item.key === stepKey);
-    if (!step || step.kind === 'connect') throw new BadRequestException('CHOICE_STEP_INVALID');
+    // Steps that BuildPath checks itself cannot be ticked off by hand.
+    if (!step || step.kind === 'connect' || step.kind === 'verify') throw new BadRequestException('CHOICE_STEP_INVALID');
     const steps = new Set(choice.stepsDone);
     if (done) steps.add(stepKey); else steps.delete(stepKey);
     await this.prisma.projectChoice.update({ where: { id: choice.id }, data: { stepsDone: [...steps] } });
@@ -212,5 +219,94 @@ export class ChoicesService {
       throw new UnprocessableEntityException(code);
     }
     return this.card(userId, projectId, 'code_hosting');
+  }
+
+  /** Options that depend on another decision: available only when that decision is made (and, for GitHub, connected). */
+  private async requirementsMet(projectId: string, cardKey: CardKey): Promise<Record<string, boolean>> {
+    const result: Record<string, boolean> = {};
+    for (const option of choiceCards[cardKey].options) {
+      if (!option.requires) continue;
+      const other = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: option.requires.card } }, select: { optionKey: true } });
+      const repo = option.requires.card === 'code_hosting' ? await this.prisma.codeRepository.findUnique({ where: { projectId }, select: { provider: true } }) : null;
+      result[option.key] = other?.optionKey === option.requires.option && (option.requires.card !== 'code_hosting' || repo?.provider === option.requires.option);
+    }
+    return result;
+  }
+
+  private async acceptedBuildId(projectId: string): Promise<string | null> {
+    const stage = await this.prisma.projectStage.findFirst({ where: { projectId, stageKey: 'build' }, select: { approvedVersionId: true, status: true } });
+    return stage?.approvedVersionId ?? null;
+  }
+
+  private async deploymentContext(projectId: string) {
+    const [publication, buildId, repo] = await Promise.all([
+      this.prisma.sitePublication.findUnique({ where: { projectId }, select: { status: true, slug: true, buildVersionId: true } }),
+      this.acceptedBuildId(projectId),
+      this.prisma.codeRepository.findUnique({ where: { projectId }, select: { provider: true, repoPath: true, lastPushAt: true } }),
+    ]);
+    return {
+      siteAccepted: Boolean(buildId),
+      publication: publication ? { status: publication.status, slug: publication.slug, upToDate: publication.buildVersionId === buildId } : null,
+      repository: repo ? { provider: repo.provider, repoPath: repo.repoPath, pushedAt: repo.lastPushAt } : null,
+    };
+  }
+
+  /** Checks that the chosen deployment serves the latest accepted version of the site. */
+  async verifyDeployment(userId: string, projectId: string, url: string | null) {
+    await this.access(userId, projectId, true);
+    const choice = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'deployment' } } });
+    if (!choice) throw new ConflictException('CHOICE_NOT_MADE');
+    const result = (await this.journey.result(userId, projectId)).data as { files: Array<{ name: string; content: string }> };
+    const expected = result.files.find((file) => file.name === 'site.html')?.content;
+    if (!expected) throw new ConflictException('SITE_NOT_ACCEPTED');
+    let verification: { url: string | null; status: string; checkedAt: string; httpStatus: number | null };
+    if (choice.optionKey === 'buildpath') {
+      const context = await this.deploymentContext(projectId);
+      const status = !context.publication || context.publication.status !== 'live' ? 'not_published' : context.publication.upToDate ? 'matches' : 'outdated';
+      verification = { url: null, status, checkedAt: new Date().toISOString(), httpStatus: null };
+    } else {
+      if (!url) throw new BadRequestException('SITE_URL_REQUIRED');
+      const checked = await checkSite(url, expected, { allowLocal: this.allowLocal() });
+      verification = { url: checked.finalUrl ?? url, status: checked.status, checkedAt: new Date().toISOString(), httpStatus: checked.httpStatus };
+    }
+    const steps = new Set(choice.stepsDone);
+    if (verification.status === 'matches') steps.add('verify'); else steps.delete('verify');
+    await this.prisma.$transaction([
+      this.prisma.projectChoice.update({ where: { id: choice.id }, data: { verification, stepsDone: [...steps] } }),
+      this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'deployment_checked', details: { option: choice.optionKey, status: verification.status, url: verification.url } } }),
+    ]);
+    return this.card(userId, projectId, 'deployment');
+  }
+
+  /** Files for an own server: the accepted page, a Caddy config with automatic HTTPS, a compose file and plain instructions. */
+  async serverPackage(userId: string, projectId: string) {
+    await this.access(userId, projectId, true);
+    const result = (await this.journey.result(userId, projectId)).data as { files: Array<{ name: string; content: string }> };
+    const site = result.files.find((file) => file.name === 'site.html')?.content;
+    if (!site) throw new ConflictException('SITE_NOT_ACCEPTED');
+    const caddy = ['# Замените ВАШ-ДОМЕН.kz на свой домен. Caddy сам получит HTTPS-сертификат.', 'ВАШ-ДОМЕН.kz {', '\troot * /srv', '\tfile_server', '\tencode gzip', '\theader {', '\t\tX-Content-Type-Options nosniff', '\t\tReferrer-Policy strict-origin-when-cross-origin', '\t}', '}', ''].join('\n');
+    const compose = ['services:', '  site:', '    image: caddy:2', '    restart: unless-stopped', '    ports: ["80:80", "443:443"]', '    volumes:', '      - ./Caddyfile:/etc/caddy/Caddyfile:ro', '      - ./site:/srv:ro', '      - caddy_data:/data', 'volumes:', '  caddy_data: {}', ''].join('\n');
+    const readme = [
+      '# Как запустить сайт на своём сервере', '',
+      'Нужно: сервер с Ubuntu 24.04 и домен, направленный на IP сервера (запись A).', '',
+      '1. В файле `Caddyfile` замените `ВАШ-ДОМЕН.kz` на свой домен.',
+      '2. Скопируйте папку с файлами на сервер, например так (на своём компьютере): `scp -r buildpath-site root@IP-СЕРВЕРА:/opt/`',
+      '3. Подключитесь к серверу: `ssh root@IP-СЕРВЕРА` и выполните:', '',
+      '```', 'curl -fsSL https://get.docker.com | sh', 'cd /opt/buildpath-site', 'docker compose up -d', '```', '',
+      '4. Через минуту откройте свой домен в браузере. Вернитесь в BuildPath и нажмите «Проверить адрес».', '',
+      'Обновить сайт: замените `site/index.html` новой версией из BuildPath — перезапускать ничего не нужно.', '',
+      'Форма заявок BuildPath на своём сервере не работает: на сайте останутся кнопки звонка и мессенджера.', '',
+    ].join('\n');
+    return {
+      data: {
+        folder: 'buildpath-site',
+        files: [
+          { name: 'site/index.html', mimeType: 'text/html', content: site },
+          { name: 'Caddyfile', mimeType: 'text/plain', content: caddy },
+          { name: 'compose.yaml', mimeType: 'text/yaml', content: compose },
+          { name: 'README.md', mimeType: 'text/markdown', content: readme },
+        ],
+      },
+    };
   }
 }
