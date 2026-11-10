@@ -24,7 +24,7 @@ describe('Technical plan', () => {
   it('tells an outdated plan apart, ignoring notes and key order', () => {
     const plan = buildTechPlan({ brief: null, offer: null, schedule }, null);
     const withNotes: Record<string, unknown> = { ...plan, ownerNotes: 'заметка' };
-    const reordered = Object.fromEntries(Object.keys(withNotes).reverse().map((key) => [key, withNotes[key]])) as typeof plan;
+    const reordered = Object.fromEntries(Object.keys(withNotes).reverse().map((key) => [key, withNotes[key]])) as unknown as typeof plan;
     assert.equal(sameTechPlan(plan, reordered), true);
     const longer = buildTechPlan({ brief: null, offer: null, schedule: { ...schedule, services: [{ name: 'Стрижка', minutes: 60 }] } }, null);
     assert.equal(sameTechPlan(plan, longer), false);

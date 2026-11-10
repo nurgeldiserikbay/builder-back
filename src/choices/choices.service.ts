@@ -1,11 +1,14 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+
+const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 import { PrismaService } from '../database/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { ReviewTargetPolicyError, resolveAndValidateReviewTarget } from '../reviews/url-target-policy.js';
-import { choiceCards, recommend, type CardKey } from './cards.js';
+import { choiceCards, recommend, type CardKey, githubOauthSteps } from './cards.js';
 import { checkSite } from './site-check.js';
+import { GITHUB_SCOPES, authorizeUrl, createRepo, exchangeCode, githubOauthConfig, githubUser, writableRepos, type GithubOauthConfig } from './github-oauth.js';
 import { bookingBundle, bookingPackageFiles } from '../export/booking-package.js';
 import type { SiteArtifact } from '../journey/artifacts.js';
 import { GitHubClient, GitLabClient, GitProviderError, parseRepoUrl, type GitFile, type GitProviderKey } from './git-providers.js';
@@ -60,9 +63,9 @@ export class ChoicesService {
     return new GitLabClient(token, baseUrl);
   }
 
-  private repositoryView(repo: { provider: string; repoPath: string; webUrl: string; defaultBranch: string; isPrivate: boolean; tokenHint: string; verifiedAt: Date; lastPushAt: Date | null; lastCommitUrl: string | null; lastError: string | null } | null) {
+  private repositoryView(repo: { provider: string; connectedVia: string; repoPath: string; webUrl: string; defaultBranch: string; isPrivate: boolean; tokenHint: string; verifiedAt: Date; lastPushAt: Date | null; lastCommitUrl: string | null; lastError: string | null } | null) {
     return repo ? {
-      provider: repo.provider, repoPath: repo.repoPath, webUrl: repo.webUrl, defaultBranch: repo.defaultBranch, isPrivate: repo.isPrivate,
+      provider: repo.provider, connectedVia: repo.connectedVia, repoPath: repo.repoPath, webUrl: repo.webUrl, defaultBranch: repo.defaultBranch, isPrivate: repo.isPrivate,
       tokenHint: `…${repo.tokenHint}`, verifiedAt: repo.verifiedAt, lastPushAt: repo.lastPushAt, lastCommitUrl: repo.lastCommitUrl, lastError: repo.lastError,
     } : null;
   }
@@ -77,7 +80,9 @@ export class ChoicesService {
     const met = await this.requirementsMet(projectId, cardKey);
     return {
       data: {
-        card: choiceCards[cardKey],
+        card: cardKey === 'code_hosting' && githubOauthConfig() && this.key()
+          ? { ...choiceCards[cardKey], options: choiceCards[cardKey].options.map((option) => (option.key === 'github' ? { ...option, steps: githubOauthSteps } : option)) }
+          : choiceCards[cardKey],
         recommendation: recommend(cardKey, access),
         choice: choice ? { optionKey: choice.optionKey, reason: choice.reason, stepsDone: choice.stepsDone, chosenAt: choice.chosenAt, cardVersion: choice.cardVersion, verification: choice.verification ?? null } : null,
         available: met,
@@ -140,24 +145,138 @@ export class ChoicesService {
       if (error instanceof ReviewTargetPolicyError) throw new BadRequestException('REPO_HOST_NOT_ALLOWED');
       throw error;
     }
+    return this.storeRepository(userId, projectId, input.provider, parsed, token, key, 'token');
+  }
+
+  /** Checks write access with the token and saves the connection; the token is stored only encrypted. */
+  private async storeRepository(userId: string, projectId: string, provider: GitProviderKey, parsed: { baseUrl: string; repoPath: string }, token: string, key: Buffer, via: 'token' | 'oauth') {
     let info;
     try {
-      info = await this.client(input.provider, token, parsed.baseUrl).inspect(parsed.repoPath);
+      info = await this.client(provider, token, parsed.baseUrl).inspect(parsed.repoPath);
     } catch (error) {
       if (error instanceof GitProviderError) throw new UnprocessableEntityException(error.code);
       throw error;
     }
     if (!info.canWrite) throw new UnprocessableEntityException('REPO_WRITE_NOT_ALLOWED');
     const data = {
-      provider: input.provider, baseUrl: parsed.baseUrl, repoPath: info.repoPath, webUrl: info.webUrl, defaultBranch: info.defaultBranch, isPrivate: info.isPrivate,
-      tokenEncrypted: this.encrypt(token, key), tokenHint: token.slice(-4), connectedByUserId: userId, verifiedAt: new Date(), lastError: null,
+      provider, baseUrl: parsed.baseUrl, repoPath: info.repoPath, webUrl: info.webUrl, defaultBranch: info.defaultBranch, isPrivate: info.isPrivate,
+      tokenEncrypted: this.encrypt(token, key), tokenHint: token.slice(-4), connectedVia: via, connectedByUserId: userId, verifiedAt: new Date(), lastError: null,
     };
+    const steps = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'code_hosting' } }, select: { stepsDone: true } });
     await this.prisma.$transaction([
       this.prisma.codeRepository.upsert({ where: { projectId }, create: { projectId, ...data }, update: data }),
-      this.prisma.projectChoice.update({ where: { projectId_cardKey: { projectId, cardKey: 'code_hosting' } }, data: { stepsDone: { push: 'connect' } } }),
-      this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'repository_connected', details: { provider: input.provider, repoPath: info.repoPath, isPrivate: info.isPrivate } } }),
+      this.prisma.projectChoice.update({ where: { projectId_cardKey: { projectId, cardKey: 'code_hosting' } }, data: { stepsDone: [...new Set([...(steps?.stepsDone ?? []), 'connect'])] } }),
+      this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'repository_connected', details: { provider, repoPath: info.repoPath, isPrivate: info.isPrivate, via } } }),
     ]);
     return this.card(userId, projectId, 'code_hosting');
+  }
+
+  // --- GitHub with one tap (OAuth App) ---
+
+  private githubAccount(userId: string) {
+    return this.prisma.gitAccount.findUnique({ where: { userId_provider: { userId, provider: 'github' } }, select: { login: true, tokenEncrypted: true, tokenHint: true, createdAt: true } });
+  }
+
+  private async githubToken(userId: string): Promise<{ config: GithubOauthConfig; key: Buffer; token: string; login: string }> {
+    const config = githubOauthConfig();
+    const key = this.key();
+    if (!config || !key) throw new ServiceUnavailableException('GITHUB_OAUTH_NOT_CONFIGURED');
+    const account = await this.githubAccount(userId);
+    if (!account) throw new ConflictException('GITHUB_NOT_CONNECTED');
+    return { config, key, token: this.decrypt(account.tokenEncrypted, key), login: account.login };
+  }
+
+  /** Step 1: the address of GitHub's consent page. The state is single-use, bound to the person and project, 10 minutes. */
+  async githubStart(userId: string, projectId: string) {
+    await this.access(userId, projectId, true);
+    const config = githubOauthConfig();
+    if (!config || !this.key()) throw new ServiceUnavailableException('GITHUB_OAUTH_NOT_CONFIGURED');
+    const choice = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'code_hosting' } }, select: { optionKey: true } });
+    if (choice?.optionKey !== 'github') throw new ConflictException('CHOICE_NOT_MADE');
+    const state = randomBytes(24).toString('base64url');
+    await this.prisma.$transaction([
+      this.prisma.oAuthState.deleteMany({ where: { OR: [{ expiresAt: { lt: new Date() } }, { userId, provider: 'github' }] } }),
+      this.prisma.oAuthState.create({ data: { stateHash: sha256(state), userId, projectId, provider: 'github', expiresAt: new Date(Date.now() + 10 * 60_000) } }),
+    ]);
+    return { data: { url: authorizeUrl(config, state), scopes: GITHUB_SCOPES } };
+  }
+
+  /**
+   * Step 2, GitHub redirects back here. Works without the session cookie: the state carries who started it, and
+   * a state can only be created by that person. Returns where to send the browser.
+   */
+  async githubCallback(query: { code?: string; state?: string; error?: string }): Promise<string> {
+    const app = (process.env.PUBLIC_APP_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+    const config = githubOauthConfig();
+    const key = this.key();
+    const stateValue = typeof query.state === 'string' && /^[A-Za-z0-9_-]{32}$/.test(query.state) ? query.state : null;
+    const row = stateValue ? await this.prisma.oAuthState.findUnique({ where: { stateHash: sha256(stateValue) } }) : null;
+    if (row) await this.prisma.oAuthState.delete({ where: { id: row.id } });
+    if (!row || row.expiresAt < new Date()) return `${app}/projects?github=expired`;
+    const back = (result: string) => `${app}/projects/${row.projectId}/choices/code_hosting?github=${result}`;
+    if (query.error) return back(query.error === 'access_denied' ? 'denied' : 'failed');
+    if (!config || !key || typeof query.code !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(query.code)) return back('failed');
+    try {
+      const token = await exchangeCode(config, query.code);
+      const user = await githubUser(config, token);
+      const data = { login: user.login, tokenEncrypted: this.encrypt(token, key), tokenHint: token.slice(-4), scopes: user.scopes.slice(0, 200) };
+      await this.prisma.$transaction([
+        this.prisma.gitAccount.upsert({ where: { userId_provider: { userId: row.userId, provider: 'github' } }, create: { userId: row.userId, provider: 'github', ...data }, update: data }),
+        this.prisma.projectEvent.create({ data: { projectId: row.projectId, actorUserId: row.userId, type: 'github_account_connected', details: { login: user.login } } }),
+      ]);
+      return back('connected');
+    } catch {
+      return back('failed');
+    }
+  }
+
+  /** The person's GitHub account and the repositories they can write to. */
+  async githubRepos(userId: string, projectId: string) {
+    await this.access(userId, projectId, true);
+    const config = githubOauthConfig();
+    if (!config || !this.key()) return { data: { configured: false, account: null, repos: [] } };
+    const account = await this.githubAccount(userId);
+    if (!account) return { data: { configured: true, account: null, repos: [] } };
+    try {
+      const { token, login } = await this.githubToken(userId);
+      return { data: { configured: true, account: { login, connectedAt: account.createdAt }, repos: await writableRepos(config, token) } };
+    } catch (error) {
+      if (error instanceof GitProviderError && error.code === 'GITHUB_RECONNECT_REQUIRED') {
+        await this.prisma.gitAccount.delete({ where: { userId_provider: { userId, provider: 'github' } } }).catch(() => undefined);
+        return { data: { configured: true, account: null, repos: [], reconnect: true } };
+      }
+      if (error instanceof GitProviderError) throw new UnprocessableEntityException(error.code);
+      throw error;
+    }
+  }
+
+  /** Step 3: connect an existing repository, or create a new empty one in the person's account (explicit confirmation). */
+  async githubConnect(userId: string, projectId: string, input: { repo: string | null; create: { name: string; isPrivate: boolean } | null; confirm: boolean }) {
+    const access = await this.access(userId, projectId, true);
+    const choice = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'code_hosting' } }, select: { optionKey: true } });
+    if (choice?.optionKey !== 'github') throw new ConflictException('CHOICE_NOT_MADE');
+    const { config, key, token } = await this.githubToken(userId);
+    let fullName: string;
+    if (input.create) {
+      if (!input.confirm) throw new BadRequestException('CONFIRMATION_REQUIRED');
+      try {
+        fullName = (await createRepo(config, token, { name: input.create.name, isPrivate: input.create.isPrivate, description: `Сайт «${access.name}», собранный в BuildPath` })).fullName;
+      } catch (error) {
+        if (error instanceof GitProviderError) throw error.code === 'REPO_NAME_TAKEN' ? new ConflictException(error.code) : new UnprocessableEntityException(error.code);
+        throw error;
+      }
+      await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'repository_created', details: { repoPath: fullName, isPrivate: input.create.isPrivate } } });
+    } else {
+      if (!input.repo || !/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/.test(input.repo)) throw new BadRequestException('REPO_URL_INVALID');
+      fullName = input.repo;
+    }
+    return this.storeRepository(userId, projectId, 'github', { baseUrl: 'https://github.com', repoPath: fullName }, token, key, 'oauth');
+  }
+
+  /** Forget the GitHub account in BuildPath. Repositories already connected keep working until disconnected. */
+  async githubForget(userId: string) {
+    await this.prisma.gitAccount.deleteMany({ where: { userId, provider: 'github' } });
+    return { data: { forgotten: true, revokeUrl: 'https://github.com/settings/applications' } };
   }
 
   async disconnect(userId: string, projectId: string) {

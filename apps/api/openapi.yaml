@@ -1432,6 +1432,78 @@ paths:
         '200': { description: Card }
         '400': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/repository/github/start:
+    post:
+      tags: [Choices]
+      operationId: githubOauthStart
+      summary: Address of GitHub's consent page («Войти через GitHub»)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'url, scopes (repo)' }
+        '409': { description: CHOICE_NOT_MADE }
+        '503': { description: GITHUB_OAUTH_NOT_CONFIGURED }
+  /projects/{projectId}/repository/github/repos:
+    get:
+      tags: [Choices]
+      operationId: githubRepos
+      summary: The person's GitHub account and repositories they can write to
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'configured, account (login, connectedAt) or null, repos (fullName, webUrl, isPrivate, pushedAt), reconnect when the token was revoked' }
+  /projects/{projectId}/repository/github/connect:
+    post:
+      tags: [Choices]
+      operationId: githubConnect
+      summary: Connect an existing repository or create a new empty one with the signed-in GitHub account
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                repo: { type: string, description: 'owner/name' }
+                create: { type: object, additionalProperties: false, required: [name, isPrivate], properties: { name: { type: string, maxLength: 100 }, isPrivate: { type: boolean } } }
+                confirm: { type: boolean, description: Required to create a repository }
+      responses:
+        '200': { description: Code hosting card }
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { description: 'GITHUB_NOT_CONNECTED, REPO_NAME_TAKEN, CHOICE_NOT_MADE' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /oauth/github/callback:
+    get:
+      tags: [Choices]
+      operationId: githubOauthCallback
+      summary: GitHub returns here after consent; redirects back to the card
+      description: No session needed — the single-use state identifies who started the sign-in. Redirects to the code hosting card with github=connected|denied|failed, or to /projects?github=expired.
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string } }
+      responses:
+        '303': { description: Redirect to the app }
+  /me/git-accounts/github:
+    delete:
+      tags: [Choices]
+      operationId: forgetGithubAccount
+      summary: Forget the GitHub account in BuildPath
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'forgotten, revokeUrl' }
   /projects/{projectId}/repository:
     post:
       tags: [Choices]

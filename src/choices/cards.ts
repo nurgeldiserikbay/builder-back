@@ -166,3 +166,12 @@ export function recommend(card: CardKey, project: { hasSpecialists: boolean }): 
       ? { optionKey: 'github', reason: 'В проекте работают специалисты: им удобнее брать код из GitHub, и у вас будет история всех версий.' }
       : { optionKey: 'archive', reason: 'Сайт уже работает на BuildPath, а копия нужна на случай переезда. Архива достаточно, пока вы не подключаете разработчика.' };
 }
+
+/**
+ * When the GitHub app is configured, the owner signs in instead of creating a repository and a key by hand.
+ * The key-based steps stay available on the page as a fallback.
+ */
+export const githubOauthSteps: ChoiceStep[] = [
+  { key: 'account', kind: 'manual', title: 'Аккаунт на GitHub', text: ['Если аккаунта нет, его можно создать бесплатно прямо на странице входа GitHub на следующем шаге.'], link: { label: 'Открыть github.com', url: 'https://github.com/signup' } },
+  { key: 'connect', kind: 'connect', title: 'Войдите через GitHub и выберите репозиторий', text: ['Нажмите «Войти через GitHub», на странице GitHub — «Authorize». Затем создайте новый закрытый репозиторий одной кнопкой или выберите существующий.', 'BuildPath ничего не отправит без вашего подтверждения.'] },
+];
