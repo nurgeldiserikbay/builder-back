@@ -43,6 +43,10 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Registration requires `acceptLegal: true`; the accepted versions and time are stored in `user_consents`. When a version is bumped, `/me` reports `consentRequired` and other signed-in routes answer `403 CONSENT_REQUIRED` until `POST /me/consent`; the Telegram bot asks the user to accept in the app.
 - `POST /me/deletion` (password + confirmation) immediately signs the user out everywhere, unpublishes their sites, revokes everyone's access to their projects and their own stage assignments, and unlinks Telegram. The rest is kept for the retention period (admin console, 1–90 days, default 30), then purged by the API process hourly (`ACCOUNT_PURGE_DISABLED=true` turns it off). Staff can restore an account during that period (`POST /admin/accounts/restore`, audited).
 
+### AI request history
+
+Every AI request and template draft is stored as a `generation_runs` row with who asked, stage and block, source (`app` or `telegram`), model, provider-reported tokens (`input_tokens`, `output_tokens`, also on failed runs) and the resulting version. `GET /api/v1/projects/{id}/ai-history` lists them with filters by stage, participant, text and period, shows what happened to each result (accepted, current draft, replaced, failed) and totals by participant and stage. Owners and managers see the whole project; a specialist sees only their stages.
+
 ### Plans and limits
 
 - Three plans in `src/billing/plans.ts` (catalog 1.0.0): **Бесплатный** (2 projects, 30 AI requests a month, 1 live site, no specialists), **Старт** (5 / 300 / 3, specialists) and **Бизнес** (25 / 1500 / 15, specialists). Limits belong to the account that owns the projects; AI requests of invited specialists count for the owner. Template drafts are free.

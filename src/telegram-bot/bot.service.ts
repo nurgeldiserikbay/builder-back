@@ -80,7 +80,7 @@ export class TelegramBotService {
     await this.guarded(ctx, async () => {
       if (pending === 'instruction') {
         await this.send(ctx, '✨ ИИ работает — обычно это занимает до минуты…');
-        const result = await this.journey.generate(userId, projectId, stageKey, { instruction: trimmed, saveAs: 'one_off', targetKey: null });
+        const result = await this.journey.generate(userId, projectId, stageKey, { instruction: trimmed, saveAs: 'one_off', targetKey: null, source: 'telegram' });
         await this.send(ctx, `Готово: версия ${result.data.versionNumber}.`);
       } else if (pending === 'changes_note') {
         await this.journey.requestChanges(userId, projectId, stageKey, trimmed);

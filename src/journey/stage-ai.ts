@@ -4,7 +4,16 @@ import { sectionTypes } from './artifacts.js';
 import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
 
 export interface StageAiRequest { system: string; user: string; schemaName: string; schema: Record<string, unknown> }
-export interface StageAiProvider { readonly name: string; readonly model: string; generate(request: StageAiRequest): Promise<unknown> }
+export interface StageAiUsage { inputTokens: number | null; outputTokens: number | null }
+export interface StageAiProvider {
+  readonly name: string;
+  readonly model: string;
+  generate(request: StageAiRequest): Promise<unknown>;
+  /** Same as generate, plus provider-reported token usage when available. */
+  generateDetailed?(request: StageAiRequest): Promise<{ output: unknown; usage: StageAiUsage | null }>;
+}
+
+const tokenCount = (value: unknown) => (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null);
 
 export class StageAiError extends Error {
   constructor(public readonly code: string) { super(code); this.name = 'StageAiError'; }
@@ -105,6 +114,10 @@ export class OpenAiStageProvider implements StageAiProvider {
   constructor(private readonly apiKey: string, readonly model: string, private readonly fetchImpl: typeof fetch = fetch, private readonly baseUrl = 'https://api.openai.com/v1') {}
 
   async generate(request: StageAiRequest): Promise<unknown> {
+    return (await this.generateDetailed(request)).output;
+  }
+
+  async generateDetailed(request: StageAiRequest): Promise<{ output: unknown; usage: StageAiUsage | null }> {
     let response: Response;
     try {
       response = await this.fetchImpl(`${this.baseUrl}/responses`, {
@@ -126,12 +139,13 @@ export class OpenAiStageProvider implements StageAiProvider {
       throw new StageAiError('AI_PROVIDER_UNAVAILABLE');
     }
     if (!response.ok) throw new StageAiError('AI_PROVIDER_FAILED');
-    const payload = await response.json().catch(() => null) as { output_text?: unknown; output?: Array<{ content?: Array<{ type?: string; text?: string }> }> } | null;
+    const payload = await response.json().catch(() => null) as { output_text?: unknown; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: unknown; output_tokens?: unknown } } | null;
+    const usage = payload?.usage ? { inputTokens: tokenCount(payload.usage.input_tokens), outputTokens: tokenCount(payload.usage.output_tokens) } : null;
     const text = typeof payload?.output_text === 'string' ? payload.output_text
       : payload?.output?.flatMap((item) => item.content ?? []).find((item) => item.type === 'output_text')?.text;
     if (!text || text.length > 200_000) throw new StageAiError('AI_INVALID_RESPONSE');
     try {
-      return JSON.parse(text);
+      return { output: JSON.parse(text), usage };
     } catch {
       throw new StageAiError('AI_INVALID_RESPONSE');
     }
