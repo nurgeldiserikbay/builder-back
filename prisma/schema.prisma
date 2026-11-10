@@ -171,6 +171,8 @@ model User {
   name                     String?                   @db.VarChar(120)
   locale                   AccountLocale             @default(en)
   emailVerifiedAt          DateTime?                 @map("email_verified_at") @db.Timestamptz(3)
+  /// Set when the owner deletes the account. Data is kept for the retention period from PrivacySettings, then purged.
+  deletionRequestedAt      DateTime?                 @map("deletion_requested_at") @db.Timestamptz(3)
   createdAt                DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt                DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
   sessions                 UserSession[]
@@ -194,8 +196,10 @@ model User {
   stageAssignments          StageAssignment[]
   telegramChats             TelegramChatState[]
   accountPlan               AccountPlan?
+  consents                  UserConsent[]
 
   @@index([createdAt], map: "users_created_idx")
+  @@index([deletionRequestedAt], map: "users_deletion_requested_idx")
   @@map("users")
 }
 
@@ -1051,4 +1055,28 @@ model BillingSettings {
   updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("billing_settings")
+}
+
+/// Acceptance of the offer and privacy policy (including cross-border transfer) at given document versions.
+model UserConsent {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  termsVersion   String   @map("terms_version") @db.VarChar(20)
+  privacyVersion String   @map("privacy_version") @db.VarChar(20)
+  source         String   @db.VarChar(20)
+  acceptedAt     DateTime @default(now()) @map("accepted_at") @db.Timestamptz(3)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, acceptedAt(sort: Desc)], map: "user_consents_user_accepted_idx")
+  @@map("user_consents")
+}
+
+/// Single-row privacy settings (id = 1), managed in the admin console.
+model PrivacySettings {
+  id                   Int      @id @default(1) @db.SmallInt
+  accountRetentionDays Int      @default(30) @map("account_retention_days")
+  updatedByStaffId     String?  @map("updated_by_staff_id") @db.Uuid
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("privacy_settings")
 }

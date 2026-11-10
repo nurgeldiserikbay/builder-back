@@ -9,6 +9,8 @@ const detailKeysByEvent: Record<string, string[]> = {
   'account.plan_assigned': ['planKey', 'validUntil', 'note'],
   'plan.price_changed': ['planKey', 'previousPrice', 'nextPrice'],
   'billing.contact_changed': ['contactSet'],
+  'privacy.retention_changed': ['previousDays', 'nextDays'],
+  'account.deletion_cancelled': ['requestedAt'],
 };
 
 function safeDetails(eventType: string, value: unknown): Record<string, string | number | boolean | null> | null {

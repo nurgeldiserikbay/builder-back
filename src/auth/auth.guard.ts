@@ -1,4 +1,5 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, SetMetadata, UnauthorizedException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { IncomingHttpHeaders } from 'node:http';
 import { AuthService, SafeUser } from './auth.service.js';
 
@@ -8,9 +9,13 @@ export interface AuthenticatedRequest {
   sessionId: string;
 }
 
+const ALLOW_WITHOUT_CONSENT = 'buildpath.auth.allowWithoutConsent';
+/** Marks a route that works before the user accepts updated legal documents (profile, consent, logout, deletion). */
+export const AllowWithoutConsent = () => SetMetadata(ALLOW_WITHOUT_CONSENT, true);
+
 @Injectable()
 export class AuthGuard implements CanActivate {
-  constructor(private readonly auth: AuthService) {}
+  constructor(private readonly auth: AuthService, private readonly reflector: Reflector) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
@@ -23,6 +28,9 @@ export class AuthGuard implements CanActivate {
     const auth = await this.auth.authenticate(token);
     request.user = auth.user;
     request.sessionId = auth.sessionId;
+    if (auth.user.consentRequired && !this.reflector.getAllAndOverride<boolean>(ALLOW_WITHOUT_CONSENT, [context.getHandler(), context.getClass()])) {
+      throw new ForbiddenException('CONSENT_REQUIRED');
+    }
     return true;
   }
 }

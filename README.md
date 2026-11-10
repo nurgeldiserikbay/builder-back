@@ -37,6 +37,12 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Previews and the downloaded `site.html` inline the photos as data URIs, so they work offline. The sites server serves `/img/<id>.webp` only for photos that the published page shows.
 - For local development without ClamAV set `UPLOAD_MALWARE_SCAN=disabled`; this is ignored when `NODE_ENV=production`.
 
+### Legal documents, consent and account deletion
+
+- The offer and privacy policy (version 1.0) live in `src/legal/documents.ts` and are served by `GET /api/v1/legal/{terms|privacy}` with company details from `LEGAL_*` variables and the current retention periods filled in. Unset details show as «[будет указано]».
+- Registration requires `acceptLegal: true`; the accepted versions and time are stored in `user_consents`. When a version is bumped, `/me` reports `consentRequired` and other signed-in routes answer `403 CONSENT_REQUIRED` until `POST /me/consent`; the Telegram bot asks the user to accept in the app.
+- `POST /me/deletion` (password + confirmation) immediately signs the user out everywhere, unpublishes their sites, revokes everyone's access to their projects and their own stage assignments, and unlinks Telegram. The rest is kept for the retention period (admin console, 1–90 days, default 30), then purged by the API process hourly (`ACCOUNT_PURGE_DISABLED=true` turns it off). Staff can restore an account during that period (`POST /admin/accounts/restore`, audited).
+
 ### Plans and limits
 
 - Three plans in `src/billing/plans.ts` (catalog 1.0.0): **Бесплатный** (2 projects, 30 AI requests a month, 1 live site, no specialists), **Старт** (5 / 300 / 3, specialists) and **Бизнес** (25 / 1500 / 15, specialists). Limits belong to the account that owns the projects; AI requests of invited specialists count for the owner. Template drafts are free.

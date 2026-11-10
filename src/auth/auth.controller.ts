@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { AuthenticatedRequest } from './auth.guard.js';
-import { AuthGuard } from './auth.guard.js';
+import { AllowWithoutConsent, AuthGuard } from './auth.guard.js';
 import { AuthService, SafeUser } from './auth.service.js';
 
 type HttpResponse = { setHeader(name: string, value: string): void };
@@ -32,7 +32,7 @@ function emailField(value: string): string {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) || value.length > 254) throw new BadRequestException('INVALID_EMAIL');
   return value;
 }
-function cookie(token: string, maxAgeSeconds: number): string {
+export function cookie(token: string, maxAgeSeconds: number): string {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
   return `buildpath_session=${encodeURIComponent(token)}; Path=/api/v1; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
 }
@@ -45,13 +45,13 @@ export class AuthController {
   @HttpCode(202)
   async register(@Body() raw: unknown) {
     const body = objectBody(raw);
-    rejectUnknown(body, ['email', 'password', 'name', 'locale']);
+    rejectUnknown(body, ['email', 'password', 'name', 'locale', 'acceptLegal']);
     const email = emailField(textField(body, 'email', 3, 254));
     const password = textField(body, 'password', 12, 128);
     const name = body.name === undefined ? undefined : textField(body, 'name', 1, 120);
     const locale = body.locale === undefined ? 'en' : body.locale;
     if (!locales.includes(locale as (typeof locales)[number])) throw new BadRequestException('INVALID_LOCALE');
-    return { data: await this.auth.register({ email, password, name, locale: locale as 'en' | 'ru' | 'kk' }) };
+    return { data: await this.auth.register({ email, password, name, locale: locale as 'en' | 'ru' | 'kk', acceptLegal: body.acceptLegal === true }) };
   }
 
   @Post('auth/verify-email')
@@ -85,6 +85,7 @@ export class AuthController {
   @Post('auth/logout')
   @HttpCode(204)
   @UseGuards(AuthGuard)
+  @AllowWithoutConsent()
   async logout(@Req() request: AuthenticatedRequest, @Res({ passthrough: true }) response: HttpResponse): Promise<void> {
     await this.auth.revokeSession(request.sessionId);
     response.setHeader('Set-Cookie', cookie('', 0));
@@ -92,7 +93,18 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(AuthGuard)
+  @AllowWithoutConsent()
   me(@Req() request: AuthenticatedRequest): { data: SafeUser } {
     return { data: request.user };
+  }
+
+  @Post('me/consent')
+  @HttpCode(204)
+  @UseGuards(AuthGuard)
+  @AllowWithoutConsent()
+  async consent(@Req() request: AuthenticatedRequest, @Body() raw: unknown): Promise<void> {
+    const body = objectBody(raw);
+    rejectUnknown(body, ['termsVersion', 'privacyVersion']);
+    await this.auth.acceptConsent(request.user.id, { termsVersion: textField(body, 'termsVersion', 1, 20), privacyVersion: textField(body, 'privacyVersion', 1, 20) });
   }
 }
