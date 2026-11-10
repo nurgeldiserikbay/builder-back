@@ -1310,6 +1310,7 @@ paths:
                             model: { type: [string, 'null'] }
                             source: { type: string, enum: [app, telegram] }
                             tokens: { type: [object, 'null'], properties: { input: { type: [integer, 'null'] }, output: { type: [integer, 'null'] } } }
+                            cost: { type: [number, 'null'], description: Cost for the customer in tenge at the prices of the moment }
                             durationMs: { type: integer }
                             result: { type: [object, 'null'], properties: { versionNumber: { type: integer } } }
                             outcome: { type: string, enum: [accepted, current, replaced, failed] }
@@ -1529,6 +1530,44 @@ paths:
       responses:
         '200': { description: 'folder and files: site/index.html, Caddyfile (automatic HTTPS), compose.yaml, README.md with commands' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/budget:
+    get:
+      tags: [Budget]
+      operationId: getProjectBudget
+      summary: AI estimate and spending of the project (members only)
+      description: Estimate = expected requests per stage × typical tokens × customer price, as a range for the whole route and for stages not accepted yet. Spending sums the stored cost of each request (tenge), by stage and participant; requests made before prices were set are counted as unpriced.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'pricingConfigured, perRequest, estimate (min, max, remainingMin, remainingMax, basedOnRequests), spent (total, requests, unpricedRequests), stages, participants, currency KZT' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /admin/ai-pricing:
+    get:
+      tags: [Budget]
+      operationId: staffGetAiPricing
+      summary: Staff — customer prices for AI usage
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      responses:
+        '200': { description: 'inputPerMillion, outputPerMillion (tenge), updatedAt, typicalRequest; or null' }
+    post:
+      tags: [Budget]
+      operationId: staffSetAiPricing
+      summary: Staff — set customer prices (super_admin, audited)
+      description: Applies to new requests; each past request keeps its stored cost.
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [inputPerMillion, outputPerMillion], properties: { inputPerMillion: { type: number, minimum: 0, maximum: 1000000 }, outputPerMillion: { type: number, minimum: 0, maximum: 1000000 } } }
+      responses:
+        '200': { description: Prices }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/journey:
     get:
       tags: [Journey]

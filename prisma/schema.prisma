@@ -876,6 +876,8 @@ model GenerationRun {
   /// Provider-reported usage; null for templates and providers that do not report it.
   inputTokens       Int?                @map("input_tokens")
   outputTokens      Int?                @map("output_tokens")
+  /// Price for the customer at the time of the request, in tiyn (1/100 ₸); null when tokens or prices were unknown.
+  costTiyn          Int?                @map("cost_tiyn")
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   project           Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
   stage             ProjectStage        @relation(fields: [stageId], references: [id], onDelete: Cascade)
@@ -1184,4 +1186,15 @@ model CodeRepository {
   project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@map("code_repositories")
+}
+
+/// Single-row customer prices for AI usage (id = 1), set in the admin console. Each request stores its own cost.
+model AiPricing {
+  id                   Int      @id @default(1) @db.SmallInt
+  inputPerMillionTiyn  Int      @map("input_per_million_tiyn")
+  outputPerMillionTiyn Int      @map("output_per_million_tiyn")
+  updatedByStaffId     String?  @map("updated_by_staff_id") @db.Uuid
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("ai_pricing")
 }

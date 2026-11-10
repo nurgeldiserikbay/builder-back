@@ -57,6 +57,10 @@ A stage definition can be a contract (`contract` in the catalog; today «Цел�
 
 Reopening an accepted stage changes only that stage: stages built on it keep using its last accepted version. When a new version is accepted, every stage built directly on it that already has work gets a change notice (`change_notices`) with a plain-language list of changes; that stage stays pinned to the version it was built on and cannot be accepted or submitted until its lead (or the owner) decides: accept and update, accept without changes, or ask a question. The author of the changed stage answers (keep, will revise, ask the owner). A newer accepted version supersedes the notice and keeps the original pin; reverting to the pinned version closes it. Participants get Telegram notices. API: `GET /projects/{id}/stages/{key}/changes`, `POST /projects/{id}/changes/{noticeId}`.
 
+### AI money: prices, cost of each request, project estimate
+
+Super admins set customer prices per million input and output tokens in the admin console (`/admin/ai-pricing`, audited). Every AI request stores its own cost in tiyn (`generation_runs.cost_tiyn`) at the prices of that moment, failed requests included. `GET /projects/{id}/budget` (project members) returns the estimate for the route — expected requests per stage × typical tokens (average of recent requests, defaults until there are 20) × price, as a range — and what was spent by stage and participant; stage pages show the approximate price of one request. Requests made before prices were set are reported as unpriced.
+
 ### AI request history
 
 Every AI request and template draft is stored as a `generation_runs` row with who asked, stage and block, source (`app` or `telegram`), model, provider-reported tokens (`input_tokens`, `output_tokens`, also on failed runs) and the resulting version. `GET /api/v1/projects/{id}/ai-history` lists them with filters by stage, participant, text and period, shows what happened to each result (accepted, current draft, replaced, failed) and totals by participant and stage. Owners and managers see the whole project; a specialist sees only their stages.
