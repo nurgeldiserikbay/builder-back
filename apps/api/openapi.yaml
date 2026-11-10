@@ -2412,6 +2412,207 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /legal/consent:
+    get:
+      tags: [Legal]
+      operationId: getConsentStatement
+      summary: Registration consent text and the current document versions
+      x-implementation-status: implemented
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [statement, termsVersion, privacyVersion]
+                    properties:
+                      statement: { type: string }
+                      termsVersion: { type: string }
+                      privacyVersion: { type: string }
+  /legal/{key}:
+    get:
+      tags: [Legal]
+      operationId: getLegalDocument
+      summary: Published offer or privacy policy
+      description: Markdown with company details and current retention periods filled in. Unset company details are shown as "[будет указано]".
+      x-implementation-status: implemented
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string, enum: [terms, privacy] } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [key, title, version, effectiveDate, markdown]
+                    properties:
+                      key: { type: string, enum: [terms, privacy] }
+                      title: { type: string }
+                      version: { type: string }
+                      effectiveDate: { type: string, format: date }
+                      markdown: { type: string }
+        '400': { $ref: '#/components/responses/Problem' }
+  /me/consent:
+    post:
+      tags: [Legal]
+      operationId: acceptLegalDocuments
+      summary: Accept updated legal documents
+      description: The versions must equal the current ones (400 LEGAL_VERSION_OUTDATED otherwise), so a stale page cannot accept newer texts.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [termsVersion, privacyVersion]
+              properties:
+                termsVersion: { type: string, maxLength: 20 }
+                privacyVersion: { type: string, maxLength: 20 }
+      responses:
+        '204': { description: Recorded }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /me/deletion:
+    get:
+      tags: [Account]
+      operationId: previewAccountDeletion
+      summary: What deleting the account will do
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [projects, liveSites, specialistStages, telegramLinked, retentionDays, purgeAfter]
+                    properties:
+                      projects: { type: integer }
+                      liveSites: { type: array, items: { type: object, properties: { slug: { type: string }, projectName: { type: string } } } }
+                      specialistStages: { type: integer, description: Active or invited stages on other people's projects }
+                      telegramLinked: { type: boolean }
+                      retentionDays: { type: integer }
+                      purgeAfter: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Account]
+      operationId: deleteAccount
+      summary: Delete the signed-in account
+      description: |
+        Requires the password. Immediately: all sessions revoked (the cookie is cleared), live sites unpublished, specialists and members
+        lose access to the user's projects, the user's own stage assignments revoked (owners see specialist_account_deleted), Telegram unlinked.
+        Data is kept for the retention period from privacy settings (1–90 days, default 30) so staff can restore the account, then purged
+        by the API process (hourly). Login during that period answers 403 ACCOUNT_DELETED.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [password, confirm]
+              properties:
+                password: { type: string, maxLength: 128, writeOnly: true }
+                confirm: { type: boolean, enum: [true] }
+      responses:
+        '200':
+          description: Deletion recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      deletionRequestedAt: { type: string, format: date-time }
+                      purgeAfter: { type: string, format: date-time }
+                      retentionDays: { type: integer }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem', description: 'SESSION_INVALID or INVALID_PASSWORD' }
+  /admin/privacy-settings:
+    get:
+      tags: [Account]
+      operationId: staffGetPrivacySettings
+      summary: Staff — retention period after account deletion
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      responses:
+        '200': { description: 'accountRetentionDays, minDays, maxDays, pendingDeletions, updatedAt, legalVersions' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Account]
+      operationId: staffUpdatePrivacySettings
+      summary: Staff — change the retention period
+      description: super_admin only; audited as privacy.retention_changed. Applies to accounts already waiting for deletion (purge time = deletion time + current period).
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [accountRetentionDays]
+              properties:
+                accountRetentionDays: { type: integer, minimum: 1, maximum: 90 }
+      responses:
+        '200': { description: Updated settings }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /admin/accounts/status:
+    get:
+      tags: [Account]
+      operationId: staffAccountStatus
+      summary: Staff — deletion and consent status of an account
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: email, in: query, required: true, schema: { type: string, maxLength: 254 } }
+      responses:
+        '200': { description: 'userId, email, deletionRequestedAt, purgeAfter, consent (versions and time of the latest acceptance)' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /admin/accounts/restore:
+    post:
+      tags: [Account]
+      operationId: staffRestoreAccount
+      summary: Staff — cancel a pending account deletion
+      description: super_admin only; audited as account.deletion_cancelled. Sites stay unpublished and specialists are not re-invited.
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [email], properties: { email: { type: string, maxLength: 254 } } }
+      responses:
+        '200': { description: Account status after restore }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
 components:
   securitySchemes:
     adminSessionCookie:
@@ -3436,6 +3637,9 @@ components:
         password: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
         name: { type: string, minLength: 1, maxLength: 120 }
         locale: { type: string, enum: [en, ru, kk], default: en }
+        acceptLegal:
+          type: boolean
+          description: Must be true. Records acceptance of the current offer and privacy policy (including cross-border transfer) with their versions; otherwise 400 CONSENT_REQUIRED.
     LoginRequest:
       type: object
       additionalProperties: false
@@ -3462,13 +3666,16 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [id, email, locale, emailVerified]
+          required: [id, email, locale, emailVerified, consentRequired]
           properties:
             id: { type: string, format: uuid }
             email: { type: string, format: email }
             name: { type: [string, 'null'], maxLength: 120 }
             locale: { type: string, enum: [en, ru, kk] }
             emailVerified: { type: boolean }
+            consentRequired:
+              type: boolean
+              description: True when the current offer/privacy versions are not accepted. Until POST /me/consent, other signed-in routes answer 403 CONSENT_REQUIRED (except /me, /me/deletion, /auth/logout).
     WorkspaceListResponse:
       type: object
       additionalProperties: false

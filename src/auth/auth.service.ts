@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  ForbiddenException,
   Injectable,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -6,6 +8,7 @@ import {
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 import { telegramConfig, verifyWebAppInitData } from '../notifications/telegram.js';
+import { LEGAL_VERSIONS } from '../legal/documents.js';
 
 const scrypt = (password: string, salt: Buffer, length: number, options: { N: number; r: number; p: number; maxmem: number }): Promise<Buffer> =>
   new Promise((resolve, reject) => {
@@ -23,13 +26,23 @@ export interface SafeUser {
   name: string | null;
   locale: string;
   emailVerified: boolean;
+  /** True when the user has not accepted the current versions of the offer and privacy policy. */
+  consentRequired: boolean;
+}
+
+type ConsentRow = { termsVersion: string; privacyVersion: string };
+const latestConsent = { orderBy: { acceptedAt: 'desc' as const }, take: 1, select: { termsVersion: true, privacyVersion: true } };
+
+export function consentIsCurrent(consent: ConsentRow | undefined): boolean {
+  return Boolean(consent && consent.termsVersion === LEGAL_VERSIONS.terms && consent.privacyVersion === LEGAL_VERSIONS.privacy);
 }
 
 @Injectable()
 export class AuthService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async register(input: { email: string; password: string; name?: string; locale: 'en' | 'ru' | 'kk' }) {
+  async register(input: { email: string; password: string; name?: string; locale: 'en' | 'ru' | 'kk'; acceptLegal: boolean }) {
+    if (input.acceptLegal !== true) throw new BadRequestException('CONSENT_REQUIRED');
     const normalized = input.email.trim().toLowerCase();
     const mail = this.mailConfig();
     const existing = await this.prisma.user.findUnique({ where: { emailNormalized: normalized } });
@@ -58,6 +71,9 @@ export class AuthService {
         await tx.emailVerificationToken.create({
           data: { userId: user.id, tokenHash, expiresAt: new Date(Date.now() + VERIFY_TTL_MS) },
         });
+        await tx.userConsent.create({
+          data: { userId: user.id, termsVersion: LEGAL_VERSIONS.terms, privacyVersion: LEGAL_VERSIONS.privacy, source: 'register' },
+        });
       });
     } catch (error) {
       if (this.isUniqueViolation(error)) return { status: 'verification_pending' as const };
@@ -84,6 +100,7 @@ export class AuthService {
       if (failedUser) {
         await this.prisma.$transaction([
           this.prisma.emailVerificationToken.deleteMany({ where: { userId: failedUser.id } }),
+          this.prisma.userConsent.deleteMany({ where: { userId: failedUser.id } }),
           this.prisma.workspaceMember.deleteMany({ where: { userId: failedUser.id } }),
           this.prisma.workspace.deleteMany({ where: { ownerUserId: failedUser.id } }),
           this.prisma.user.deleteMany({ where: { id: failedUser.id, emailVerifiedAt: null } }),
@@ -113,10 +130,13 @@ export class AuthService {
   async login(email: string, password: string): Promise<{ token: string; user: SafeUser }> {
     const user = await this.prisma.user.findUnique({
       where: { emailNormalized: email.trim().toLowerCase() },
+      include: { consents: latestConsent },
     });
     if (!user || !(await this.verifyPassword(password, user.passwordHash))) {
       throw new UnauthorizedException('INVALID_CREDENTIALS');
     }
+    // Shown only after the correct password, so it does not reveal which emails have accounts.
+    if (user.deletionRequestedAt) throw new ForbiddenException('ACCOUNT_DELETED');
     if (!user.emailVerifiedAt) throw new UnauthorizedException('EMAIL_NOT_VERIFIED');
 
     const token = randomBytes(32).toString('base64url');
@@ -138,9 +158,9 @@ export class AuthService {
     if (!verified) throw new UnauthorizedException('TELEGRAM_AUTH_INVALID');
     const identity = await this.prisma.externalIdentity.findUnique({
       where: { provider_externalId: { provider: 'telegram', externalId: verified.telegramUserId } },
-      include: { user: true },
+      include: { user: { include: { consents: latestConsent } } },
     });
-    if (!identity || !identity.user.emailVerifiedAt) throw new UnauthorizedException('TELEGRAM_NOT_LINKED');
+    if (!identity || !identity.user.emailVerifiedAt || identity.user.deletionRequestedAt) throw new UnauthorizedException('TELEGRAM_NOT_LINKED');
     const token = randomBytes(32).toString('base64url');
     await this.prisma.userSession.create({ data: { userId: identity.userId, tokenHash: this.digest(token), expiresAt: new Date(Date.now() + SESSION_TTL_MS) } });
     return { token, user: this.toSafeUser(identity.user) };
@@ -149,9 +169,9 @@ export class AuthService {
   async authenticate(token: string): Promise<{ user: SafeUser; sessionId: string }> {
     const session = await this.prisma.userSession.findUnique({
       where: { tokenHash: this.digest(token) },
-      include: { user: true },
+      include: { user: { include: { consents: latestConsent } } },
     });
-    if (!session || session.revokedAt || session.expiresAt <= new Date() || !session.user.emailVerifiedAt) {
+    if (!session || session.revokedAt || session.expiresAt <= new Date() || !session.user.emailVerifiedAt || session.user.deletionRequestedAt) {
       throw new UnauthorizedException('SESSION_INVALID');
     }
     return { user: this.toSafeUser(session.user), sessionId: session.id };
@@ -207,7 +227,21 @@ export class AuthService {
     return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002';
   }
 
-  private toSafeUser(user: { id: string; email: string; name: string | null; locale: string; emailVerifiedAt: Date | null }): SafeUser {
-    return { id: user.id, email: user.email, name: user.name, locale: user.locale, emailVerified: Boolean(user.emailVerifiedAt) };
+  /** Records acceptance of the current documents; the client sends the versions it showed, so an outdated page cannot accept newer texts. */
+  async acceptConsent(userId: string, versions: { termsVersion: string; privacyVersion: string }): Promise<void> {
+    if (versions.termsVersion !== LEGAL_VERSIONS.terms || versions.privacyVersion !== LEGAL_VERSIONS.privacy) {
+      throw new BadRequestException('LEGAL_VERSION_OUTDATED');
+    }
+    await this.prisma.userConsent.create({ data: { userId, ...versions, source: 'update' } });
+  }
+
+  /** Password check for sensitive actions such as account deletion. */
+  async confirmPassword(userId: string, password: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
+    return Boolean(user && (await this.verifyPassword(password, user.passwordHash)));
+  }
+
+  private toSafeUser(user: { id: string; email: string; name: string | null; locale: string; emailVerifiedAt: Date | null; consents: ConsentRow[] }): SafeUser {
+    return { id: user.id, email: user.email, name: user.name, locale: user.locale, emailVerified: Boolean(user.emailVerifiedAt), consentRequired: !consentIsCurrent(user.consents[0]) };
   }
 }

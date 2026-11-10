@@ -3,6 +3,9 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 import { answerCallbackQuery, sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
 import { TelegramBotService } from '../telegram-bot/bot.service.js';
+import { consentIsCurrent } from '../auth/auth.service.js';
+
+const CONSENT_TEXT = 'Мы обновили оферту и политику конфиденциальности. Откройте BuildPath и примите новую редакцию — после этого бот снова заработает.';
 
 const CODE_TTL_MS = 15 * 60 * 1000;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -37,6 +40,16 @@ export class TelegramLinkService {
     if (deleted.count === 0) throw new NotFoundException('TELEGRAM_NOT_LINKED');
   }
 
+  /** Linked BuildPath user of a Telegram account; the bot works only after the current legal documents are accepted. */
+  private async identity(externalId: string): Promise<{ userId: string; consentCurrent: boolean } | null> {
+    const row = await this.prisma.externalIdentity.findUnique({
+      where: { provider_externalId: { provider: 'telegram', externalId } },
+      select: { userId: true, user: { select: { deletionRequestedAt: true, consents: { orderBy: { acceptedAt: 'desc' }, take: 1, select: { termsVersion: true, privacyVersion: true } } } } },
+    });
+    if (!row || row.user.deletionRequestedAt) return null;
+    return { userId: row.userId, consentCurrent: consentIsCurrent(row.user.consents[0]) };
+  }
+
   /** Telegram webhook. Unknown or malformed updates are acknowledged and ignored. */
   async handleUpdate(secretHeader: string | undefined, update: unknown): Promise<boolean> {
     const config = telegramConfig();
@@ -50,9 +63,13 @@ export class TelegramLinkService {
       const fromId = idOf(callback.from?.id);
       const chat = idOf(callback.message?.chat?.id);
       if (!callbackId || !fromId || !chat || callback.message?.chat?.type !== 'private' || typeof callback.data !== 'string' || callback.data.length > 64) return true;
-      const identity = await this.prisma.externalIdentity.findUnique({ where: { provider_externalId: { provider: 'telegram', externalId: fromId } }, select: { userId: true } });
+      const identity = await this.identity(fromId);
       if (!identity) {
         await answerCallbackQuery(config, callbackId, 'Telegram не подключён к BuildPath');
+        return true;
+      }
+      if (!identity.consentCurrent) {
+        await answerCallbackQuery(config, callbackId, CONSENT_TEXT.slice(0, 190));
         return true;
       }
       // Answer Telegram immediately; AI work can take longer than the webhook timeout.
@@ -90,7 +107,11 @@ export class TelegramLinkService {
       await reply(deleted.count ? 'Telegram отключён от BuildPath. Заявки сюда больше не придут.' : 'Этот Telegram не привязан к BuildPath.');
       return true;
     }
-    const identity = await this.prisma.externalIdentity.findUnique({ where: { provider_externalId: { provider: 'telegram', externalId: String(fromId) } }, select: { userId: true } });
+    const identity = await this.identity(String(fromId));
+    if (identity && !identity.consentCurrent) {
+      await reply(CONSENT_TEXT);
+      return true;
+    }
     if (identity) {
       const kind = typeof message.text === 'string' ? 'text' : message.voice || message.audio ? 'voice' : 'other';
       void this.bot.onMessage(identity.userId, String(chatId), typeof message.text === 'string' ? message.text : null, kind).catch(() => undefined);
