@@ -1,5 +1,5 @@
 // Pure, deterministic stage transition rules. The service applies their result inside a transaction.
-import { routeAncestors, routeDependents, routeInputs, type StageKey } from './catalog.js';
+import { routeAncestors, routeInputs, type StageKey } from './catalog.js';
 
 export type StageStatus = 'locked' | 'ready' | 'awaiting_lead' | 'in_progress' | 'in_review' | 'changes_requested'
   | 'approved' | 'stale' | 'imported' | 'skipped' | 'blocked';
@@ -34,17 +34,28 @@ export function unlockDependents(route: StageKey[], statuses: StatusMap): Status
 }
 
 /**
- * Reopening an accepted stage invalidates everything built on it: accepted dependents become "stale",
- * untouched dependents close again. Work in progress stays, but cannot be accepted until inputs are accepted.
+ * Reopening an accepted stage changes only that stage. Stages built on it keep using its last accepted version
+ * (see effectiveStatuses) until a new version is accepted; then each of them gets a change notice to decide on.
  */
-export function reopenStage(route: StageKey[], statuses: StatusMap, key: StageKey, hasDraft: (key: StageKey) => boolean): StatusMap {
-  const next = { ...statuses, [key]: 'in_progress' as StageStatus };
-  for (const dependent of routeDependents(route, key)) {
-    const status = next[dependent];
-    if (status === 'approved' || status === 'imported') next[dependent] = 'stale';
-    else if (status === 'ready' && !hasDraft(dependent)) next[dependent] = 'locked';
+export function reopenStage(statuses: StatusMap, key: StageKey): StatusMap {
+  return { ...statuses, [key]: 'in_progress' as StageStatus };
+}
+
+/**
+ * Statuses as seen by dependent stages: a stage that has an accepted version and is being changed again
+ * still provides that accepted version, so work built on it can go on.
+ */
+export function effectiveStatuses(statuses: StatusMap, hasAcceptedVersion: (key: StageKey) => boolean): StatusMap {
+  const next: StatusMap = { ...statuses };
+  for (const [key, status] of Object.entries(statuses) as Array<[StageKey, StageStatus]>) {
+    if ((status === 'in_progress' || status === 'in_review' || status === 'changes_requested' || status === 'stale') && hasAcceptedVersion(key)) next[key] = 'approved';
   }
   return next;
+}
+
+/** Stages that use the given stage directly as an input. */
+export function directDependents(route: StageKey[], key: StageKey): StageKey[] {
+  return route.filter((candidate) => routeInputs(route, candidate).includes(key));
 }
 
 export function canEdit(status: StageStatus | undefined): boolean {

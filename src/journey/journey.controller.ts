@@ -108,6 +108,23 @@ export class JourneyController {
     return this.journey.aiHistory(request.user.id, projectId, { stageKey: stage ? stageKey(stage) : null, authorId: authorId ?? null, query: q, before: beforeDate, limit: size });
   }
 
+  @Get('projects/:projectId/stages/:stageKey/changes')
+  changes(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
+    return this.journey.changeNotices(request.user.id, projectId, stageKey(key));
+  }
+
+  @Post('projects/:projectId/changes/:noticeId')
+  @HttpCode(200)
+  actOnChange(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('noticeId') noticeId: string, @Body() raw: unknown) {
+    if (!/^[0-9a-f-]{36}$/i.test(noticeId)) throw new BadRequestException('INVALID_NOTICE');
+    const input = body(raw, ['action', 'text', 'resolution']);
+    const action = input.action;
+    if (action !== 'accept' && action !== 'accept_no_change' && action !== 'discuss' && action !== 'reply') throw new BadRequestException('INVALID_ACTION');
+    const resolution = input.resolution === undefined || input.resolution === null ? null : input.resolution;
+    if (resolution !== null && resolution !== 'kept' && resolution !== 'will_revise' && resolution !== 'escalate') throw new BadRequestException('INVALID_RESOLUTION');
+    return this.journey.actOnChange(request.user.id, projectId, noticeId, { action, text: text(input.text, 'text', 1, 2000, true), resolution });
+  }
+
   @Get('projects/:projectId/stages/:stageKey')
   stage(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
     return this.journey.stage(request.user.id, projectId, stageKey(key));

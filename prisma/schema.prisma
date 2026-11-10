@@ -309,6 +309,7 @@ model Project {
   telegramChats    TelegramChatState[]
   images           ProjectImage[]
   leads            SiteLead[]
+  changeNotices    ChangeNotice[]
 
   @@index([workspaceId, status, createdAt(sort: Desc)], map: "projects_workspace_status_created_idx")
   @@index([ownerUserId, createdAt(sort: Desc)], map: "projects_owner_created_idx")
@@ -804,6 +805,8 @@ model ProjectStage {
   instructions      StageInstruction[]
   generationRuns    GenerationRun[]
   assignments       StageAssignment[]
+  incomingChanges   ChangeNotice[]         @relation("ChangeNoticeTarget")
+  outgoingChanges   ChangeNotice[]         @relation("ChangeNoticeSource")
 
   @@unique([projectId, stageKey], map: "project_stages_project_key_key")
   @@index([projectId, position], map: "project_stages_project_position_idx")
@@ -1085,4 +1088,54 @@ model PrivacySettings {
   updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   @@map("privacy_settings")
+}
+
+enum ChangeNoticeStatus {
+  open
+  discussing
+  accepted
+  accepted_no_change
+  superseded
+}
+
+/// A new accepted version of a stage, waiting for the decision of a stage built on it. While open, the target
+/// stage keeps using previousVersionId of the source (pinned input).
+model ChangeNotice {
+  id                String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId         String             @map("project_id") @db.Uuid
+  sourceStageId     String             @map("source_stage_id") @db.Uuid
+  targetStageId     String             @map("target_stage_id") @db.Uuid
+  previousVersionId String             @map("previous_version_id") @db.Uuid
+  newVersionId      String             @map("new_version_id") @db.Uuid
+  changes           String[]           @default([])
+  status            ChangeNoticeStatus @default(open)
+  createdByUserId   String             @map("created_by_user_id") @db.Uuid
+  decidedByUserId   String?            @map("decided_by_user_id") @db.Uuid
+  decidedByOwner    Boolean            @default(false) @map("decided_by_owner")
+  decidedAt         DateTime?          @map("decided_at") @db.Timestamptz(3)
+  createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceStage       ProjectStage       @relation("ChangeNoticeSource", fields: [sourceStageId], references: [id], onDelete: Cascade)
+  targetStage       ProjectStage       @relation("ChangeNoticeTarget", fields: [targetStageId], references: [id], onDelete: Cascade)
+  messages          ChangeMessage[]
+
+  @@index([targetStageId, status], map: "change_notices_target_status_idx")
+  @@index([sourceStageId, status], map: "change_notices_source_status_idx")
+  @@map("change_notices")
+}
+
+/// Discussion between the stage that changed (source side) and the stage built on it (target side).
+model ChangeMessage {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  noticeId     String       @map("notice_id") @db.Uuid
+  authorUserId String       @map("author_user_id") @db.Uuid
+  side         String       @db.VarChar(10)
+  resolution   String?      @db.VarChar(20)
+  text         String       @db.VarChar(2000)
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  notice       ChangeNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@index([noticeId, createdAt], map: "change_messages_notice_created_idx")
+  @@map("change_messages")
 }
