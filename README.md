@@ -91,6 +91,15 @@ Every AI request and template draft is stored as a `generation_runs` row with wh
 
 Run unit tests with `npm test`.
 
+
+### Online booking route («Онлайн-запись к мастеру»)
+
+- Project type `booking`: goal → services and prices → **«Расписание и запись»** → texts → design → build. The schedule stage has no AI: it starts from the accepted services with 60 minutes each and one master working Mon–Sat 10:00–19:00, and the owner sets real durations, masters (which services, hours per weekday), the step between start times (15/30/60 min), minimum notice, how many days ahead and the client cancellation deadline, in a fixed list of time zones. Validation is in `src/journey/schedule.ts`; acceptance is blocked while a service has no master or a master has no working days.
+- The build embeds the accepted schedule and prices into the site (`meta.booking`), adds an «Онлайн-запись» section and points buttons to `/book`. Build checks: every bookable service has a master (required), all offered services are bookable (warning), an owner contact exists for the data notice (required).
+- On the sites server the booking steps are script-free pages: service → master or «любой свободный» → day and time → name, phone, comment and consent (`POST /__forms/booking`). Free time is computed from the schedule and active bookings; the write takes a transaction-scoped advisory lock per site and recomputes the free time inside it, so the same master is never booked twice for overlapping time (verified with 8 parallel requests: one booking, seven «время уже заняли»). «Любой свободный» picks the master with fewer bookings that day. Same limits and honeypot as lead forms. The client gets a private link `/book/b/<token>` (only its hash is stored) to see or cancel the booking until the cancellation deadline (`POST /__forms/booking-cancel`).
+- The owner is notified in Telegram/email about new and cancelled bookings (site notification settings), sees bookings at `GET /projects/:id/bookings?scope=upcoming|past` and can cancel or mark «пришёл» / «не пришёл» (`POST /projects/:id/bookings/:id/status`). Bookings are deleted `LEAD_RETENTION_DAYS` after the visit.
+- Not yet: masters' own accounts, client reminders (SMS/WhatsApp), breaks and days off by date, prepayment, booking on GitHub Pages or an own server (static hosting cannot take bookings; the deployment card says so).
+
 ### Review tool
 
 - Public `GET /api/v1/capabilities` returns the deterministic, versioned platform support manifest. Staff-only `GET /api/v1/admin/capabilities` exposes the same catalog after staff authentication and role authorization.

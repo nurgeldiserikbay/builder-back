@@ -1,6 +1,7 @@
 // Typed artifact schemas, deterministic validation, locking/merge rules, templates and text import.
 import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
 import type { ArtifactType } from './catalog.js';
+import { normalizeSchedule, scheduleIssues, type BookingConfig, type Schedule } from './schedule.js';
 
 export type MainAction = 'call' | 'message' | 'visit' | 'email' | 'form';
 export type Tone = 'friendly' | 'formal' | 'bold';
@@ -21,6 +22,8 @@ export interface SiteMeta {
   businessName: string; locale: string; hasForm: boolean;
   theme: { background: string; text: string; muted: string; accent: string; accentText: string; font: string; radius: string };
   ownerContacts: Array<{ label: string; value: string }>;
+  /** Online booking route: the accepted schedule this build was made from. */
+  booking?: BookingConfig;
 }
 export interface SiteArtifact {
   html: string;
@@ -161,6 +164,7 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown): unknown {
     case 'offer': return normalizeOffer(raw);
     case 'content': return normalizeContent(raw);
     case 'design': return normalizeDesign(raw);
+    case 'schedule': return normalizeSchedule(raw);
     default: throw new ArtifactValidationError('ARTIFACT_NOT_EDITABLE');
   }
 }
@@ -171,6 +175,7 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'brief') return ['businessName', 'whatYouDo', 'audience', 'city', 'mainAction', 'phone', 'messenger', 'email', 'address', 'tone'];
   if (type === 'offer') return ['services', 'hours'];
   if (type === 'design') return ['palette', 'font', 'corners', 'heroLayout'];
+  if (type === 'schedule') return ['timezone', 'services', 'masters', 'rules'];
   return [];
 }
 
@@ -252,6 +257,7 @@ export function completenessIssues(type: ArtifactType, content: unknown): Comple
     if (brief.mainAction === 'email' && !brief.email) issues.push({ key: 'email', message: 'Для кнопки письма нужен email.' });
     if (brief.mainAction === 'visit' && !brief.address) issues.push({ key: 'address', message: 'Чтобы к вам пришли, нужен адрес.' });
   }
+  if (type === 'schedule') issues.push(...scheduleIssues(content as Schedule));
   if (type === 'offer' && (content as Offer).services.length === 0) issues.push({ key: 'services', message: 'Добавьте хотя бы одну услугу.' });
   if (type === 'content') {
     const artifact = content as ContentArtifact;

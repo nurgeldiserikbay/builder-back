@@ -3,6 +3,7 @@ import {
   Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException,
 } from '@nestjs/common';
 import { WorktimeService } from './worktime.service.js';
+import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, type BookingConfig, type Schedule } from './schedule.js';
 import { PrismaService } from '../database/prisma.service.js';
 import {
   ROUTE_CATALOG_VERSION, projectTypeOf, projectTypes, routeAncestors, routeInputs, stageDefinitions, statusExplanations,
@@ -327,6 +328,9 @@ export class JourneyService {
     const ai = this.ai();
     const site = definition.artifactType === 'site' && current ? current.content as unknown as SiteArtifact : null;
     const assignment = this.assignmentFor(ctx, stageKey);
+    // Schedule has no AI: the editor starts from the accepted services and a typical working day.
+    const scheduleTemplate = definition.artifactType === 'schedule' && !current
+      ? templateSchedule((await this.acceptedInputs(ctx, stageKey)).offer?.content as Offer | undefined ?? null) : null;
     const owner = ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role) && editableProject(ctx.project.status);
     const writable = canEdit(stage.status) && this.canWrite(ctx, stageKey) && editableProject(ctx.project.status);
     const suggestions = await this.prisma.stageInstruction.findMany({
@@ -393,6 +397,7 @@ export class JourneyService {
         },
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
+          ...(definition.artifactType === 'schedule' ? { schedule: { template: scheduleTemplate, timezones: TIMEZONES, weekdays: WEEKDAYS, slotSteps: SLOT_STEPS } } : {}),
         },
       },
     };
@@ -798,18 +803,26 @@ export class JourneyService {
       const id = useDraft ? stage.currentVersionId ?? stage.approvedVersionId : accepted;
       return this.versionContent(id);
     };
-    const [goal, offer, content, design] = await Promise.all([pick('goal'), pick('offer'), pick('content'), pick('design')]);
+    const [goal, offer, content, design, schedule] = await Promise.all([pick('goal'), pick('offer'), pick('content'), pick('design'), pick('schedule')]);
+    if (acceptedOnly && ctx.route.includes('schedule') && !schedule) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     if (!goal || !content) throw new ConflictException(acceptedOnly ? 'STAGE_INPUTS_NOT_ACCEPTED' : 'PREVIEW_NOT_READY');
     if (acceptedOnly && !design) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const versionIds: Record<string, string> = { goal: goal.id, content: content.id };
     if (offer) versionIds.offer = offer.id;
     if (design) versionIds.design = design.id;
+    if (schedule) versionIds.schedule = schedule.id;
+    const offerContent = (offer?.content as Offer | undefined) ?? null;
+    const booking: BookingConfig | null = schedule ? {
+      schedule: schedule.content as Schedule,
+      prices: Object.fromEntries((schedule.content as Schedule).services.map((service) => [service.name, offerContent?.services.find((item) => item.name === service.name)?.price ?? null])),
+    } : null;
     return {
       versionIds,
       input: {
         brief: goal.content as Brief, offer: (offer?.content as Offer | undefined) ?? null, content: content.content as ContentArtifact,
         design: (design?.content as DesignArtifact | undefined) ?? defaultDesign, locale: ctx.project.locale, draft: !acceptedOnly,
         images: await this.imageInfo(ctx.project.id, contentImageIds(content.content)),
+        booking,
       },
     };
   }
@@ -1172,6 +1185,15 @@ export class JourneyService {
       lines.push('', '## Услуги', '');
       for (const service of offer.services) lines.push(`- ${service.name}${service.price ? ` — ${service.price}` : ''}${service.description ? `. ${service.description}` : ''}`);
       if (offer.hours) lines.push('', `Часы работы: ${offer.hours}`);
+    }
+    const schedule = get<Schedule>('schedule');
+    if (schedule) {
+      lines.push('', '## Расписание и запись', '', `Часовой пояс: ${schedule.timezone}. Шаг времени: ${schedule.rules.slotStep} мин. Запись не позже чем за ${schedule.rules.minNoticeHours} ч, на ${schedule.rules.horizonDays} дн. вперёд; отмена клиентом — не позже чем за ${schedule.rules.cancelHours} ч.`, '');
+      for (const service of schedule.services) lines.push(`- ${service.name}: ${service.minutes} мин`);
+      for (const master of schedule.masters) {
+        const days = master.week.map((day, index) => (day ? `${WEEKDAYS[index]} ${day.from}–${day.to}` : null)).filter(Boolean).join(', ');
+        lines.push(`- Мастер ${master.name}: ${master.services.length ? master.services.join(', ') : 'все услуги'}; ${days || 'нет рабочих дней'}`);
+      }
     }
     if (content) {
       lines.push('', '## Тексты сайта', '', `Заголовок для поиска: ${content.seo.title}`, `Описание для поиска: ${content.seo.description}`);

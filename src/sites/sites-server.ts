@@ -9,6 +9,10 @@ import { notifyLead } from '../notifications/lead-notifier.js';
 import { sitesConfig, slugFromHost } from '../publishing/slug.js';
 import { reportError } from '../observability/error-reporting.js';
 import { messagePage, parseLeadForm, privacyPage, thanksPage } from './site-pages.js';
+import { BOOKING_CANCEL_PATH, BOOKING_FORM_PATH, bookingPage, confirmPage, mastersFor, mastersPage, parseBookingForm, parseQuery, servicesPage, timesPage } from './booking-pages.js';
+import { busyBetween, canClientCancel, createBooking, tokenHash } from './booking-store.js';
+import { notifyBooking } from '../notifications/booking-notifier.js';
+import { localDay as localDayOf, openDays, slotsFor } from '../journey/schedule.js';
 
 export interface SitesServerOptions {
   baseDomain: string;
@@ -20,6 +24,7 @@ export interface SitesServerOptions {
   perIpPerHour: number;
   perSitePerDay: number;
   notify: (leadId: string) => Promise<unknown>;
+  notifyBooking: (bookingId: string, kind: 'created' | 'cancelled_by_client') => Promise<unknown>;
 }
 
 export function sitesOptionsFromEnv(prisma: PrismaClient, env: NodeJS.ProcessEnv = process.env): SitesServerOptions {
@@ -31,6 +36,7 @@ export function sitesOptionsFromEnv(prisma: PrismaClient, env: NodeJS.ProcessEnv
     retentionDays: Number.isInteger(retention) && retention > 0 ? retention : 365,
     https: config.urlTemplate.startsWith('https://'), perIpPerHour: 5, perSitePerDay: 200,
     notify: (leadId) => notifyLead(prisma, leadId),
+    notifyBooking: (bookingId, kind) => notifyBooking(prisma, bookingId, kind),
   };
 }
 
@@ -129,6 +135,103 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     void options.notify(lead.id).catch(() => undefined);
   }
 
+  function sameOrigin(request: IncomingMessage, slug: string): boolean {
+    const origin = request.headers.origin;
+    return !origin || origin === 'null' || new URL(origin).host === new URL(options.urlFor(slug)).host;
+  }
+
+  /** Booking steps are plain links and one form, so they work without scripts and with the page CSP. */
+  async function handleBookingPage(url: URL, response: ServerResponse, site: Site) {
+    const meta = site.meta!;
+    const config = meta.booking!;
+    const html = (body: string, status = 200) => send(response, status, body, 'text/html', true, { 'Cache-Control': 'no-store' });
+    const query = parseQuery(url);
+    const service = query.service !== null ? config.schedule.services[query.service] : undefined;
+    const bookable = config.schedule.services.map((_, index) => index).filter((index) => mastersFor(config, index).length > 0);
+    if (!service || !bookable.includes(query.service!)) {
+      if (bookable.length === 1) return send(response, 303, '', 'text/plain', false, { Location: `/book?s=${bookable[0]}` });
+      return html(servicesPage(meta, config));
+    }
+    const masters = mastersFor(config, query.service!);
+    const master = query.master === 'any' || masters.some((item) => item.key === query.master) ? query.master : null;
+    if (!master) {
+      if (masters.length === 1) return send(response, 303, '', 'text/plain', false, { Location: `/book?s=${query.service}&m=${masters[0]!.key}` });
+      return html(mastersPage(meta, config, query.service!));
+    }
+    const now = new Date();
+    const horizonEnd = new Date(now.getTime() + (config.schedule.rules.horizonDays + 1) * 86_400_000);
+    const busy = await busyBetween(prisma, site.publicationId, new Date(now.getTime() - 86_400_000), horizonEnd);
+    const masterKey = master === 'any' ? null : master;
+    if (query.start) {
+      const free = slotsFor(config.schedule, service.name, masterKey, localDayOf(query.start, config.schedule.timezone), busy, now).some((slot) => slot.startsAt.getTime() === query.start!.getTime());
+      if (free) return html(confirmPage(meta, config, { service: query.service!, master, start: query.start }));
+    }
+    const days = openDays(config.schedule, service.name, masterKey, busy, now);
+    const day = query.day && days.some((item) => item.day === query.day) ? query.day : days[0]?.day ?? null;
+    const slots = day ? slotsFor(config.schedule, service.name, masterKey, day, busy, now) : [];
+    return html(timesPage(meta, config, { service: query.service!, master }, days, day, slots));
+  }
+
+  async function handleBookingForm(request: IncomingMessage, response: ServerResponse, slug: string, site: Site) {
+    const meta = site.meta!;
+    const config = meta.booking!;
+    if (!sameOrigin(request, slug)) return send(response, 403, messagePage(meta, 'Запись не отправлена', 'Записаться можно только со страницы этого сайта.'), 'text/html');
+    if (!String(request.headers['content-type'] ?? '').startsWith('application/x-www-form-urlencoded')) return send(response, 415, messagePage(meta, 'Запись не отправлена', 'Неподдерживаемый формат формы.'), 'text/html');
+    const raw = await readBody(request, 10_000);
+    if (raw === null) return send(response, 413, messagePage(meta, 'Запись не отправлена', 'Слишком большой запрос.'), 'text/html');
+    const parsed = parseBookingForm(raw);
+    if (!parsed.ok && parsed.spam) return send(response, 303, '', 'text/plain', false, { Location: '/book' });
+    if (!parsed.ok) {
+      const { query } = parsed;
+      if (query.service === null || !query.master || !query.start || !config.schedule.services[query.service]) return send(response, 303, '', 'text/plain', false, { Location: '/book' });
+      return send(response, 400, confirmPage(meta, config, { service: query.service, master: query.master, start: query.start }, parsed.error, parsed.values), 'text/html', true);
+    }
+    const ipHash = createHash('sha256').update(`${options.ipSalt}:${clientIp(request)}`).digest('hex');
+    const [perIp, perSite] = await Promise.all([
+      prisma.booking.count({ where: { publicationId: site.publicationId, ipHash, createdAt: { gte: new Date(Date.now() - 3_600_000) } } }),
+      prisma.booking.count({ where: { publicationId: site.publicationId, createdAt: { gte: new Date(Date.now() - 86_400_000) } } }),
+    ]);
+    if (perIp >= options.perIpPerHour || perSite >= options.perSitePerDay) {
+      return send(response, 429, messagePage(meta, 'Слишком много записей', 'С этого устройства уже было несколько записей. Попробуйте позже или свяжитесь по контактам на сайте.'), 'text/html', false, { 'Retry-After': '3600' });
+    }
+    const result = await createBooking(prisma, site, config, parsed.form, ipHash);
+    if (!result.ok) {
+      const location = `/book?s=${parsed.form.service}&m=${encodeURIComponent(parsed.form.master)}&d=${localDayOf(parsed.form.start, config.schedule.timezone)}`;
+      return send(response, 409, messagePage(meta, 'Это время уже заняли', 'Пока вы заполняли форму, это время забронировали. Выберите другое — откроем свободное время на этот день.', false)
+        .replace('</main>', `<a class="button" href="${location}">Выбрать другое время</a></main>`), 'text/html');
+    }
+    send(response, 303, '', 'text/plain', false, { Location: `/book/b/${result.token}?new=1` });
+    void options.notifyBooking(result.id, 'created').catch(() => undefined);
+  }
+
+  async function bookingByToken(site: Site, token: string) {
+    if (!/^[A-Za-z0-9_-]{32}$/.test(token)) return null;
+    return prisma.booking.findFirst({
+      where: { tokenHash: tokenHash(token), publicationId: site.publicationId },
+      select: { id: true, serviceName: true, masterName: true, startsAt: true, minutes: true, price: true, timezone: true, status: true, clientName: true },
+    });
+  }
+
+  async function handleBookingView(url: URL, response: ServerResponse, site: Site, token: string) {
+    const booking = await bookingByToken(site, token);
+    if (!booking) return send(response, 404, messagePage(site.meta, 'Запись не найдена', 'Ссылка неверная или запись уже удалена.'), 'text/html');
+    const cancelHours = site.meta!.booking!.schedule.rules.cancelHours;
+    send(response, 200, bookingPage(site.meta!, booking, token, canClientCancel(booking, cancelHours), cancelHours, url.searchParams.get('new') === '1'), 'text/html', true,
+      { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+  }
+
+  async function handleBookingCancel(request: IncomingMessage, response: ServerResponse, slug: string, site: Site) {
+    if (!sameOrigin(request, slug)) return send(response, 403, messagePage(site.meta, 'Не отменено', 'Отменить можно только со страницы этого сайта.'), 'text/html');
+    const raw = await readBody(request, 2_000);
+    const token = new URLSearchParams(raw ?? '').get('token') ?? '';
+    const booking = await bookingByToken(site, token);
+    if (!booking) return send(response, 404, messagePage(site.meta, 'Запись не найдена', 'Ссылка неверная или запись уже удалена.'), 'text/html');
+    if (!canClientCancel(booking, site.meta!.booking!.schedule.rules.cancelHours)) return send(response, 303, '', 'text/plain', false, { Location: `/book/b/${token}` });
+    const updated = await prisma.booking.updateMany({ where: { id: booking.id, status: 'booked' }, data: { status: 'cancelled_by_client', cancelledAt: new Date() } });
+    send(response, 303, '', 'text/plain', false, { Location: `/book/b/${token}` });
+    if (updated.count) void options.notifyBooking(booking.id, 'cancelled_by_client').catch(() => undefined);
+  }
+
   /**
    * Caddy asks this before issuing an on-demand TLS certificate for a host: only subdomains of live sites get one,
    * so nobody can make the server request certificates for arbitrary names. Both answers reveal only what the site itself shows.
@@ -160,15 +263,21 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     const site = slug ? await loadSite(slug) : null;
     if (!slug || !site) return send(response, 404, messagePage(null, 'Сайт не найден', 'По этому адресу сайта нет или он снят с публикации.', false), 'text/html');
     if (request.method === 'POST' && path === LEAD_FORM_PATH) return handleLead(request, response, slug, site);
+    const booking = Boolean(site.meta?.booking);
+    if (request.method === 'POST' && path === BOOKING_FORM_PATH) return booking ? handleBookingForm(request, response, slug, site) : send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет онлайн-записи.'), 'text/html');
+    if (request.method === 'POST' && path === BOOKING_CANCEL_PATH) return booking ? handleBookingCancel(request, response, slug, site) : send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет онлайн-записи.'), 'text/html');
     if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, '', 'text/plain', false, { Allow: 'GET, HEAD' });
     const cacheHeaders = { 'Cache-Control': 'public, max-age=60' };
     const image = /^\/img\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.webp$/.exec(path);
     if (image) return sendImage(response, site, image[1]!, request.method === 'HEAD');
+    if (booking && path === '/book') return handleBookingPage(url, response, site);
+    const manage = /^\/book\/b\/([A-Za-z0-9_-]{32})$/.exec(path);
+    if (booking && manage) return handleBookingView(url, response, site, manage[1]!);
     switch (path) {
       case '/': return send(response, 200, site.html, 'text/html', site.hasForm, cacheHeaders);
       case '/privacy': return send(response, 200, privacyPage(site.meta, options.retentionDays), 'text/html', false, cacheHeaders);
       case '/thanks': return send(response, 200, thanksPage(site.meta), 'text/html', false, { 'Cache-Control': 'no-store' });
-      case '/robots.txt': return send(response, 200, `User-agent: *\nAllow: /\nDisallow: /thanks\nSitemap: ${options.urlFor(slug)}/sitemap.xml\n`, 'text/plain', false, cacheHeaders);
+      case '/robots.txt': return send(response, 200, `User-agent: *\nAllow: /\nDisallow: /thanks\nDisallow: /book\nSitemap: ${options.urlFor(slug)}/sitemap.xml\n`, 'text/plain', false, cacheHeaders);
       case '/sitemap.xml': return send(response, 200, `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${options.urlFor(slug)}/</loc></url></urlset>\n`, 'application/xml', false, cacheHeaders);
       default: return send(response, 404, messagePage(site.meta, 'Страница не найдена', 'Такой страницы на сайте нет.'), 'text/html');
     }
@@ -184,8 +293,10 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
 
   /** Deletes leads older than the retention period; returns the number removed. */
   async function cleanup(): Promise<number> {
-    const result = await prisma.siteLead.deleteMany({ where: { createdAt: { lt: new Date(Date.now() - options.retentionDays * 86_400_000) } } });
-    return result.count;
+    const cutoff = new Date(Date.now() - options.retentionDays * 86_400_000);
+    const result = await prisma.siteLead.deleteMany({ where: { createdAt: { lt: cutoff } } });
+    const bookings = await prisma.booking.deleteMany({ where: { endsAt: { lt: cutoff } } });
+    return result.count + bookings.count;
   }
 
   return { server, cleanup, invalidate: (slug: string) => cache.delete(slug) };

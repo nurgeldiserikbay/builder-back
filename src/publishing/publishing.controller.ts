@@ -71,6 +71,22 @@ export class PublishingController {
     await this.publishing.deleteLead(request.user.id, projectId, leadId);
   }
 
+  @Get('projects/:projectId/bookings')
+  @UseGuards(AuthGuard)
+  bookings(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Query('scope') scope?: string) {
+    if (scope !== undefined && scope !== 'upcoming' && scope !== 'past') throw new BadRequestException('INVALID_SCOPE');
+    return this.publishing.bookings(request.user.id, projectId, scope ?? 'upcoming');
+  }
+
+  @Post('projects/:projectId/bookings/:bookingId/status')
+  @HttpCode(200)
+  @UseGuards(AuthGuard)
+  bookingStatus(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('bookingId') bookingId: string, @Body() raw: unknown) {
+    const status = raw && typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).every((key) => key === 'status') ? (raw as { status?: unknown }).status : undefined;
+    if (status !== 'cancelled_by_owner' && status !== 'done' && status !== 'no_show') throw new BadRequestException('INVALID_STATUS');
+    return this.publishing.setBookingStatus(request.user.id, projectId, bookingId, status);
+  }
+
   @Get('me/telegram')
   @UseGuards(AuthGuard)
   telegramStatus(@Req() request: AuthenticatedRequest) {

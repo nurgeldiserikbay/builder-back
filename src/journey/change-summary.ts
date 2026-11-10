@@ -62,6 +62,28 @@ function designChanges(before: Json, after: Json): string[] {
     .map((key) => `${designLabels[key]}: ${text(before[key]) || '—'} → ${text(after[key]) || '—'}`);
 }
 
+function scheduleChanges(before: Json, after: Json): string[] {
+  const lines: string[] = [];
+  const list = (value: unknown) => (Array.isArray(value) ? value as Json[] : []);
+  const services = (value: Json) => new Map(list(value.services).map((item) => [text(item.name), Number(item.minutes)]));
+  const was = services(before); const now = services(after);
+  for (const [name, minutes] of now) {
+    if (!was.has(name)) lines.push(`Для записи добавлена услуга «${name}» (${minutes} мин)`);
+    else if (was.get(name) !== minutes) lines.push(`«${name}»: длительность ${was.get(name)} → ${minutes} мин`);
+  }
+  for (const name of was.keys()) if (!now.has(name)) lines.push(`Запись на «${name}» убрана`);
+  const masters = (value: Json) => new Map(list(value.masters).map((item) => [text(item.key), item]));
+  const mb = masters(before); const ma = masters(after);
+  for (const [key, master] of ma) {
+    const old = mb.get(key);
+    if (!old) lines.push(`Добавлен мастер «${text(master.name)}»`);
+    else if (JSON.stringify(old) !== JSON.stringify(master)) lines.push(`Изменены услуги или часы мастера «${text(master.name)}»`);
+  }
+  for (const [key, master] of mb) if (!ma.has(key)) lines.push(`Мастер «${text(master.name)}» убран из записи`);
+  if (JSON.stringify(before.rules) !== JSON.stringify(after.rules) || before.timezone !== after.timezone) lines.push('Изменены правила записи');
+  return lines;
+}
+
 /** Up to 12 lines; an empty list means the accepted content did not change. */
 export function describeChanges(key: StageKey, beforeRaw: unknown, afterRaw: unknown): string[] {
   const before = record(beforeRaw);
@@ -70,6 +92,7 @@ export function describeChanges(key: StageKey, beforeRaw: unknown, afterRaw: unk
   const lines = type === 'offer' ? serviceChanges(before, after)
     : type === 'content' ? contentChanges(before, after)
       : type === 'design' ? designChanges(before, after)
+        : type === 'schedule' ? scheduleChanges(before, after)
         : fieldChanges(key, before, after);
   if (!lines.length && JSON.stringify(beforeRaw) !== JSON.stringify(afterRaw)) lines.push('Мелкие изменения');
   return lines.length > 12 ? [...lines.slice(0, 11), `И ещё изменений: ${lines.length - 11}`] : lines;
