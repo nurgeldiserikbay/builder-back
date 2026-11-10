@@ -4005,6 +4005,19 @@ components:
                   acceptedVersionNumber: { type: [integer, 'null'] }
                   acceptedAt: { type: [string, 'null'], format: date-time }
                   updatedAt: { type: string, format: date-time }
+                  people:
+                    type: object
+                    description: Who works on the stage, for the project map. A specialist viewer sees only "you".
+                    properties:
+                      lead:
+                        type: object
+                        properties:
+                          kind: { type: string, enum: [owner, specialist, invited, you] }
+                          name: { type: [string, 'null'] }
+                      consultants: { type: integer }
+                  needsYou:
+                    type: [string, 'null']
+                    description: Short reason when the viewer must act on this stage (accept, confirm a changed input, continue); null otherwise.
             ai:
               type: object
               required: [configured, remainingToday]

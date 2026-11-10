@@ -190,6 +190,33 @@ export class JourneyService {
               : nextStatus === 'in_progress' ? (specialist ? `Доработайте этап «${title}» и отправьте владельцу на приёмку.` : `Проверьте черновик этапа «${title}» и примите его, если всё устраивает.`)
                 : `Начните этап «${title}». ${stageDefinitions[next].outcome}`;
     const ai = this.ai();
+    // Who works on each stage, for the project map. Owners and managers see specialists; a specialist sees only themself.
+    const leads = new Map<string, { kind: 'specialist' | 'invited'; name: string }>();
+    const consultants = new Map<string, number>();
+    if (!specialist) {
+      const rows = await this.prisma.stageAssignment.findMany({
+        where: { projectId, status: { in: ['invited', 'active'] } },
+        select: { role: true, status: true, email: true, stage: { select: { stageKey: true } }, user: { select: { name: true, email: true } } },
+      });
+      for (const row of rows) {
+        const key = row.stage.stageKey;
+        if (row.role === 'lead') leads.set(key, { kind: row.status === 'invited' ? 'invited' : 'specialist', name: row.user?.name || row.user?.email || row.email });
+        else consultants.set(key, (consultants.get(key) ?? 0) + 1);
+      }
+    }
+    const canAccept = ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role);
+    const needsYou = (key: StageKey): string | null => {
+      const status = ctx.statuses[key];
+      if (specialist) {
+        const mine = this.assignmentFor(ctx, key);
+        return mine?.role === 'lead' && mine.status === 'active' && (status === 'in_progress' || status === 'changes_requested' || status === 'ready') ? 'Ваш ход' : null;
+      }
+      if (!canAccept) return null;
+      if (status === 'in_review') return 'Проверьте и примите';
+      if (status === 'stale') return 'Изменился предыдущий этап';
+      if (key === next && !leads.has(key) && (status === 'ready' || status === 'in_progress' || status === 'changes_requested')) return 'Ваш ход';
+      return null;
+    };
     return {
       data: {
         project: {
@@ -209,6 +236,11 @@ export class JourneyService {
             inputs: routeInputs(ctx.route, key).map((input) => ({ key: input, title: stageDefinitions[input].title, satisfied: isSatisfied(ctx.statuses[input]) })),
             currentVersionNumber: numberOf(stage.currentVersionId), acceptedVersionNumber: numberOf(stage.approvedVersionId),
             acceptedAt: stage.approvedAt, updatedAt: stage.updatedAt,
+            people: {
+              lead: specialist ? { kind: 'you' as const, name: null } : leads.get(key) ?? { kind: 'owner' as const, name: null },
+              consultants: consultants.get(key) ?? 0,
+            },
+            needsYou: needsYou(key),
           };
         }),
         ai: { configured: Boolean(ai), provider: ai?.name ?? null, remainingToday: ai ? await this.remainingAiRuns(projectId) : 0, month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null },
