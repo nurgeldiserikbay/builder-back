@@ -1638,6 +1638,74 @@ paths:
         '200': { description: Bookings list }
         '400': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/wallet:
+    get:
+      tags: [Billing]
+      operationId: projectWallet
+      summary: Project balance and top-ups (owner and managers)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'mode (off|prepaid), provider (freedompay|mock|null), balance, paid, spent, minTopUp, maxTopUp, typicalRequest, requestsLeft, topUps (tenge)' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/wallet/top-ups:
+    post:
+      tags: [Billing]
+      operationId: startTopUp
+      summary: Start a top-up and get the provider's payment page
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [amount], properties: { amount: { type: integer, description: Whole tenge } } }
+      responses:
+        '200': { description: 'topUpId, redirectUrl' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '503': { description: 'PAYMENTS_NOT_CONFIGURED, PAYMENT_PROVIDER_UNAVAILABLE, PAYMENT_PROVIDER_FAILED, PAYMENT_PROVIDER_SIGNATURE' }
+  /payments/freedompay/result:
+    post:
+      tags: [Billing]
+      operationId: freedomPayResult
+      summary: Freedom Pay result callback (signed form fields, signed XML reply)
+      x-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { type: object, additionalProperties: { type: string } }
+      responses:
+        '200': { description: 'XML response with pg_status ok, rejected or error' }
+        '404': { description: Freedom Pay is not configured }
+  /admin/billing-mode:
+    get:
+      tags: [Admin]
+      operationId: getBillingMode
+      summary: Billing mode
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      responses:
+        '200': { description: 'mode, prepaidSince, minTopUp, provider, priced' }
+    post:
+      tags: [Admin]
+      operationId: setBillingMode
+      summary: Switch prepaid billing on or off (super_admin)
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [mode, minTopUp], properties: { mode: { type: string, enum: [off, prepaid] }, minTopUp: { type: integer, minimum: 100, maximum: 100000 } } }
+      responses:
+        '200': { description: Billing mode }
+        '409': { description: 'AI_PRICING_NOT_SET, PAYMENTS_NOT_CONFIGURED' }
   /projects/{projectId}/budget:
     get:
       tags: [Budget]
@@ -3138,7 +3206,7 @@ components:
       in: path
       name: stageKey
       required: true
-      schema: { type: string, enum: [goal, offer, content, design, build] }
+      schema: { type: string, enum: [goal, offer, schedule, techplan, content, design, build] }
     RuleId:
       in: path
       name: ruleId

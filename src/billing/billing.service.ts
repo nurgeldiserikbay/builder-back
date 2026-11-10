@@ -1,4 +1,6 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { billingSettings, projectBalance } from '../payments/wallet.js';
+import { DEFAULT_TOKENS, costOf } from '../budget/budget.js';
+import { ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { PLAN_CATALOG_VERSION, limitLabels, monthStart, paidPlanKeys, planOf, plans, priceOf, validContactUrl, type LimitKey, type PaidPlanKey, type PlanKey } from './plans.js';
 
@@ -36,7 +38,14 @@ export class BillingService {
   async assertCanGenerate(projectId: string) {
     const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { ownerUserId: true } });
     if (!project) throw new NotFoundException('PROJECT_NOT_FOUND');
-    return this.ensure(project.ownerUserId, 'aiPerMonth', 'PLAN_LIMIT_AI');
+    await this.ensure(project.ownerUserId, 'aiPerMonth', 'PLAN_LIMIT_AI');
+    // Prepaid billing: the next request must fit in the project balance (a typical request's cost).
+    const settings = await billingSettings(this.prisma);
+    if (settings.mode === 'prepaid' && settings.priced) {
+      const { balanceTiyn } = await projectBalance(this.prisma, projectId, settings.prepaidSince);
+      const next = costOf({ inputTokens: DEFAULT_TOKENS.input, outputTokens: DEFAULT_TOKENS.output }, { inputPerMillionTiyn: settings.inputPerMillionTiyn, outputPerMillionTiyn: settings.outputPerMillionTiyn }) ?? 0;
+      if (balanceTiyn < next) throw new HttpException({ statusCode: 402, message: 'PROJECT_BALANCE_LOW', balance: balanceTiyn / 100 }, HttpStatus.PAYMENT_REQUIRED);
+    }
   }
 
   /** Republishing a site that is already live does not take a new slot. */

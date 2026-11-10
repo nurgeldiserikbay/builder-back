@@ -319,6 +319,7 @@ model Project {
   @@index([workspaceId, status, createdAt(sort: Desc)], map: "projects_workspace_status_created_idx")
   @@index([ownerUserId, createdAt(sort: Desc)], map: "projects_owner_created_idx")
   @@map("projects")
+  topUps            ProjectTopUp[]
 }
 
 model ProjectMember {
@@ -1210,6 +1211,10 @@ model AiPricing {
   id                   Int      @id @default(1) @db.SmallInt
   inputPerMillionTiyn  Int      @map("input_per_million_tiyn")
   outputPerMillionTiyn Int      @map("output_per_million_tiyn")
+  /// off: AI requests are only counted; prepaid: a project needs a positive balance (top-ups minus AI cost since prepaidSince).
+  billingMode          String   @default("off") @map("billing_mode") @db.VarChar(10)
+  prepaidSince         DateTime? @map("prepaid_since") @db.Timestamptz(3)
+  minTopUpTiyn         Int      @default(100000) @map("min_top_up_tiyn")
   updatedByStaffId     String?  @map("updated_by_staff_id") @db.Uuid
   updatedAt            DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
 
@@ -1320,5 +1325,23 @@ model OAuthState {
 
   @@index([expiresAt], map: "oauth_states_expires_idx")
   @@map("oauth_states")
+}
+
+/// Money the owner put on a project's balance through the payment provider. Paid only after a signed provider callback.
+model ProjectTopUp {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId         String    @map("project_id") @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  amountTiyn        Int       @map("amount_tiyn")
+  provider          String    @db.VarChar(20)
+  /// created | paid | failed | expired
+  status            String    @default("created") @db.VarChar(10)
+  providerPaymentId String?   @map("provider_payment_id") @db.VarChar(64)
+  paidAt            DateTime? @map("paid_at") @db.Timestamptz(3)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status], map: "project_top_ups_project_status_idx")
+  @@map("project_top_ups")
 }
 
