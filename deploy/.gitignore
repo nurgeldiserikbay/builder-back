@@ -1,0 +1,3 @@
+backups/
+.env.production
+!.env.production.example

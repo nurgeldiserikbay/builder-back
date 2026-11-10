@@ -21,6 +21,15 @@ NestJS REST API for BuildPath. API prefix: `/api/v1`.
 - Specialists are not project members, so all project-wide checks (other stages, result package, publication, leads, review tool, project list) keep excluding them. They see only the assigned stage and the accepted versions of its inputs; their AI runs see the same scope. A lead can add stage rules but not project rules; an optional `aiBudget` caps their generations.
 - `submit` puts the stage in `in_review` (read-only) and notifies the owner in Telegram when linked; the owner accepts or uses `request-changes` with a note (the lead is notified). Accepting completes the assignment: writing stops immediately, reading continues for 7 days. Owners can revoke at any time; all of this is recorded in project events.
 
+### Production deployment
+
+`deploy/` holds the single-server production stack: `compose.prod.yaml` (Caddy with automatic HTTPS, API, sites server, front, admin, PostgreSQL, ClamAV, daily backups; design-review worker and MinIO behind a profile), `Caddyfile`, `.env.production.example` and backup/restore scripts. The step-by-step guide in Russian is `deploy/README.md`.
+
+- The app and the console call the API on their own origin (`/api/v1`), so production needs no CORS and cookies stay first-party.
+- Published sites get TLS certificates on demand; Caddy asks `GET /__caddy/ask?domain=` on the sites server, which allows only live site hosts. `GET /__health` on the sites server checks the database.
+- Optional error reporting: `SENTRY_DSN` (API, sites server, worker) and `NEXT_PUBLIC_SENTRY_DSN` (front/admin), Sentry or GlitchTip. Events are scrubbed of cookies, bodies, query strings and user data; expected 4xx errors are not reported.
+- `TRUST_PROXY=true` makes the API use the client address from the proxy.
+
 ### Site photos
 
 - `POST /projects/:id/images` (multipart `file`, optional `alt`) accepts JPEG, PNG or WebP up to 12 MB from members or the content-stage lead. The original is scanned with ClamAV first (fail-closed: 503 `IMAGE_SCAN_UNAVAILABLE` if clamd is unreachable), then decoded with sharp and re-encoded to WebP ≤ 1600 px, which strips EXIF/location and any non-pixel data. Up to 30 photos per project, stored in PostgreSQL (`project_images`).

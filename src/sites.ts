@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import { PrismaService } from './database/prisma.service.js';
 import { createSitesServer, sitesOptionsFromEnv } from './sites/sites-server.js';
+import { initErrorReporting } from './observability/error-reporting.js';
+
+initErrorReporting('sites');
 
 const prisma = new PrismaService();
 const { server, cleanup } = createSitesServer(prisma, sitesOptionsFromEnv(prisma));
