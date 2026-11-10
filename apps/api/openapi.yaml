@@ -1515,9 +1515,9 @@ paths:
           application/json:
             schema: { type: object, additionalProperties: false, properties: { url: { type: [string, 'null'], maxLength: 500 } } }
       responses:
-        '200': { description: Deployment card with choice.verification (url, status, checkedAt, httpStatus) }
+        '200': { description: 'Deployment card with choice.verification (url, status, checkedAt, httpStatus)' }
         '400': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem', description: CHOICE_NOT_MADE, SITE_NOT_ACCEPTED }
+        '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/deployment/package:
     get:
       tags: [Choices]
@@ -2852,6 +2852,7 @@ paths:
     get:
       tags: [Legal]
       operationId: getConsentStatement
+      security: []
       summary: Registration consent text and the current document versions
       x-implementation-status: implemented
       responses:
@@ -2873,6 +2874,7 @@ paths:
     get:
       tags: [Legal]
       operationId: getLegalDocument
+      security: []
       summary: Published offer or privacy policy
       description: Markdown with company details and current retention periods filled in. Unset company details are shown as "[будет указано]".
       x-implementation-status: implemented
@@ -4953,7 +4955,7 @@ components:
             plans: { type: array, items: { $ref: '#/components/schemas/PlanSummary' } }
             priceUpdatedAt: { type: object, additionalProperties: { type: string, format: date-time } }
             salesContactUrl: { type: [string, 'null'] }
-            salesContactFallback: { type: [string, 'null'], description: SALES_CONTACT_URL from the environment, used while no contact is set here. }
+            salesContactFallback: { type: [string, 'null'], description: 'SALES_CONTACT_URL from the environment, used while no contact is set here.' }
             updatedAt: { type: [string, 'null'], format: date-time }
     PlanCatalogResponse:
       type: object
