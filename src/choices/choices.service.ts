@@ -375,12 +375,15 @@ export class ChoicesService {
 
   /** Where the owner's domain stands; the domain step is done once DNS points at BuildPath. */
   private async domainContext(projectId: string) {
-    const publication = await this.prisma.sitePublication.findUnique({ where: { projectId }, select: { status: true, slug: true, customDomain: true, domainStatus: true } });
+    const [publication, buildId] = await Promise.all([
+      this.prisma.sitePublication.findUnique({ where: { projectId }, select: { status: true, slug: true, customDomain: true, domainStatus: true, buildVersionId: true } }),
+      this.acceptedBuildId(projectId),
+    ]);
     const target = domainTarget();
     return {
       domainsAvailable: Boolean(target),
       kzAllowed: Boolean(target?.hostedInKz),
-      publication: publication ? { status: publication.status, slug: publication.slug, domain: publication.customDomain, domainStatus: publication.domainStatus } : null,
+      publication: publication ? { status: publication.status, slug: publication.slug, upToDate: publication.buildVersionId === buildId, domain: publication.customDomain, domainStatus: publication.domainStatus } : null,
     };
   }
 
