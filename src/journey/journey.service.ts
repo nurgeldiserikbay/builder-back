@@ -4,7 +4,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import {
-  ROUTE_CATALOG_VERSION, projectTypeOf, projectTypes, routeInputs, stageDefinitions, statusExplanations,
+  ROUTE_CATALOG_VERSION, projectTypeOf, projectTypes, routeAncestors, routeInputs, stageDefinitions, statusExplanations,
   type ArtifactType, type StageKey,
 } from './catalog.js';
 import {
@@ -160,6 +160,17 @@ export class JourneyService {
     return this.prisma.stageArtifactVersion.findUnique({ where: { id }, select: { id: true, versionNumber: true, content: true } });
   }
 
+  /**
+   * A stage that brings branches together (two or more inputs) waits while any stage it is built on still has an undecided
+   * change: otherwise the branches could be built on different versions of the same contract.
+   */
+  private waitingBranches(ctx: { route: StageKey[]; openNotices: Array<{ targetKey: StageKey; sourceKey: StageKey }> }, key: StageKey) {
+    if (routeInputs(ctx.route, key).length < 2) return [];
+    const ancestors = new Set(routeAncestors(ctx.route, key));
+    return ctx.openNotices.filter((notice) => ancestors.has(notice.targetKey))
+      .map((notice) => ({ stageKey: notice.targetKey, title: stageDefinitions[notice.targetKey].title, sourceKey: notice.sourceKey, sourceTitle: stageDefinitions[notice.sourceKey].title }));
+  }
+
   /** Accepted version of a stage as seen by `forKey`: pinned by an undecided change notice, otherwise the latest accepted one. */
   private acceptedVersionId(ctx: { stages: StageRow[]; dep: StatusMap; pins: Map<StageKey, Map<StageKey, string>> }, input: StageKey, forKey: StageKey): string | null {
     const pinned = ctx.pins.get(forKey)?.get(input);
@@ -264,7 +275,7 @@ export class JourneyService {
           const stage = this.stageOf(ctx, key);
           const definition = stageDefinitions[key];
           return {
-            key, title: definition.title, purpose: definition.purpose, outcome: definition.outcome, aiLevel: definition.ai.level,
+            key, title: definition.title, purpose: definition.purpose, outcome: definition.outcome, aiLevel: definition.ai.level, contract: Boolean(definition.contract),
             status: stage.status, statusLabel: statusExplanations[stage.status].label, statusExplanation: statusExplanations[stage.status].explanation,
             inputs: routeInputs(ctx.route, key).map((input) => ({ key: input, title: stageDefinitions[input].title, satisfied: isSatisfied(ctx.dep[input]) })),
             currentVersionNumber: numberOf(stage.currentVersionId), acceptedVersionNumber: numberOf(stage.approvedVersionId),
@@ -291,6 +302,13 @@ export class JourneyService {
     const stageKey = key as StageKey;
     const definition = stageDefinitions[stageKey];
     const changesPending = ctx.openNotices.some((notice) => notice.targetKey === stageKey);
+    const waiting = this.waitingBranches(ctx, stageKey);
+    // What accepting this stage will do to the stages built on it: start them, or notify those that already have work.
+    const dependents = directDependents(ctx.route, stageKey).filter((item) => this.canRead(ctx, item)).map((item) => {
+      const dependent = this.stageOf(ctx, item);
+      const hasWork = Boolean(dependent.currentVersionId) || ['approved', 'imported', 'stale'].includes(dependent.status);
+      return { key: item, title: stageDefinitions[item].title, status: dependent.status, hasWork, opens: dependent.status === 'locked' && inputsSatisfied(ctx.route, { ...ctx.dep, [stageKey]: 'approved' }, item) };
+    });
     const inputs = await this.acceptedInputs(ctx, stageKey);
     const [current, versions, instructions] = await Promise.all([
       this.prisma.stageArtifactVersion.findUnique({ where: { id: stage.currentVersionId ?? '00000000-0000-4000-8000-000000000000' }, select: { id: true, versionNumber: true, content: true, origin: true, note: true, createdAt: true, createdByUserId: true, generationRunId: true } }),
@@ -328,9 +346,15 @@ export class JourneyService {
           acceptance: definition.acceptance, acceptExplanation: definition.acceptExplanation, importHint: definition.importHint,
           fields: definition.fields ?? null, lockedKeys: stage.lockedKeys, acceptedVersionId: stage.approvedVersionId,
           canEdit: writable,
-          canAccept: owner && Boolean(stage.currentVersionId) && !changesPending
+          canAccept: owner && Boolean(stage.currentVersionId) && !changesPending && waiting.length === 0
             && ['in_progress', 'stale', 'changes_requested', 'in_review'].includes(stage.status) && inputsSatisfied(ctx.route, ctx.dep, stageKey),
           changesPending,
+          contract: definition.contract ?? null,
+          waitingBranches: waiting,
+          impact: {
+            opens: dependents.filter((item) => item.opens).map(({ key: itemKey, title }) => ({ key: itemKey, title })),
+            willNotify: stage.approvedVersionId ? dependents.filter((item) => item.hasWork).map(({ key: itemKey, title, status }) => ({ key: itemKey, title, status })) : [],
+          },
           canReopen: owner && (stage.status === 'approved' || stage.status === 'imported'),
           canImport: Boolean(definition.importHint) && writable,
           canSubmit: Boolean(assignment) && writable && Boolean(stage.currentVersionId) && stage.status !== 'in_review' && !changesPending,
@@ -723,6 +747,7 @@ export class JourneyService {
     const stage = this.stageOf(ctx, 'build');
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     if (!inputsSatisfied(ctx.route, ctx.dep, 'build')) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+    if (this.waitingBranches(ctx, 'build').length) throw new ConflictException('BRANCHES_NOT_ALIGNED');
     const sources = await this.renderSources(ctx, true);
     const renderInput = { ...sources.input, draft: false };
     const site: SiteArtifact = { html: renderSite(renderInput), meta: siteMeta(renderInput), checks: checkSite(renderInput), sourceVersionIds: sources.versionIds, compiledAt: new Date().toISOString() };
@@ -806,6 +831,7 @@ export class JourneyService {
     if (!['in_progress', 'stale', 'changes_requested', 'in_review'].includes(stage.status)) throw new ConflictException('STAGE_NOT_ACCEPTABLE');
     if (stage.currentVersionId !== versionId) throw new ConflictException('STAGE_VERSION_CONFLICT');
     if (ctx.openNotices.some((notice) => notice.targetKey === stageKey)) throw new ConflictException('CHANGE_NOTICE_OPEN');
+    if (this.waitingBranches(ctx, stageKey).length) throw new ConflictException('BRANCHES_NOT_ALIGNED');
     if (!inputsSatisfied(ctx.route, ctx.dep, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const version = await this.versionContent(versionId);
     if (!version) throw new NotFoundException('VERSION_NOT_FOUND');

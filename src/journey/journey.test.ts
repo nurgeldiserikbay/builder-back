@@ -54,8 +54,8 @@ describe('stage state', () => {
     assert.equal(effectiveStatuses({ goal: 'in_progress' }, () => false).goal, 'in_progress');
   });
   it('finds direct dependents only', () => {
-    assert.deepEqual(directDependents(route, 'goal'), ['content']);
-    assert.deepEqual(directDependents(route, 'content'), ['design', 'build']);
+    assert.deepEqual(directDependents(route, 'goal'), ['content', 'design']);
+    assert.deepEqual(directDependents(route, 'content'), ['build']);
   });
   it('describes changes between accepted versions in plain language', () => {
     const before = { services: [{ name: 'Маникюр', description: null, price: '5 000 ₸' }, { name: 'Педикюр', description: null, price: null }], hours: 'Пн–Пт' };
