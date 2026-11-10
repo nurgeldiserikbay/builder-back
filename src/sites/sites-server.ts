@@ -1,4 +1,4 @@
-// Serves published sites on <slug>.<SITES_BASE_DOMAIN> and accepts their lead forms.
+// Serves published sites on <slug>.<SITES_BASE_DOMAIN> or on an owner's own domain, and accepts their forms.
 // Runs as its own process (npm run start:sites) on a separate origin from the app and API.
 import { createHash, randomBytes } from 'node:crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
@@ -7,6 +7,7 @@ import type { SiteArtifact, SiteMeta } from '../journey/artifacts.js';
 import { LEAD_FORM_PATH, pageCsp } from '../journey/site-renderer.js';
 import { notifyLead } from '../notifications/lead-notifier.js';
 import { sitesConfig, slugFromHost } from '../publishing/slug.js';
+import { normalizeDomain } from '../publishing/domain.js';
 import { reportError } from '../observability/error-reporting.js';
 import { messagePage, parseLeadForm, privacyPage, thanksPage } from './site-pages.js';
 import { BOOKING_CANCEL_PATH, BOOKING_FORM_PATH, bookingPage, confirmPage, mastersFor, mastersPage, parseBookingForm, parseQuery, servicesPage, timesPage } from './booking-pages.js';
@@ -40,25 +41,44 @@ export function sitesOptionsFromEnv(prisma: PrismaClient, env: NodeJS.ProcessEnv
   };
 }
 
-type Site = { publicationId: string; projectId: string; html: string; meta: SiteMeta | null; hasForm: boolean };
+/** `hosts` are the addresses this site answers on: its BuildPath subdomain and, once DNS was checked, the owner's own domain. */
+type Site = { publicationId: string; projectId: string; html: string; meta: SiteMeta | null; hasForm: boolean; canonical: string; hosts: string[] };
 
 export function createSitesServer(prisma: PrismaClient, options: SitesServerOptions) {
   const cache = new Map<string, { site: Site | null; expires: number }>();
 
-  async function loadSite(slug: string): Promise<Site | null> {
-    const cached = cache.get(slug);
+  async function loadSite(where: { slug: string } | { customDomain: string }): Promise<Site | null> {
+    const key = 'slug' in where ? `s:${where.slug}` : `d:${where.customDomain}`;
+    const cached = cache.get(key);
     if (cached && cached.expires > Date.now()) return cached.site;
-    const publication = await prisma.sitePublication.findUnique({ where: { slug }, select: { id: true, projectId: true, status: true, buildVersionId: true } });
+    const publication = await prisma.sitePublication.findUnique({
+      where, select: { id: true, projectId: true, status: true, buildVersionId: true, slug: true, customDomain: true, domainStatus: true },
+    });
     let site: Site | null = null;
-    if (publication?.status === 'live') {
+    const ownDomain = publication?.domainStatus === 'active' ? publication.customDomain : null;
+    if (publication?.status === 'live' && ('slug' in where || ownDomain)) {
       const version = await prisma.stageArtifactVersion.findUnique({ where: { id: publication.buildVersionId }, select: { content: true } });
       const artifact = version?.content as unknown as SiteArtifact | undefined;
       if (artifact?.html) {
-        site = { publicationId: publication.id, projectId: publication.projectId, html: artifact.html, meta: artifact.meta ?? null, hasForm: Boolean(artifact.meta?.hasForm) };
+        const platformUrl = options.urlFor(publication.slug);
+        const canonical = ownDomain ? `${options.https ? 'https' : 'http'}://${ownDomain}` : platformUrl;
+        site = {
+          publicationId: publication.id, projectId: publication.projectId, html: artifact.html, meta: artifact.meta ?? null, hasForm: Boolean(artifact.meta?.hasForm),
+          canonical, hosts: [new URL(platformUrl).host, ...(ownDomain ? [ownDomain] : [])],
+        };
       }
     }
-    cache.set(slug, { site, expires: Date.now() + 15_000 });
+    cache.set(key, { site, expires: Date.now() + 15_000 });
     return site;
+  }
+
+  /** A BuildPath subdomain first; anything else may be an owner's own domain that points here. */
+  async function siteForHost(rawHost: string | undefined): Promise<Site | null> {
+    const slug = slugFromHost(rawHost, options.baseDomain);
+    if (slug) return loadSite({ slug });
+    const host = normalizeDomain(String(rawHost ?? '').replace(/:\d+$/, ''));
+    if (!host || host === options.baseDomain || host.endsWith(`.${options.baseDomain}`)) return null;
+    return loadSite({ customDomain: host });
   }
 
   function send(response: ServerResponse, status: number, body: string, type: string, hasForm = false, extra: Record<string, string> = {}) {
@@ -105,10 +125,9 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     return Buffer.concat(chunks).toString('utf8');
   }
 
-  async function handleLead(request: IncomingMessage, response: ServerResponse, slug: string, site: Site) {
+  async function handleLead(request: IncomingMessage, response: ServerResponse, site: Site) {
     if (!site.hasForm) return send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет формы заявки.'), 'text/html');
-    const origin = request.headers.origin;
-    if (origin && origin !== 'null' && new URL(origin).host !== new URL(options.urlFor(slug)).host) {
+    if (!sameOrigin(request, site)) {
       return send(response, 403, messagePage(site.meta, 'Заявка не отправлена', 'Форму можно отправить только со страницы этого сайта.'), 'text/html');
     }
     if (!String(request.headers['content-type'] ?? '').startsWith('application/x-www-form-urlencoded')) {
@@ -135,9 +154,10 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     void options.notify(lead.id).catch(() => undefined);
   }
 
-  function sameOrigin(request: IncomingMessage, slug: string): boolean {
+  function sameOrigin(request: IncomingMessage, site: Site): boolean {
     const origin = request.headers.origin;
-    return !origin || origin === 'null' || new URL(origin).host === new URL(options.urlFor(slug)).host;
+    if (!origin || origin === 'null') return true;
+    try { return site.hosts.includes(new URL(origin).host); } catch { return false; }
   }
 
   /** Booking steps are plain links and one form, so they work without scripts and with the page CSP. */
@@ -172,10 +192,10 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     return html(timesPage(meta, config, { service: query.service!, master }, days, day, slots));
   }
 
-  async function handleBookingForm(request: IncomingMessage, response: ServerResponse, slug: string, site: Site) {
+  async function handleBookingForm(request: IncomingMessage, response: ServerResponse, site: Site) {
     const meta = site.meta!;
     const config = meta.booking!;
-    if (!sameOrigin(request, slug)) return send(response, 403, messagePage(meta, 'Запись не отправлена', 'Записаться можно только со страницы этого сайта.'), 'text/html');
+    if (!sameOrigin(request, site)) return send(response, 403, messagePage(meta, 'Запись не отправлена', 'Записаться можно только со страницы этого сайта.'), 'text/html');
     if (!String(request.headers['content-type'] ?? '').startsWith('application/x-www-form-urlencoded')) return send(response, 415, messagePage(meta, 'Запись не отправлена', 'Неподдерживаемый формат формы.'), 'text/html');
     const raw = await readBody(request, 10_000);
     if (raw === null) return send(response, 413, messagePage(meta, 'Запись не отправлена', 'Слишком большой запрос.'), 'text/html');
@@ -220,8 +240,8 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
       { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
   }
 
-  async function handleBookingCancel(request: IncomingMessage, response: ServerResponse, slug: string, site: Site) {
-    if (!sameOrigin(request, slug)) return send(response, 403, messagePage(site.meta, 'Не отменено', 'Отменить можно только со страницы этого сайта.'), 'text/html');
+  async function handleBookingCancel(request: IncomingMessage, response: ServerResponse, site: Site) {
+    if (!sameOrigin(request, site)) return send(response, 403, messagePage(site.meta, 'Не отменено', 'Отменить можно только со страницы этого сайта.'), 'text/html');
     const raw = await readBody(request, 2_000);
     const token = new URLSearchParams(raw ?? '').get('token') ?? '';
     const booking = await bookingByToken(site, token);
@@ -233,13 +253,12 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
   }
 
   /**
-   * Caddy asks this before issuing an on-demand TLS certificate for a host: only subdomains of live sites get one,
+   * Caddy asks this before issuing an on-demand TLS certificate for a host: only subdomains of live sites and own domains whose DNS was checked get one,
    * so nobody can make the server request certificates for arbitrary names. Both answers reveal only what the site itself shows.
    */
   async function handleService(path: string, url: URL, response: ServerResponse): Promise<boolean> {
     if (path === '/__caddy/ask') {
-      const slug = slugFromHost(url.searchParams.get('domain') ?? '', options.baseDomain);
-      const site = slug ? await loadSite(slug) : null;
+      const site = await siteForHost(url.searchParams.get('domain') ?? '');
       send(response, site ? 200 : 404, site ? 'ok' : 'unknown', 'text/plain', false, { 'Cache-Control': 'no-store' });
       return true;
     }
@@ -259,13 +278,12 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     const url = new URL(request.url ?? '/', 'http://site.invalid');
     const path = url.pathname;
     if (request.method === 'GET' && (await handleService(path, url, response))) return;
-    const slug = slugFromHost(request.headers.host, options.baseDomain);
-    const site = slug ? await loadSite(slug) : null;
-    if (!slug || !site) return send(response, 404, messagePage(null, 'Сайт не найден', 'По этому адресу сайта нет или он снят с публикации.', false), 'text/html');
-    if (request.method === 'POST' && path === LEAD_FORM_PATH) return handleLead(request, response, slug, site);
+    const site = await siteForHost(request.headers.host);
+    if (!site) return send(response, 404, messagePage(null, 'Сайт не найден', 'По этому адресу сайта нет или он снят с публикации.', false), 'text/html');
+    if (request.method === 'POST' && path === LEAD_FORM_PATH) return handleLead(request, response, site);
     const booking = Boolean(site.meta?.booking);
-    if (request.method === 'POST' && path === BOOKING_FORM_PATH) return booking ? handleBookingForm(request, response, slug, site) : send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет онлайн-записи.'), 'text/html');
-    if (request.method === 'POST' && path === BOOKING_CANCEL_PATH) return booking ? handleBookingCancel(request, response, slug, site) : send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет онлайн-записи.'), 'text/html');
+    if (request.method === 'POST' && path === BOOKING_FORM_PATH) return booking ? handleBookingForm(request, response, site) : send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет онлайн-записи.'), 'text/html');
+    if (request.method === 'POST' && path === BOOKING_CANCEL_PATH) return booking ? handleBookingCancel(request, response, site) : send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет онлайн-записи.'), 'text/html');
     if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, '', 'text/plain', false, { Allow: 'GET, HEAD' });
     const cacheHeaders = { 'Cache-Control': 'public, max-age=60' };
     const image = /^\/img\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.webp$/.exec(path);
@@ -277,8 +295,8 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
       case '/': return send(response, 200, site.html, 'text/html', site.hasForm, cacheHeaders);
       case '/privacy': return send(response, 200, privacyPage(site.meta, options.retentionDays), 'text/html', false, cacheHeaders);
       case '/thanks': return send(response, 200, thanksPage(site.meta), 'text/html', false, { 'Cache-Control': 'no-store' });
-      case '/robots.txt': return send(response, 200, `User-agent: *\nAllow: /\nDisallow: /thanks\nDisallow: /book\nSitemap: ${options.urlFor(slug)}/sitemap.xml\n`, 'text/plain', false, cacheHeaders);
-      case '/sitemap.xml': return send(response, 200, `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${options.urlFor(slug)}/</loc></url></urlset>\n`, 'application/xml', false, cacheHeaders);
+      case '/robots.txt': return send(response, 200, `User-agent: *\nAllow: /\nDisallow: /thanks\nDisallow: /book\nSitemap: ${site.canonical}/sitemap.xml\n`, 'text/plain', false, cacheHeaders);
+      case '/sitemap.xml': return send(response, 200, `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${site.canonical}/</loc></url></urlset>\n`, 'application/xml', false, cacheHeaders);
       default: return send(response, 404, messagePage(site.meta, 'Страница не найдена', 'Такой страницы на сайте нет.'), 'text/html');
     }
   }
@@ -299,5 +317,5 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     return result.count + bookings.count;
   }
 
-  return { server, cleanup, invalidate: (slug: string) => cache.delete(slug) };
+  return { server, cleanup, invalidate: (slug: string) => { cache.delete(`s:${slug}`); for (const key of cache.keys()) if (key.startsWith('d:')) cache.delete(key); } };
 }

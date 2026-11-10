@@ -925,6 +925,12 @@ model SitePublication {
   unpublishedAt     DateTime?             @map("unpublished_at") @db.Timestamptz(3)
   notifyTelegram    Boolean               @default(true) @map("notify_telegram")
   notifyEmail       Boolean               @default(true) @map("notify_email")
+  /// The owner's own domain (ASCII/punycode, lower case). Served only after DNS points to BuildPath (domainStatus active).
+  customDomain      String?               @unique(map: "site_publications_custom_domain_key") @map("custom_domain") @db.VarChar(253)
+  /// pending | active | failed
+  domainStatus      String?               @map("domain_status") @db.VarChar(10)
+  domainCheckedAt   DateTime?             @map("domain_checked_at") @db.Timestamptz(3)
+  domainError       String?               @map("domain_error") @db.VarChar(60)
   createdAt         DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
   project           Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)

@@ -1391,7 +1391,7 @@ paths:
       security: [{ sessionCookie: [] }]
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting, deployment] } }
+        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting, deployment, domain] } }
       responses:
         '200': { description: 'card, recommendation (optionKey, reason), choice (optionKey, reason, stepsDone, chosenAt, cardVersion) or null, repository (no token, only tokenHint) or null, canDecide, connectAvailable' }
         '404': { $ref: '#/components/responses/Problem' }
@@ -1403,7 +1403,7 @@ paths:
       security: [{ sessionCookie: [] }]
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting, deployment] } }
+        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting, deployment, domain] } }
       requestBody:
         required: true
         content:
@@ -2476,6 +2476,80 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/LeadNotificationSettings' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicationResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/publication/domain:
+    post:
+      tags: [Publishing]
+      operationId: setSiteDomain
+      summary: Connect the owner's own domain to the published site
+      description: "Owner or manager. Saves the domain as pending and returns the DNS records to create; the site is not served on it until the DNS check passes. .kz and .қаз domains are refused unless BuildPath hosts sites in Kazakhstan (DOMAIN_KZ_NEEDS_KZ_HOSTING)."
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [domain]
+              properties:
+                domain: { type: string, maxLength: 300, description: Pasted address; scheme and path are dropped and Cyrillic names are converted to punycode. }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicationResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Publishing]
+      operationId: removeSiteDomain
+      summary: Disconnect the own domain
+      description: The site keeps working on its BuildPath address.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicationResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/publication/domain/check:
+    post:
+      tags: [Publishing]
+      operationId: checkSiteDomain
+      summary: Check that the own domain points at BuildPath
+      description: "Looks up CNAME and A records. Active when the CNAME is the BuildPath target or every A record is a BuildPath address; then the sites server serves the site there and allows its TLS certificate. At most one check per 10 seconds (DOMAIN_CHECK_TOO_SOON)."
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
       responses:
         '200':
           description: OK
@@ -4948,6 +5022,31 @@ components:
                 publishedVersionNumber: { type: [integer, 'null'] }
                 notifyTelegram: { type: boolean }
                 notifyEmail: { type: boolean }
+                domain:
+                  type: [object, 'null']
+                  properties:
+                    name: { type: string, description: ASCII (punycode) form. }
+                    display: { type: string, description: Readable form for Cyrillic names. }
+                    status: { type: string, enum: [pending, active, failed] }
+                    checkedAt: { type: [string, 'null'], format: date-time }
+                    error: { type: [string, 'null'], enum: [DNS_RECORD_NOT_FOUND, DNS_POINTS_ELSEWHERE, null] }
+                    apex: { type: boolean }
+                    url: { type: [string, 'null'] }
+                    records:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          type: { type: string, enum: [CNAME, A] }
+                          name: { type: string }
+                          value: { type: string }
+            domainsAvailable: { type: boolean, description: Own domains are configured on this installation. }
+            domainCheck:
+              type: object
+              description: Only in the response of the DNS check.
+              properties:
+                ok: { type: boolean }
+                found: { type: array, items: { type: string } }
             acceptedBuild:
               type: [object, 'null']
               properties:

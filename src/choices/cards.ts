@@ -1,11 +1,12 @@
 // Choice cards: decisions with consequences, explained for people who do not know development (STAGE_WORK_MODEL, section 24).
 
-export type CardKey = 'code_hosting' | 'deployment';
+export type CardKey = 'code_hosting' | 'deployment' | 'domain';
 /**
  * manual — the user does it and ticks it off; connect — form that checks a repository; download — files from the result package;
- * publish — publishing on BuildPath; push — send to the connected repository; package — files for an own server; verify — BuildPath opens the address and checks the site.
+ * publish — publishing on BuildPath; push — send to the connected repository; package — files for an own server; verify — BuildPath opens the address and checks the site;
+ * domain — form for the owner's domain with the DNS record to create and a check that it points at BuildPath.
  */
-export type StepKind = 'manual' | 'connect' | 'download' | 'publish' | 'push' | 'package' | 'verify';
+export type StepKind = 'manual' | 'connect' | 'download' | 'publish' | 'push' | 'package' | 'verify' | 'domain';
 
 export interface ChoiceStep {
   key: string;
@@ -100,7 +101,7 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
   },
   deployment: {
     key: 'deployment',
-    version: '1.2.0',
+    version: '1.3.0',
     checkedAt: '2026-11-10',
     title: 'Где будет работать сайт',
     question: 'Где разместить сайт, чтобы его видели клиенты?',
@@ -111,7 +112,7 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
         title: 'На BuildPath',
         summary: 'Сайт открывается по адресу вида имя.buildpath. Публикуете одной кнопкой, обновляете так же.',
         pros: ['Ничего не нужно настраивать', 'Работают форма заявок и онлайн-запись с уведомлениями в Telegram и на почту', 'HTTPS и резервные копии — наша забота'],
-        limits: ['Адрес на поддомене BuildPath; свой домен пока не подключается'],
+        limits: ['Адрес на поддомене BuildPath. Свой домен можно подключить в решении «Адрес сайта»'],
         cost: 'Входит в тариф',
         upkeep: 'Ничего',
         leaving: 'Легко: файлы сайта можно скачать или отправить в репозиторий',
@@ -155,10 +156,55 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
       },
     ],
   },
+  domain: {
+    key: 'domain',
+    version: '1.0.0',
+    checkedAt: '2026-11-11',
+    title: 'Адрес сайта',
+    question: 'По какому адресу клиенты будут открывать сайт?',
+    why: 'Адрес BuildPath работает сразу и бесплатно. Свой домен проще запомнить и он остаётся вашим, даже если вы переедете на другой хостинг. Его можно подключить в любой момент — старый адрес BuildPath тоже продолжит работать.',
+    options: [
+      {
+        key: 'buildpath_address',
+        title: 'Адрес BuildPath',
+        summary: 'Адрес вида имя.buildpath — выбираете имя при публикации.',
+        pros: ['Бесплатно и сразу', 'HTTPS включён', 'Ничего не нужно продлевать'],
+        limits: ['В адресе есть BuildPath', 'При переезде на другой хостинг адрес сменится'],
+        cost: 'Бесплатно',
+        upkeep: 'Ничего',
+        leaving: 'Адрес остаётся на BuildPath; при переезде понадобится новый',
+        steps: [
+          { key: 'publish', kind: 'publish', title: 'Выберите имя и опубликуйте', text: ['На странице проекта в блоке «Публикация» впишите имя латиницей и нажмите «Опубликовать».'] },
+        ],
+      },
+      {
+        key: 'own_domain',
+        title: 'Свой домен',
+        requires: { card: 'deployment', option: 'buildpath', explanation: 'Здесь подключается домен к сайту на BuildPath. Если сайт работает на своём сервере или GitHub Pages, домен настраивается в шагах решения «Где будет работать сайт».' },
+        summary: 'Адрес вроде barber-usy.com. Покупаете у регистратора и направляете на BuildPath одной записью в настройках.',
+        pros: ['Короткий и запоминающийся адрес', 'Домен ваш: при переезде на другой хостинг он переезжает с вами', 'HTTPS BuildPath включит сам'],
+        limits: [
+          'Домен нужно купить и продлевать каждый год, иначе сайт перестанет открываться',
+          'Домены .kz и .қаз по правилам Казахстана должны работать на серверах в Казахстане. Если BuildPath сейчас не размещает сайты в Казахстане, такой домен не подключится — выберите .com или другой, или разместите сайт на своём сервере в Казахстане',
+          'Почта на домене (info@ваш-домен) настраивается отдельно у регистратора или почтового сервиса',
+        ],
+        cost: 'Домен — обычно несколько тысяч тенге в год, цена зависит от зоны и регистратора. Подключение в BuildPath бесплатно',
+        upkeep: 'Продлевать домен у регистратора (удобно включить автопродление)',
+        leaving: 'Легко: домен ваш, достаточно направить его на новый хостинг',
+        steps: [
+          { key: 'buy', kind: 'manual', title: 'Купите домен', text: ['Купите домен у любого регистратора: казахстанского (например, PS.kz, Hoster.kz) или международного.', 'Проверьте, что имя свободно, и оплатите на год или больше. Сохраните вход в личный кабинет регистратора — он понадобится на следующем шаге.', 'Если домен уже есть — этот шаг пропустите.'] },
+          { key: 'connect', kind: 'domain', title: 'Направьте домен на BuildPath', text: ['Впишите домен ниже. BuildPath покажет одну-две записи DNS, которые нужно добавить у регистратора в разделе «DNS» или «Управление зоной».', 'Для www.ваш-домен нужна запись CNAME, для адреса без www — запись A. Изменение начинает работать за 5–60 минут, иногда до суток.', 'Потом нажмите «Проверить»: BuildPath сам убедится, что домен смотрит на сайт, и включит HTTPS.'] },
+        ],
+      },
+    ],
+  },
 };
 
 /** Deterministic recommendation with the reason shown to the user. */
 export function recommend(card: CardKey, project: { hasSpecialists: boolean }): { optionKey: string; reason: string } {
+  if (card === 'domain') {
+    return { optionKey: 'buildpath_address', reason: 'Начните с бесплатного адреса BuildPath: сайт заработает сразу. Свой домен можно подключить позже, ничего не переделывая.' };
+  }
   if (card === 'deployment') {
     return { optionKey: 'buildpath', reason: 'Это самый простой вариант: публикация одной кнопкой, работают форма заявок и онлайн-запись, а обслуживание сервера — наша забота.' };
   }

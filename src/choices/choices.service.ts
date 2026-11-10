@@ -7,6 +7,7 @@ import { Prisma } from '../generated/prisma/client.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { ReviewTargetPolicyError, resolveAndValidateReviewTarget } from '../reviews/url-target-policy.js';
 import { choiceCards, recommend, type CardKey, githubOauthSteps } from './cards.js';
+import { domainTarget } from '../publishing/domain.js';
 import { checkSite } from './site-check.js';
 import { GITHUB_SCOPES, authorizeUrl, createRepo, exchangeCode, githubOauthConfig, githubUser, writableRepos, type GithubOauthConfig } from './github-oauth.js';
 import { bookingBundle, bookingPackageFiles } from '../export/booking-package.js';
@@ -86,7 +87,7 @@ export class ChoicesService {
         recommendation: recommend(cardKey, access),
         choice: choice ? { optionKey: choice.optionKey, reason: choice.reason, stepsDone: choice.stepsDone, chosenAt: choice.chosenAt, cardVersion: choice.cardVersion, verification: choice.verification ?? null } : null,
         available: met,
-        context: cardKey === 'deployment' ? await this.deploymentContext(projectId) : null,
+        context: cardKey === 'deployment' ? await this.deploymentContext(projectId) : cardKey === 'domain' ? await this.domainContext(projectId) : null,
         repository: this.repositoryView(repo),
         canDecide: access.canDecide,
         connectAvailable: Boolean(this.key()),
@@ -119,7 +120,7 @@ export class ChoicesService {
     if (!choice) throw new ConflictException('CHOICE_NOT_MADE');
     const step = choiceCards[cardKey].options.find((option) => option.key === choice.optionKey)?.steps.find((item) => item.key === stepKey);
     // Steps that BuildPath checks itself cannot be ticked off by hand.
-    if (!step || step.kind === 'connect' || step.kind === 'verify') throw new BadRequestException('CHOICE_STEP_INVALID');
+    if (!step || step.kind === 'connect' || step.kind === 'verify' || step.kind === 'domain') throw new BadRequestException('CHOICE_STEP_INVALID');
     const steps = new Set(choice.stepsDone);
     if (done) steps.add(stepKey); else steps.delete(stepKey);
     await this.prisma.projectChoice.update({ where: { id: choice.id }, data: { stepsDone: [...steps] } });
@@ -369,6 +370,17 @@ export class ChoicesService {
       siteAccepted: Boolean(buildId),
       publication: publication ? { status: publication.status, slug: publication.slug, upToDate: publication.buildVersionId === buildId } : null,
       repository: repo ? { provider: repo.provider, repoPath: repo.repoPath, pushedAt: repo.lastPushAt } : null,
+    };
+  }
+
+  /** Where the owner's domain stands; the domain step is done once DNS points at BuildPath. */
+  private async domainContext(projectId: string) {
+    const publication = await this.prisma.sitePublication.findUnique({ where: { projectId }, select: { status: true, slug: true, customDomain: true, domainStatus: true } });
+    const target = domainTarget();
+    return {
+      domainsAvailable: Boolean(target),
+      kzAllowed: Boolean(target?.hostedInKz),
+      publication: publication ? { status: publication.status, slug: publication.slug, domain: publication.customDomain, domainStatus: publication.domainStatus } : null,
     };
   }
 
