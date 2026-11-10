@@ -13,10 +13,11 @@ import { ImagesModule } from './images/images.module.js';
 import { BillingModule } from './billing/billing.module.js';
 import { AccountModule } from './account/account.module.js';
 import { ChoicesModule } from './choices/choices.module.js';
+import { PaymentsModule } from './payments/payments.module.js';
 import { BudgetModule } from './budget/budget.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule],
+  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule],
   controllers: [HealthController, WorkspacesController],
 })
 export class AppModule {}
