@@ -2,6 +2,7 @@
 import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
 import type { ArtifactType } from './catalog.js';
 import { normalizeSchedule, scheduleIssues, type BookingConfig, type Schedule } from './schedule.js';
+import { normalizeTechPlan } from './techplan.js';
 
 export type MainAction = 'call' | 'message' | 'visit' | 'email' | 'form';
 export type Tone = 'friendly' | 'formal' | 'bold';
@@ -165,6 +166,7 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown): unknown {
     case 'content': return normalizeContent(raw);
     case 'design': return normalizeDesign(raw);
     case 'schedule': return normalizeSchedule(raw);
+    case 'techplan': return normalizeTechPlan(raw);
     default: throw new ArtifactValidationError('ARTIFACT_NOT_EDITABLE');
   }
 }
@@ -176,6 +178,7 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'offer') return ['services', 'hours'];
   if (type === 'design') return ['palette', 'font', 'corners', 'heroLayout'];
   if (type === 'schedule') return ['timezone', 'services', 'masters', 'rules'];
+  if (type === 'techplan') return ['ownerNotes'];
   return [];
 }
 

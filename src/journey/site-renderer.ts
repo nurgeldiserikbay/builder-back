@@ -86,6 +86,9 @@ export interface RenderInput {
   images?: Record<string, ImageInfo>;
   /** Online booking route: buttons lead to the booking pages served by the BuildPath sites server. */
   booking?: BookingConfig | null;
+  /** Technical plan version the build relies on, and the version this platform implements (contract stage). */
+  contractVersion?: string | null;
+  expectedContractVersion?: string | null;
 }
 
 function photo(id: string | null, images: Record<string, ImageInfo> | undefined, eager: boolean): string {
@@ -237,6 +240,10 @@ export function checkSite(input: RenderInput): SiteCheck[] {
     const missing = (input.offer?.services ?? []).filter((service) => !input.booking!.schedule.services.some((item) => item.name === service.name));
     add('booking-services', false, missing.length === 0, 'Все услуги доступны для записи', 'Все услуги из списка можно забронировать.',
       `На ${missing.map((service) => `«${service.name}»`).join(', ')} записаться нельзя: их нет в расписании. Добавьте длительность на этапе «Расписание и запись», если на них нужна запись.`, true);
+    if (input.expectedContractVersion) {
+      add('contract', true, input.contractVersion === input.expectedContractVersion, 'Соответствует техническому плану', `Программа записи сделана по версии плана ${input.expectedContractVersion}.`,
+        input.contractVersion ? `План принят для версии ${input.contractVersion}, а платформа собирает версию ${input.expectedContractVersion}. Откройте этап «Технический план», обновите его и примите.` : 'Технический план ещё не принят.');
+    }
     const ownerContact = Boolean(brief.phone || brief.email || brief.messenger || brief.address);
     add('booking-privacy', true, ownerContact, 'Запись и согласие', 'Запись просит согласие на обработку данных и ведёт на страницу о данных с вашими контактами.',
       'Для онлайн-записи нужен хотя бы один ваш контакт (телефон, email или мессенджер) — он будет на странице о данных и в подтверждении записи.');
