@@ -310,6 +310,8 @@ model Project {
   images           ProjectImage[]
   leads            SiteLead[]
   changeNotices    ChangeNotice[]
+  choices          ProjectChoice[]
+  repository       CodeRepository?
 
   @@index([workspaceId, status, createdAt(sort: Desc)], map: "projects_workspace_status_created_idx")
   @@index([ownerUserId, createdAt(sort: Desc)], map: "projects_owner_created_idx")
@@ -1138,4 +1140,46 @@ model ChangeMessage {
 
   @@index([noticeId, createdAt], map: "change_messages_notice_created_idx")
   @@map("change_messages")
+}
+
+/// A decision made with a choice card (where to keep the code, where to deploy...). One row per card; history in project events.
+model ProjectChoice {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId      String   @map("project_id") @db.Uuid
+  cardKey        String   @map("card_key") @db.VarChar(40)
+  cardVersion    String   @map("card_version") @db.VarChar(20)
+  optionKey      String   @map("option_key") @db.VarChar(40)
+  reason         String?  @db.VarChar(500)
+  stepsDone      String[] @default([]) @map("steps_done") @db.VarChar(40)
+  chosenByUserId String   @map("chosen_by_user_id") @db.Uuid
+  chosenAt       DateTime @default(now()) @map("chosen_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, cardKey], map: "project_choices_project_card_key")
+  @@map("project_choices")
+}
+
+/// Repository connected to a project. The access token is encrypted (AES-256-GCM) and never returned by the API.
+model CodeRepository {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId        String    @unique @map("project_id") @db.Uuid
+  provider         String    @db.VarChar(20)
+  baseUrl          String    @map("base_url") @db.VarChar(300)
+  repoPath         String    @map("repo_path") @db.VarChar(200)
+  webUrl           String    @map("web_url") @db.VarChar(500)
+  defaultBranch    String    @map("default_branch") @db.VarChar(120)
+  isPrivate        Boolean   @map("is_private")
+  tokenEncrypted   String    @map("token_encrypted")
+  tokenHint        String    @map("token_hint") @db.VarChar(8)
+  connectedByUserId String   @map("connected_by_user_id") @db.Uuid
+  verifiedAt       DateTime  @map("verified_at") @db.Timestamptz(3)
+  lastPushAt       DateTime? @map("last_push_at") @db.Timestamptz(3)
+  lastCommitUrl    String?   @map("last_commit_url") @db.VarChar(500)
+  lastError        String?   @map("last_error") @db.VarChar(80)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("code_repositories")
 }
