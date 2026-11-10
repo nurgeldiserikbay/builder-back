@@ -174,6 +174,19 @@ export class JourneyController {
     return this.journey.changeNotices(request.user.id, projectId, stageKey(key));
   }
 
+  @Post('projects/:projectId/changes/:noticeId/explain')
+  @HttpCode(200)
+  explainChange(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('noticeId') noticeId: string) {
+    return this.journey.explainChange(request.user.id, uuid(projectId, 'INVALID_PROJECT_ID'), uuid(noticeId, 'INVALID_NOTICE'));
+  }
+
+  @Post('projects/:projectId/change-settings')
+  @HttpCode(200)
+  changeSettings(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw, ['responseDays']);
+    return this.journey.setChangeResponseDays(request.user.id, uuid(projectId, 'INVALID_PROJECT_ID'), whole(input.responseDays, 'responseDays', 1, 14, false)!);
+  }
+
   @Post('projects/:projectId/changes/:noticeId')
   @HttpCode(200)
   actOnChange(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('noticeId') noticeId: string, @Body() raw: unknown) {
