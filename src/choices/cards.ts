@@ -1,7 +1,11 @@
 // Choice cards: decisions with consequences, explained for people who do not know development (STAGE_WORK_MODEL, section 24).
 
-export type CardKey = 'code_hosting';
-export type StepKind = 'manual' | 'connect' | 'download';
+export type CardKey = 'code_hosting' | 'deployment';
+/**
+ * manual — the user does it and ticks it off; connect — form that checks a repository; download — files from the result package;
+ * publish — publishing on BuildPath; push — send to the connected repository; package — files for an own server; verify — BuildPath opens the address and checks the site.
+ */
+export type StepKind = 'manual' | 'connect' | 'download' | 'publish' | 'push' | 'package' | 'verify';
 
 export interface ChoiceStep {
   key: string;
@@ -13,6 +17,8 @@ export interface ChoiceStep {
 
 export interface ChoiceOption {
   key: string;
+  /** Another choice this option needs, e.g. GitHub Pages needs code on GitHub. */
+  requires?: { card: CardKey; option: string; explanation: string };
   title: string;
   summary: string;
   pros: string[];
@@ -92,11 +98,70 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
       },
     ],
   },
+  deployment: {
+    key: 'deployment',
+    version: '1.0.0',
+    checkedAt: '2026-11-10',
+    title: 'Где будет работать сайт',
+    question: 'Где разместить сайт, чтобы его видели клиенты?',
+    why: 'Сайт должен где-то работать круглосуточно. Проще всего — на BuildPath. Если нужен свой адрес на своём сервере или в другом сервисе, мы проведём по шагам и проверим, что сайт открывается.',
+    options: [
+      {
+        key: 'buildpath',
+        title: 'На BuildPath',
+        summary: 'Сайт открывается по адресу вида имя.buildpath. Публикуете одной кнопкой, обновляете так же.',
+        pros: ['Ничего не нужно настраивать', 'Работает форма заявок с уведомлениями в Telegram и на почту', 'HTTPS и резервные копии — наша забота'],
+        limits: ['Адрес на поддомене BuildPath; свой домен пока не подключается'],
+        cost: 'Входит в тариф',
+        upkeep: 'Ничего',
+        leaving: 'Легко: файлы сайта можно скачать или отправить в репозиторий',
+        steps: [
+          { key: 'publish', kind: 'publish', title: 'Опубликуйте сайт', text: ['На странице проекта в блоке «Публикация» выберите адрес и нажмите «Опубликовать». Сначала примите этап «Сборка и проверка».'] },
+          { key: 'verify', kind: 'verify', title: 'Проверка', text: ['BuildPath сам проверит, что сайт опубликован и открывается последняя принятая версия.'] },
+        ],
+      },
+      {
+        key: 'github_pages',
+        title: 'GitHub Pages',
+        requires: { card: 'code_hosting', option: 'github', explanation: 'Сначала выберите GitHub в решении «Где хранить код» и подключите репозиторий.' },
+        summary: 'Бесплатный хостинг от GitHub: сайт берётся прямо из вашего репозитория.',
+        pros: ['Бесплатно', 'Адрес вида имя.github.io или свой домен', 'Новая версия — отправкой в репозиторий'],
+        limits: ['Бесплатно только для открытого репозитория — код увидят все', 'Форма заявок BuildPath там не работает: на сайте останутся кнопки звонка и мессенджера', 'Нужен аккаунт GitHub'],
+        cost: 'Бесплатно для открытых репозиториев; для закрытых — платный тариф GitHub',
+        upkeep: 'Отправлять новую версию в репозиторий после изменений',
+        leaving: 'Легко: файлы в вашем репозитории',
+        steps: [
+          { key: 'push', kind: 'push', title: 'Отправьте сайт в репозиторий', text: ['В решении «Где хранить код» нажмите «Отправить в репозиторий». В репозитории должен появиться файл index.html.'] },
+          { key: 'pages', kind: 'manual', title: 'Включите GitHub Pages', text: ['В репозитории откройте «Settings» → «Pages».', 'В «Build and deployment» выберите «Deploy from a branch», ветку main и папку «/ (root)», нажмите «Save».', 'Через 1–2 минуты вверху появится адрес сайта — скопируйте его.'] },
+          { key: 'verify', kind: 'verify', title: 'Проверьте адрес', text: ['Вставьте адрес сайта. BuildPath откроет его и сравнит с последней принятой версией.'] },
+        ],
+      },
+      {
+        key: 'own_server',
+        title: 'Свой сервер',
+        summary: 'Сайт работает на вашем сервере (VPS) с вашим доменом. Мы дадим готовые файлы и команды.',
+        pros: ['Свой домен и полный контроль', 'Можно выбрать сервер в Казахстане', 'Подходит, если сервер уже есть'],
+        limits: ['Нужно арендовать сервер и купить домен', 'Обновлять сервер и следить за ним — ваша задача или вашего специалиста', 'Форма заявок BuildPath там не работает'],
+        cost: 'Сервер — обычно от 2 000–5 000 ₸ в месяц, домен — от 3 000 ₸ в год (цены у разных хостингов отличаются)',
+        upkeep: 'Продлевать сервер и домен, ставить обновления',
+        leaving: 'Легко: файлы у вас',
+        steps: [
+          { key: 'server', kind: 'manual', title: 'Арендуйте сервер', text: ['У любого хостинга возьмите VPS с Ubuntu 24.04: 1 ядро и 1 ГБ памяти достаточно.', 'Сохраните адрес сервера (IP) и пароль или ключ входа, которые пришлёт хостинг.'] },
+          { key: 'domain', kind: 'manual', title: 'Направьте домен на сервер', text: ['У регистратора домена откройте настройки DNS и добавьте запись типа A: имя «@» (или поддомен), значение — IP сервера.', 'Изменение начинает работать за 5–60 минут.'] },
+          { key: 'package', kind: 'package', title: 'Скачайте файлы для сервера', text: ['В пакете: страница сайта, файл настроек веб-сервера Caddy (сам получит HTTPS-сертификат) и инструкция с командами.', 'Если у вас есть специалист, просто передайте ему пакет.'] },
+          { key: 'install', kind: 'manual', title: 'Запустите на сервере', text: ['Подключитесь к серверу и выполните команды из файла README.md в пакете — их можно скопировать целиком.', 'Если что-то пошло не так, пришлите текст ошибки специалисту или в поддержку.'] },
+          { key: 'verify', kind: 'verify', title: 'Проверьте адрес', text: ['Вставьте адрес сайта, например https://ваш-домен.kz. BuildPath откроет его и сравнит с последней принятой версией.'] },
+        ],
+      },
+    ],
+  },
 };
 
 /** Deterministic recommendation with the reason shown to the user. */
 export function recommend(card: CardKey, project: { hasSpecialists: boolean }): { optionKey: string; reason: string } {
-  void card;
+  if (card === 'deployment') {
+    return { optionKey: 'buildpath', reason: 'Это самый простой вариант: публикация одной кнопкой, работает форма заявок, а обслуживание сервера — наша забота.' };
+  }
   return project.hasSpecialists
       ? { optionKey: 'github', reason: 'В проекте работают специалисты: им удобнее брать код из GitHub, и у вас будет история всех версий.' }
       : { optionKey: 'archive', reason: 'Сайт уже работает на BuildPath, а копия нужна на случай переезда. Архива достаточно, пока вы не подключаете разработчика.' };

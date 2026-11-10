@@ -1151,6 +1151,8 @@ model ProjectChoice {
   optionKey      String   @map("option_key") @db.VarChar(40)
   reason         String?  @db.VarChar(500)
   stepsDone      String[] @default([]) @map("steps_done") @db.VarChar(40)
+  /// Last automatic check of the result (for deployment: address, outcome, time).
+  verification   Json?
   chosenByUserId String   @map("chosen_by_user_id") @db.Uuid
   chosenAt       DateTime @default(now()) @map("chosen_at") @db.Timestamptz(3)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)

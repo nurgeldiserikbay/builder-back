@@ -1390,7 +1390,7 @@ paths:
       security: [{ sessionCookie: [] }]
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting] } }
+        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting, deployment] } }
       responses:
         '200': { description: 'card, recommendation (optionKey, reason), choice (optionKey, reason, stepsDone, chosenAt, cardVersion) or null, repository (no token, only tokenHint) or null, canDecide, connectAvailable' }
         '404': { $ref: '#/components/responses/Problem' }
@@ -1402,7 +1402,7 @@ paths:
       security: [{ sessionCookie: [] }]
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting] } }
+        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting, deployment] } }
       requestBody:
         required: true
         content:
@@ -1498,6 +1498,37 @@ paths:
         '200': { description: Card with lastPushAt and lastCommitUrl }
         '400': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/deployment/verify:
+    post:
+      tags: [Choices]
+      operationId: verifyDeployment
+      summary: Check that the chosen deployment serves the latest accepted site
+      description: For BuildPath — the publication is live and current. Otherwise BuildPath opens the address (public addresses only, every redirect re-checked, 3 MB limit) and compares the page with the accepted site — matches, outdated, different, unreachable, not_allowed. A match marks the verify step done. Owners and managers.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { url: { type: [string, 'null'], maxLength: 500 } } }
+      responses:
+        '200': { description: Deployment card with choice.verification (url, status, checkedAt, httpStatus) }
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem', description: CHOICE_NOT_MADE, SITE_NOT_ACCEPTED }
+  /projects/{projectId}/deployment/package:
+    get:
+      tags: [Choices]
+      operationId: getServerPackage
+      summary: Files to run the accepted site on an own server
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'folder and files: site/index.html, Caddyfile (automatic HTTPS), compose.yaml, README.md with commands' }
+        '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/journey:
     get:
       tags: [Journey]
