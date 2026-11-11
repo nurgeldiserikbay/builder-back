@@ -11,6 +11,7 @@ import { normalizeDomain } from '../publishing/domain.js';
 import { emailConfig } from '../notifications/email.js';
 import { sendDueReminders } from '../notifications/booking-reminders.js';
 import { reportError } from '../observability/error-reporting.js';
+import { contentLocale, localeFromHeader, runWithLocale, tr } from '../i18n/i18n.js';
 import { messagePage, parseLeadForm, privacyPage, thanksPage } from './site-pages.js';
 import { BOOKING_CANCEL_PATH, BOOKING_FORM_PATH, bookingPage, confirmPage, mastersFor, mastersPage, parseBookingForm, parseQuery, servicesPage, timesPage } from './booking-pages.js';
 import { busyBetween, canClientCancel, createBooking, tokenHash } from './booking-store.js';
@@ -223,7 +224,7 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     if (!result.ok) {
       const location = `/book?s=${parsed.form.service}&m=${encodeURIComponent(parsed.form.master)}&d=${localDayOf(parsed.form.start, config.schedule.timezone)}`;
       return send(response, 409, messagePage(meta, 'Это время уже заняли', 'Пока вы заполняли форму, это время забронировали. Выберите другое — откроем свободное время на этот день.', false)
-        .replace('</main>', `<a class="button" href="${location}">Выбрать другое время</a></main>`), 'text/html');
+        .replace('</main>', `<a class="button" href="${location}">${tr('Выбрать другое время')}</a></main>`), 'text/html');
     }
     send(response, 303, '', 'text/plain', false, { Location: `/book/b/${result.token}?new=1` });
     void options.notifyBooking(result.id, 'created').catch(() => undefined);
@@ -285,7 +286,15 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     const path = url.pathname;
     if (request.method === 'GET' && (await handleService(path, url, response))) return;
     const site = await siteForHost(request.headers.host);
-    if (!site) return send(response, 404, messagePage(null, 'Сайт не найден', 'По этому адресу сайта нет или он снят с публикации.', false), 'text/html');
+    if (!site) {
+      return runWithLocale(localeFromHeader(request.headers['accept-language']),
+        () => send(response, 404, messagePage(null, 'Сайт не найден', 'По этому адресу сайта нет или он снят с публикации.', false), 'text/html'));
+    }
+    // Pages and messages of a site are in the project's language, whatever the visitor's browser says.
+    return runWithLocale(contentLocale(site.meta?.locale), () => handleSite(request, response, url, path, site));
+  }
+
+  async function handleSite(request: IncomingMessage, response: ServerResponse, url: URL, path: string, site: Site) {
     if (request.method === 'POST' && path === LEAD_FORM_PATH) return handleLead(request, response, site);
     const booking = Boolean(site.meta?.booking);
     if (request.method === 'POST' && path === BOOKING_FORM_PATH) return booking ? handleBookingForm(request, response, site) : send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет онлайн-записи.'), 'text/html');
@@ -310,7 +319,7 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
   const server = http.createServer((request, response) => {
     handle(request, response).catch((error: unknown) => {
       reportError(error, { service: 'sites' });
-      if (!response.headersSent) send(response, 500, messagePage(null, 'Ошибка', 'Не удалось открыть страницу. Попробуйте позже.'), 'text/html');
+      if (!response.headersSent) runWithLocale(localeFromHeader(request.headers['accept-language']), () => send(response, 500, messagePage(null, 'Ошибка', 'Не удалось открыть страницу. Попробуйте позже.'), 'text/html'));
       else response.end();
     });
   });

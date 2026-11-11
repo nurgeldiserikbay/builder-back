@@ -15,6 +15,9 @@ export function localeFromHeader(header: string | undefined | null): Locale {
 export const runWithLocale = <T>(locale: Locale, work: () => T): T => store.run(locale, work);
 export const currentLocale = (): Locale => store.getStore() ?? 'ru';
 
+/** Language of a project's own pages and messages to its clients. Kazakh has no platform dictionary yet, so it gets Russian. */
+export const contentLocale = (value: string | null | undefined): Locale => (value === 'en' ? 'en' : 'ru');
+
 function fill(text: string, vars?: unknown[] | Record<string, unknown>): string {
   if (!vars) return text;
   return text.replace(/\{(\w+)\}/g, (whole, key: string) => {
@@ -22,6 +25,14 @@ function fill(text: string, vars?: unknown[] | Record<string, unknown>): string 
     return value === undefined ? whole : String(value);
   });
 }
+
+/** A message for someone else: a ready text, or a function that writes it in the language it is called in. */
+export type Message = string | (() => string);
+/** Writes a message in the recipient's language (account or project language). */
+export const inLocale = (locale: string | null | undefined, message: Message): string => (typeof message === 'string' ? message : runWithLocale(contentLocale(locale), message));
+
+/** An amount stored in tiyn, written for the current language: «12 500» or «12,500». */
+export const money = (tiyn: number): string => (Math.round(tiyn) / 100).toLocaleString(currentLocale() === 'en' ? 'en-US' : 'ru-RU');
 
 /** Text in the given language; {0} or {name} are filled from vars. */
 export function trl(locale: Locale, text: string, vars?: unknown[] | Record<string, unknown>): string {

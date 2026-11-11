@@ -25,6 +25,7 @@ jobs:
       - run: npm install
       - run: npm run build
       - run: npm test
+      - run: npm run i18n:check
       - run: npm run db:validate
         env:
           DATABASE_URL: postgresql://buildpath:buildpath@localhost:5432/buildpath?schema=public

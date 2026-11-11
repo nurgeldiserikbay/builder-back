@@ -1,6 +1,8 @@
 // Deterministic renderer: typed brief/content/design -> one self-contained, script-free HTML page.
 import type { Brief, ContentArtifact, DesignArtifact, Offer, SiteMeta } from './artifacts.js';
+import { PLACEHOLDER } from './placeholder.js';
 import { doable, scheduleIssues, type BookingConfig } from './schedule.js';
+import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 
 export interface Palette { id: string; label: string; hint: string; background: string; surface: string; text: string; muted: string; accent: string; accentText: string }
 export interface FontPreset { id: string; label: string; hint: string; stack: string; headingWeight: number }
@@ -97,7 +99,12 @@ function photo(id: string | null, images: Record<string, ImageInfo> | undefined,
   return `<img class="photo" src="/img/${escapeHtml(id)}.webp" alt="${escapeHtml(image.alt)}" width="${image.width}" height="${image.height}"${eager ? ' fetchpriority="high"' : ' loading="lazy"'} decoding="async">`;
 }
 
+/** Page of the site; fixed texts (contacts, form, booking) are in the project's language. */
 export function renderSite(input: RenderInput): string {
+  return runWithLocale(contentLocale(input.locale), () => renderSiteIn(input));
+}
+
+function renderSiteIn(input: RenderInput): string {
   const { brief, offer, content, design } = input;
   const palette = palettes.find((item) => item.id === design.palette) ?? palettes[0];
   const font = fonts.find((item) => item.id === design.font) ?? fonts[0];
@@ -117,11 +124,11 @@ export function renderSite(input: RenderInput): string {
     }
     if (section.type === 'contacts') {
       const rows: string[] = [];
-      if (links.phone && brief.phone) rows.push(`<li><span>Телефон</span><a href="${escapeHtml(links.phone)}">${escapeHtml(brief.phone)}</a></li>`);
+      if (links.phone && brief.phone) rows.push(`<li><span>${tr('Телефон')}</span><a href="${escapeHtml(links.phone)}">${escapeHtml(brief.phone)}</a></li>`);
       if (links.messenger && links.messengerLabel) rows.push(`<li><span>${links.messengerLabel}</span><a href="${escapeHtml(links.messenger)}" rel="noopener" target="_blank">${escapeHtml(brief.messenger ?? '')}</a></li>`);
       if (links.email && brief.email) rows.push(`<li><span>Email</span><a href="${escapeHtml(links.email)}">${escapeHtml(brief.email)}</a></li>`);
-      if (brief.address) rows.push(`<li><span>Адрес</span><strong>${escapeHtml(brief.address)}${brief.city ? `, ${escapeHtml(brief.city)}` : ''}</strong></li>`);
-      if (offer?.hours) rows.push(`<li><span>Часы работы</span><strong>${escapeHtml(offer.hours)}</strong></li>`);
+      if (brief.address) rows.push(`<li><span>${tr('Адрес')}</span><strong>${escapeHtml(brief.address)}${brief.city ? `, ${escapeHtml(brief.city)}` : ''}</strong></li>`);
+      if (offer?.hours) rows.push(`<li><span>${tr('Часы работы')}</span><strong>${escapeHtml(offer.hours)}</strong></li>`);
       const form = brief.mainAction === 'form' ? leadForm() : '';
       return `<section class="section contacts" id="contacts"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${paragraphs(section.text)}${form}${rows.length ? `<ul class="contact-list">${rows.join('')}</ul>` : ''}${form ? '' : button}</div></section>`;
     }
@@ -159,7 +166,7 @@ footer{padding:28px 0;color:var(--muted);font-size:14px;text-align:center}.draft
 <style>${css}</style>
 </head>
 <body>
-${input.draft ? '<div class="draft">Черновик — не опубликован</div>\n' : ''}<main>
+${input.draft ? `<div class="draft">${tr('Черновик — не опубликован')}</div>\n` : ''}<main>
 ${placeBooking(sectionHtml, bookingHtml)}
 </main>
 <footer>© ${escapeHtml(brief.businessName)}</footer>
@@ -173,15 +180,15 @@ export const BOOKING_PATH = '/book';
 
 function duration(minutes: number): string {
   const hours = Math.floor(minutes / 60);
-  return [hours ? `${hours} ч` : '', minutes % 60 ? `${minutes % 60} мин` : ''].filter(Boolean).join(' ');
+  return [hours ? tr('{0} ч', [hours]) : '', minutes % 60 ? tr('{0} мин', [minutes % 60]) : ''].filter(Boolean).join(' ');
 }
 
 /** Services clients can book, with duration and price, and the button to the booking pages. */
 function bookingSection(booking: BookingConfig, draft: boolean): string {
   const bookable = booking.schedule.services.filter((service) => booking.schedule.masters.some((master) => doable(booking.schedule, master).includes(service)));
   const rows = bookable.map((service) => `<li><strong>${escapeHtml(service.name)}</strong><span>${escapeHtml(duration(service.minutes))}${booking.prices[service.name] ? ` · ${escapeHtml(booking.prices[service.name]!)}` : ''}</span></li>`).join('');
-  const note = draft ? '<p class="booking-note">В предпросмотре запись не работает — она заработает, когда сайт будет опубликован на BuildPath.</p>' : '';
-  return `<section class="section booking" id="booking"><div class="wrap"><h2>Онлайн-запись</h2><p>Выберите услугу, мастера и свободное время — запись займёт минуту.</p><ul class="booking-list">${rows}</ul><a class="button" href="${BOOKING_PATH}">Выбрать время</a>${note}</div></section>`;
+  const note = draft ? `<p class="booking-note">${tr('В предпросмотре запись не работает — она заработает, когда сайт будет опубликован на BuildPath.')}</p>` : '';
+  return `<section class="section booking" id="booking"><div class="wrap"><h2>${tr('Онлайн-запись')}</h2><p>${tr('Выберите услугу, мастера и свободное время — запись займёт минуту.')}</p><ul class="booking-list">${rows}</ul><a class="button" href="${BOOKING_PATH}">${tr('Выбрать время')}</a>${note}</div></section>`;
 }
 
 function placeBooking(sections: string, booking: string): string {
@@ -198,23 +205,27 @@ export const LEAD_FORM_PATH = '/__forms/lead';
 
 function leadForm(): string {
   return `<form id="request" class="lead-form" method="post" action="${LEAD_FORM_PATH}">
-<label>Ваше имя<input name="name" required maxlength="80" autocomplete="name"></label>
-<label>Телефон или мессенджер<input name="contact" required maxlength="120" autocomplete="tel"></label>
-<label>Сообщение (необязательно)<textarea name="message" maxlength="1000"></textarea></label>
-<div class="hp" aria-hidden="true"><label>Не заполняйте это поле<input name="website" tabindex="-1" autocomplete="off"></label></div>
-<label class="consent"><input type="checkbox" name="consent" value="yes" required><span>Согласен(на) на обработку моих данных, чтобы со мной связались по заявке. <a href="/privacy">Как используются данные</a></span></label>
-<button class="button" type="submit">Отправить заявку</button>
+<label>${tr('Ваше имя')}<input name="name" required maxlength="80" autocomplete="name"></label>
+<label>${tr('Телефон или мессенджер')}<input name="contact" required maxlength="120" autocomplete="tel"></label>
+<label>${tr('Сообщение (необязательно)')}<textarea name="message" maxlength="1000"></textarea></label>
+<div class="hp" aria-hidden="true"><label>${tr('Не заполняйте это поле')}<input name="website" tabindex="-1" autocomplete="off"></label></div>
+<label class="consent"><input type="checkbox" name="consent" value="yes" required><span>${tr('Согласен(на) на обработку моих данных, чтобы со мной связались по заявке.')} <a href="/privacy">${tr('Как используются данные')}</a></span></label>
+<button class="button" type="submit">${tr('Отправить заявку')}</button>
 </form>`;
 }
 
 export function siteMeta(input: RenderInput): SiteMeta {
+  return runWithLocale(contentLocale(input.locale), () => siteMetaIn(input));
+}
+
+function siteMetaIn(input: RenderInput): SiteMeta {
   const palette = palettes.find((item) => item.id === input.design.palette) ?? palettes[0];
   const font = fonts.find((item) => item.id === input.design.font) ?? fonts[0];
   const ownerContacts: SiteMeta['ownerContacts'] = [];
-  if (input.brief.phone) ownerContacts.push({ label: 'Телефон', value: input.brief.phone });
-  if (input.brief.messenger) ownerContacts.push({ label: 'Мессенджер', value: input.brief.messenger });
+  if (input.brief.phone) ownerContacts.push({ label: tr('Телефон'), value: input.brief.phone });
+  if (input.brief.messenger) ownerContacts.push({ label: tr('Мессенджер'), value: input.brief.messenger });
   if (input.brief.email) ownerContacts.push({ label: 'Email', value: input.brief.email });
-  if (input.brief.address) ownerContacts.push({ label: 'Адрес', value: input.brief.address });
+  if (input.brief.address) ownerContacts.push({ label: tr('Адрес'), value: input.brief.address });
   return {
     businessName: input.brief.businessName, locale: ['ru', 'kk', 'en'].includes(input.locale) ? input.locale : 'ru', hasForm: input.brief.mainAction === 'form' || Boolean(input.booking),
     theme: { background: palette.background, text: palette.text, muted: palette.muted, accent: palette.accent, accentText: palette.accentText, font: font.stack, radius: input.design.corners === 'sharp' ? '2px' : '16px' },
@@ -257,7 +268,7 @@ export function checkSite(input: RenderInput): SiteCheck[] {
       'Для формы заявки нужен хотя бы один ваш контакт (телефон, email или мессенджер) — он будет на странице о данных, чтобы посетитель мог попросить удалить свои данные.');
   }
   add('contacts', true, content.sections.some((section) => section.type === 'contacts'), 'Контакты', 'Есть блок контактов.', 'Нет блока контактов. Посетитель не поймёт, как с вами связаться.');
-  const placeholders = JSON.stringify(content).match(/\[(?:укажите|заполните|добавьте)[^\]]*\]/gi) ?? [];
+  const placeholders = JSON.stringify(content).match(new RegExp(PLACEHOLDER.source, 'gi')) ?? [];
   add('placeholders', true, placeholders.length === 0, 'Нет пустых мест', 'Все места в текстах заполнены.',
     `Остались незаполненные места: ${placeholders.slice(0, 3).join(', ')}. Замените их на этапе «Структура и тексты».`);
   add('titles', true, content.sections.every((section) => section.title.trim().length > 0), 'У каждого блока есть заголовок', 'У всех блоков есть заголовки.', 'У некоторых блоков нет заголовка — это мешает читать с телефона и для скринридеров.');

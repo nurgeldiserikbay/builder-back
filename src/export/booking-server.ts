@@ -11,6 +11,7 @@ import { escapeHtml, pageCsp } from '../journey/site-renderer.js';
 import { dayLabel, localClock, localDay, openDays, slotsFor, type BookingConfig, type Busy } from '../journey/schedule.js';
 import { BOOKING_CANCEL_PATH, BOOKING_FORM_PATH, bookingPage, confirmPage, mastersFor, mastersPage, parseBookingForm, parseQuery, servicesPage, timesPage } from '../sites/booking-pages.js';
 import { messagePage, page } from '../sites/site-pages.js';
+import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 
 export interface ExportConfig { version: string; meta: SiteMeta; booking: BookingConfig }
 export interface StoredBooking {
@@ -61,7 +62,7 @@ export function createBookingApp(options: { config: ExportConfig; html: string; 
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat_id: options.telegram.chatId, text }),
     }).catch(() => undefined);
   }
-  const describe = (item: StoredBooking) => `${item.serviceName} — ${dayLabel(localDay(new Date(item.startsAt), tz))}, ${localClock(new Date(item.startsAt), tz)}\nМастер: ${item.masterName}\nКлиент: ${item.clientName}, ${item.clientPhone}${item.comment ? `\nКомментарий: ${item.comment}` : ''}`;
+  const describe = (item: StoredBooking) => `${item.serviceName} — ${dayLabel(localDay(new Date(item.startsAt), tz))}, ${localClock(new Date(item.startsAt), tz)}\n${tr('Мастер: {0}', [item.masterName])}\n${tr('Клиент: {0}', [`${item.clientName}, ${item.clientPhone}`])}${item.comment ? `\n${tr('Комментарий: {0}', [item.comment])}` : ''}`;
 
   function send(response: ServerResponse, status: number, body: string, type = 'text/html', extra: Record<string, string> = {}) {
     response.writeHead(status, {
@@ -151,12 +152,12 @@ export function createBookingApp(options: { config: ExportConfig; html: string; 
     });
     if (!created) {
       return send(response, 409, messagePage(meta, 'Это время уже заняли', 'Пока вы заполняли форму, это время забронировали. Выберите другое.', false)
-        .replace('</main>', `<a class="button" href="/book?s=${form.service}&m=${encodeURIComponent(form.master)}&d=${localDay(form.start, tz)}">Выбрать другое время</a></main>`));
+        .replace('</main>', `<a class="button" href="/book?s=${form.service}&m=${encodeURIComponent(form.master)}&d=${localDay(form.start, tz)}">${tr('Выбрать другое время')}</a></main>`));
     }
     const key = hash(ip(request));
     recent.set(key, [...(recent.get(key) ?? []), now().getTime()]);
     send(response, 303, '', 'text/plain', { Location: `/book/b/${token}?new=1` });
-    void notify(`Новая запись с сайта «${meta.businessName}»\n${describe(created)}`);
+    void notify(`${tr('Новая запись с сайта «{0}»', [meta.businessName])}\n${describe(created)}`);
   }
 
   const canCancel = (item: StoredBooking) => item.status === 'booked' && new Date(item.startsAt).getTime() - now().getTime() >= booking.schedule.rules.cancelHours * 3_600_000;
@@ -179,7 +180,7 @@ export function createBookingApp(options: { config: ExportConfig; html: string; 
       return item;
     });
     send(response, 303, '', 'text/plain', { Location: `/book/b/${token}` });
-    if (changed) void notify(`Клиент отменил запись на сайте «${meta.businessName}»\n${describe(changed)}`);
+    if (changed) void notify(`${tr('Клиент отменил запись на сайте «{0}»', [meta.businessName])}\n${describe(changed)}`);
   }
 
   /** Owner page behind HTTP Basic auth with ADMIN_PASSWORD (any user name). Disabled when the password is not set. */
@@ -190,7 +191,7 @@ export function createBookingApp(options: { config: ExportConfig; html: string; 
     const a = Buffer.from(hash(supplied)); const b = Buffer.from(hash(options.adminPassword));
     return timingSafeEqual(a, b);
   }
-  const statusText: Record<StoredBooking['status'], string> = { booked: 'записан', cancelled_by_client: 'отменил клиент', cancelled_by_owner: 'вы отменили', done: 'пришёл', no_show: 'не пришёл' };
+  const statusText = (status: StoredBooking['status']): string => ({ booked: () => tr('записан'), cancelled_by_client: () => tr('отменил клиент'), cancelled_by_owner: () => tr('вы отменили'), done: () => tr('пришёл'), no_show: () => tr('не пришёл') })[status]();
 
   async function admin(request: IncomingMessage, response: ServerResponse) {
     if (!options.adminPassword) return send(response, 404, messagePage(meta, 'Страница выключена', 'Чтобы видеть записи, задайте ADMIN_PASSWORD в настройках сервера (см. README.md).'));
@@ -215,16 +216,16 @@ export function createBookingApp(options: { config: ExportConfig; html: string; 
     const button = (item: StoredBooking, status: string, label: string) => `<form method="post" action="/admin" style="display:inline"><input type="hidden" name="id" value="${item.id}"><input type="hidden" name="status" value="${status}"><button type="submit">${label}</button></form>`;
     const rowsHtml = upcoming.map((item) => {
       const started = new Date(item.startsAt).getTime() <= now().getTime();
-      const actions = item.status === 'booked' && !started ? button(item, 'cancelled_by_owner', 'Отменить') : started && ACTIVE.has(item.status) ? `${button(item, 'done', 'Пришёл')} ${button(item, 'no_show', 'Не пришёл')}` : '';
-      return `<li><p><strong>${escapeHtml(dayLabel(localDay(new Date(item.startsAt), tz)))}, ${localClock(new Date(item.startsAt), tz)}</strong> · ${escapeHtml(statusText[item.status])}</p><p>${escapeHtml(item.serviceName)} · ${escapeHtml(item.masterName)}</p><p>${escapeHtml(item.clientName)} · <a href="tel:${escapeHtml(item.clientPhone.replace(/[^\d+]/g, ''))}">${escapeHtml(item.clientPhone)}</a></p>${item.comment ? `<p>«${escapeHtml(item.comment)}»</p>` : ''}${actions}</li>`;
+      const actions = item.status === 'booked' && !started ? button(item, 'cancelled_by_owner', tr('Отменить')) : started && ACTIVE.has(item.status) ? `${button(item, 'done', tr('Пришёл'))} ${button(item, 'no_show', tr('Не пришёл'))}` : '';
+      return `<li><p><strong>${escapeHtml(dayLabel(localDay(new Date(item.startsAt), tz)))}, ${localClock(new Date(item.startsAt), tz)}</strong> · ${escapeHtml(statusText(item.status))}</p><p>${escapeHtml(item.serviceName)} · ${escapeHtml(item.masterName)}</p><p>${escapeHtml(item.clientName)} · <a href="tel:${escapeHtml(item.clientPhone.replace(/[^\d+]/g, ''))}">${escapeHtml(item.clientPhone)}</a></p>${item.comment ? `<p>«${escapeHtml(item.comment)}»</p>` : ''}${actions}</li>`;
     }).join('');
-    send(response, 200, page(meta, 'Записи', `<style>ul{list-style:none;padding:0}li{border:1px solid rgba(0,0,0,.15);border-radius:12px;padding:12px 14px;margin:10px 0}li p{margin:2px 0}button{font:inherit;padding:8px 14px;border-radius:10px;border:1px solid currentColor;background:#fff;cursor:pointer;margin-top:6px}</style><h1>Записи клиентов</h1>${rowsHtml ? `<ul>${rowsHtml}</ul>` : '<p>Предстоящих записей нет.</p>'}<p>Отменяя запись, позвоните клиенту — сам он сообщения не получит.</p>`), 'text/html', { 'Cache-Control': 'no-store' });
+    send(response, 200, page(meta, tr('Записи'), `<style>ul{list-style:none;padding:0}li{border:1px solid rgba(0,0,0,.15);border-radius:12px;padding:12px 14px;margin:10px 0}li p{margin:2px 0}button{font:inherit;padding:8px 14px;border-radius:10px;border:1px solid currentColor;background:#fff;cursor:pointer;margin-top:6px}</style><h1>${tr('Записи клиентов')}</h1>${rowsHtml ? `<ul>${rowsHtml}</ul>` : `<p>${tr('Предстоящих записей нет.')}</p>`}<p>${tr('Отменяя запись, позвоните клиенту — сам он сообщения не получит.')}</p>`), 'text/html', { 'Cache-Control': 'no-store' });
   }
 
   function privacy(): string {
     const months = Math.round((options.retentionDays ?? 365) / 30);
-    const contacts = meta.ownerContacts.map((contact) => `<li>${escapeHtml(contact.label)}: ${escapeHtml(contact.value)}</li>`).join('');
-    return page(meta, 'Как используются ваши данные', `<h1>Как используются ваши данные</h1><p>Когда вы записываетесь онлайн, сайт «${escapeHtml(meta.businessName)}» получает ваше имя, телефон, комментарий и выбранное время. Они нужны, чтобы вас записать и связаться по записи, и не используются для рассылок.</p><p>Данные хранятся на сервере владельца сайта не дольше ${months} мес. после визита.</p><p>Чтобы узнать, какие данные хранятся, или попросить удалить их, свяжитесь с владельцем:</p><ul>${contacts}</ul><a class="button" href="/">Вернуться на сайт</a>`);
+    const contacts = meta.ownerContacts.map((contact) => `<li>${escapeHtml(tr(contact.label))}: ${escapeHtml(contact.value)}</li>`).join('');
+    return page(meta, tr('Как используются ваши данные'), `<h1>${tr('Как используются ваши данные')}</h1><p>${tr('Когда вы записываетесь онлайн, сайт «{0}» получает ваше имя, телефон, комментарий и выбранное время. Они нужны, чтобы вас записать и связаться по записи, и не используются для рассылок.', [escapeHtml(meta.businessName)])}</p><p>${tr('Данные хранятся на сервере владельца сайта не дольше {0} мес. после визита.', [months])}</p><p>${tr('Чтобы узнать, какие данные хранятся, или попросить удалить их, свяжитесь с владельцем:')}</p><ul>${contacts}</ul><a class="button" href="/">${tr('Вернуться на сайт')}</a>`);
   }
 
   async function cleanup(): Promise<number> {
@@ -255,10 +256,11 @@ export function createBookingApp(options: { config: ExportConfig; html: string; 
     return send(response, 404, messagePage(meta, 'Страница не найдена', 'Такой страницы на сайте нет.'));
   }
 
+  const locale = contentLocale(meta.locale);
   const server = http.createServer((request, response) => {
-    handle(request, response).catch((error: unknown) => {
+    runWithLocale(locale, () => handle(request, response)).catch((error: unknown) => {
       console.error(error);
-      if (!response.headersSent) send(response, 500, messagePage(meta, 'Ошибка', 'Не удалось открыть страницу. Попробуйте позже.')); else response.end();
+      if (!response.headersSent) runWithLocale(locale, () => send(response, 500, messagePage(meta, 'Ошибка', 'Не удалось открыть страницу. Попробуйте позже.'))); else response.end();
     });
   });
   return { server, cleanup };

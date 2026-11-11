@@ -3,6 +3,7 @@
 // before sending, so several processes never send the same reminder twice.
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { escapeHtml } from '../journey/site-renderer.js';
+import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { dayLabel, localClock, localDay } from '../journey/schedule.js';
 import { openSecret, sealSecret, secretKey } from '../common/secret-box.js';
 import { emailConfig, sendEmail } from './email.js';
@@ -31,23 +32,26 @@ export interface ReminderInput {
   clientName: string; cancelUrl: string | null; canCancel: boolean; cancelHours: number; contacts: Array<{ label: string; value: string }>;
 }
 
+/** The reminder in the current language (the project's language — the client booked on that site). */
 export function reminderEmail(input: ReminderInput, now: Date): { subject: string; html: string } {
   const day = localDay(input.startsAt, input.timezone);
   const tomorrow = localDay(new Date(now.getTime() + 24 * HOUR), input.timezone) === day;
   const today = localDay(now, input.timezone) === day;
-  const when = `${today ? 'сегодня' : tomorrow ? 'завтра' : dayLabel(day)} в ${localClock(input.startsAt, input.timezone)}`;
-  const contacts = input.contacts.map((item) => `<li>${escapeHtml(item.label)}: ${escapeHtml(item.value)}</li>`).join('');
+  const clock = localClock(input.startsAt, input.timezone);
+  const when = today ? tr('сегодня в {0}', [clock]) : tomorrow ? tr('завтра в {0}', [clock]) : tr('{0} в {1}', [dayLabel(day), clock]);
+  const contacts = input.contacts.map((item) => `<li>${escapeHtml(tr(item.label))}: ${escapeHtml(item.value)}</li>`).join('');
   const cancel = input.canCancel && input.cancelUrl
-    ? `<p>Если планы изменились, отмените запись по ссылке — время освободится для других: <a href="${escapeHtml(input.cancelUrl)}">посмотреть или отменить запись</a>.</p>`
-    : `<p>Если планы изменились, предупредите нас, пожалуйста.</p>`;
+    ? `<p>${tr('Если планы изменились, отмените запись по ссылке — время освободится для других:')} <a href="${escapeHtml(input.cancelUrl)}">${tr('посмотреть или отменить запись')}</a>.</p>`
+    : `<p>${tr('Если планы изменились, предупредите нас, пожалуйста.')}</p>`;
+  const site = `<a href="${escapeHtml(input.siteUrl)}">${escapeHtml(input.siteUrl.replace(/^https?:\/\//, ''))}</a>`;
   return {
-    subject: `Напоминание: ${input.siteName}, ${when}`,
+    subject: tr('Напоминание: {0}, {1}', [input.siteName, when]),
     html: `<div style="font:16px/1.5 system-ui,sans-serif;max-width:520px">
-<p>Здравствуйте, ${escapeHtml(input.clientName)}!</p>
-<p>Напоминаем о записи в «${escapeHtml(input.siteName)}» <strong>${escapeHtml(when)}</strong>.</p>
-<ul><li>${escapeHtml(input.serviceName)}</li><li>Мастер: ${escapeHtml(input.masterName)}</li>${input.price ? `<li>Цена: ${escapeHtml(input.price)}</li>` : ''}</ul>
-${cancel}${contacts ? `<p>Контакты:</p><ul>${contacts}</ul>` : ''}
-<p style="color:#666;font-size:13px">Вы получили это письмо, потому что указали почту при записи на сайте <a href="${escapeHtml(input.siteUrl)}">${escapeHtml(input.siteUrl.replace(/^https?:\/\//, ''))}</a>. Больше писем не будет: адрес удалён после отправки напоминания.</p>
+<p>${tr('Здравствуйте, {0}!', [escapeHtml(input.clientName)])}</p>
+<p>${tr('Напоминаем о записи в «{0}» {1}.', [escapeHtml(input.siteName), `<strong>${escapeHtml(when)}</strong>`])}</p>
+<ul><li>${escapeHtml(input.serviceName)}</li><li>${tr('Мастер: {0}', [escapeHtml(input.masterName)])}</li>${input.price ? `<li>${tr('Цена: {0}', [escapeHtml(input.price)])}</li>` : ''}</ul>
+${cancel}${contacts ? `<p>${tr('Контакты:')}</p><ul>${contacts}</ul>` : ''}
+<p style="color:#666;font-size:13px">${tr('Вы получили это письмо, потому что указали почту при записи на сайте {0}. Больше писем не будет: адрес удалён после отправки напоминания.', [site])}</p>
 </div>`,
   };
 }
@@ -73,7 +77,7 @@ export async function sendDueReminders(prisma: PrismaClient, siteUrl: (publicati
     orderBy: { reminderAt: 'asc' }, take: 50,
     select: {
       id: true, clientEmail: true, clientName: true, serviceName: true, masterName: true, startsAt: true, timezone: true, minutes: true, price: true, cancelLinkSealed: true,
-      project: { select: { name: true } },
+      project: { select: { name: true, locale: true } },
       publication: { select: { slug: true, customDomain: true, domainStatus: true, status: true, buildVersionId: true } },
     },
   });
@@ -87,11 +91,11 @@ export async function sendDueReminders(prisma: PrismaClient, siteUrl: (publicati
       const base = siteUrl(booking.publication);
       const token = key && booking.cancelLinkSealed ? openSecret(booking.cancelLinkSealed, key) : null;
       const cancelHours = meta?.booking?.schedule.rules.cancelHours ?? 0;
-      const mail = reminderEmail({
+      const mail = runWithLocale(contentLocale(booking.project.locale), () => reminderEmail({
         siteName: booking.project.name, siteUrl: base, serviceName: booking.serviceName, masterName: booking.masterName, startsAt: booking.startsAt, timezone: booking.timezone,
         minutes: booking.minutes, price: booking.price, clientName: booking.clientName, cancelUrl: token ? `${base}/book/b/${token}` : null,
         canCancel: booking.startsAt.getTime() - now.getTime() >= cancelHours * HOUR, cancelHours, contacts: (meta?.ownerContacts ?? []).slice(0, 4),
-      }, now);
+      }, now));
       status = (await sendEmail(config, booking.clientEmail, mail.subject, mail.html)) ? 'sent' : 'failed';
     }
     await prisma.booking.update({ where: { id: booking.id }, data: { reminderStatus: status, clientEmail: null, cancelLinkSealed: null } });

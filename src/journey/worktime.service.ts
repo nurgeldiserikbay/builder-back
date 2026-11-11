@@ -1,4 +1,4 @@
-import { tr } from '../i18n/i18n.js';
+import { inLocale, money, tr, type Message } from '../i18n/i18n.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
@@ -44,18 +44,19 @@ export class WorktimeService {
     if (limit !== null && !assignment.limitWarnedAt && used + 1 >= limit * WARN_SHARE) {
       await this.prisma.stageAssignment.update({ where: { id: assignmentId }, data: { limitWarnedAt: now } });
       const title = stageDefinitions[assignment.stage.stageKey as StageKey]?.title ?? assignment.stage.stageKey;
-      const text = tr("На этапе «{0}» в проекте «{1}» использовано 80% лимита часов ({2} ч). Когда лимит закончится, учёт времени остановится, пока владелец его не увеличит.", [title, assignment.project.name, assignment.hourLimit]);
+      const text = () => tr("На этапе «{0}» в проекте «{1}» использовано 80% лимита часов ({2} ч). Когда лимит закончится, учёт времени остановится, пока владелец его не увеличит.", [tr(title), assignment.project.name, assignment.hourLimit]);
       for (const userId of new Set([assignment.project.ownerUserId, assignment.userId].filter((id): id is string => Boolean(id)))) await this.notify(userId, text);
     }
     return { tracking: true, limitReached: false };
   }
 
-  private async notify(userId: string, text: string) {
+  private async notify(userId: string | null, text: Message) {
     const config = telegramConfig();
-    if (!config) return;
-    const identity = await this.prisma.externalIdentity.findUnique({ where: { userId_provider: { userId, provider: 'telegram' } }, select: { chatId: true } });
-    if (identity) await sendTelegramMessage(config, identity.chatId, text).catch(() => undefined);
+    if (!config || !userId) return;
+    const identity = await this.prisma.externalIdentity.findUnique({ where: { userId_provider: { userId, provider: 'telegram' } }, select: { chatId: true, user: { select: { locale: true } } } });
+    if (identity) await sendTelegramMessage(config, identity.chatId, inLocale(identity.user.locale, text)).catch(() => undefined);
   }
+
 
   private async activeAssignment(userId: string, projectId: string, stageKey: string) {
     return this.prisma.stageAssignment.findFirst({ where: { projectId, userId, status: 'active', stage: { stageKey } }, select: { id: true } });
@@ -143,7 +144,7 @@ export class WorktimeService {
       this.prisma.timeEntry.update({ where: { id: entry.id }, data: { status, ownerComment: comment, decidedAt: new Date() } }),
       this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: status === 'approved' ? 'time_approved' : 'time_disputed', stageKey: entry.assignment.stage.stageKey, details: { entryId } } }),
     ]);
-    if (status === 'disputed' && entry.assignment.userId) await this.notify(entry.assignment.userId, tr("Владелец оспорил запись времени на этапе «{0}»: {1}", [stageDefinitions[entry.assignment.stage.stageKey as StageKey]?.title ?? '', comment]));
+    if (status === 'disputed' && entry.assignment.userId) await this.notify(entry.assignment.userId, () => tr("Владелец оспорил запись времени на этапе «{0}»: {1}", [tr(stageDefinitions[entry.assignment.stage.stageKey as StageKey]?.title ?? ''), comment]));
     return this.timesheet(userId, projectId, entry.assignment.stage.stageKey);
   }
 
@@ -179,7 +180,7 @@ export class WorktimeService {
       this.prisma.stagePayment.update({ where: { id: payment.id }, data: { status: 'paid_direct', paidAt: new Date(), markedByUserId: userId } }),
       this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'specialist_paid_direct', stageKey: payment.assignment.stage.stageKey, details: { paymentId, amount: tenge(payment.amountTiyn) } } }),
     ]);
-    if (payment.assignment.userId) await this.notify(payment.assignment.userId, tr("Владелец отметил оплату {0} ₸ за этап «{1}».", [tenge(payment.amountTiyn).toLocaleString('ru-RU'), stageDefinitions[payment.assignment.stage.stageKey as StageKey]?.title ?? '']));
+    if (payment.assignment.userId) await this.notify(payment.assignment.userId, () => tr("Владелец отметил оплату {0} ₸ за этап «{1}».", [money(payment.amountTiyn), tr(stageDefinitions[payment.assignment.stage.stageKey as StageKey]?.title ?? '')]));
     return this.timesheet(userId, projectId, payment.assignment.stage.stageKey);
   }
 

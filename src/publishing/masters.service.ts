@@ -5,6 +5,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 import { emailConfig, sendEmail } from '../notifications/email.js';
 import { escapeHtml } from '../journey/site-renderer.js';
+import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import type { BookingConfig } from '../journey/schedule.js';
 
 const INVITE_TTL_MS = 7 * 24 * 3_600_000;
@@ -25,7 +26,7 @@ export class MastersService {
     if (!uuid.test(projectId)) throw new NotFoundException('PROJECT_NOT_FOUND');
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, members: { some: { userId, status: 'active' } } },
-      select: { id: true, name: true, status: true, members: { where: { userId, status: 'active' }, select: { role: true } }, owner: { select: { name: true, email: true } }, publication: { select: { buildVersionId: true } } },
+      select: { id: true, name: true, status: true, locale: true, members: { where: { userId, status: 'active' }, select: { role: true } }, owner: { select: { name: true, email: true } }, publication: { select: { buildVersionId: true } } },
     });
     if (!project) throw new NotFoundException('PROJECT_NOT_FOUND');
     if (!manageRoles.has(project.members[0]?.role ?? '')) throw new ForbiddenException('MASTERS_FORBIDDEN');
@@ -82,8 +83,12 @@ export class MastersService {
     const inviteUrl = new URL(`/master-invite/${token}`, process.env.PUBLIC_APP_URL ?? 'http://localhost:3000').toString();
     const mail = emailConfig();
     const inviter = project.owner.name ?? project.owner.email;
-    const emailSent = mail ? await sendEmail(mail, email, `Ваши записи в «${project.name}»`,
-      `<p>${escapeHtml(inviter)} приглашает вас видеть свои записи клиентов в «${escapeHtml(project.name)}» как мастера «${escapeHtml(master.name)}».</p><p>Вы будете видеть только записи к вам: время, услугу, имя и телефон клиента. Новые записи можно получать в Telegram.</p><p><a href="${escapeHtml(inviteUrl)}">Открыть приглашение</a></p><p>Ссылка действует 7 дней.</p>`) : false;
+    // Masters work with the clients of this site, so the invitation is in the project's language.
+    const letter = runWithLocale(contentLocale(project.locale), () => ({
+      subject: tr('Ваши записи в «{0}»', [project.name]),
+      html: `<p>${tr('{0} приглашает вас видеть свои записи клиентов в «{1}» как мастера «{2}».', [escapeHtml(inviter), escapeHtml(project.name), escapeHtml(master.name)])}</p><p>${tr('Вы будете видеть только записи к вам: время, услугу, имя и телефон клиента. Новые записи можно получать в Telegram.')}</p><p><a href="${escapeHtml(inviteUrl)}">${tr('Открыть приглашение')}</a></p><p>${tr('Ссылка действует 7 дней.')}</p>`,
+    }));
+    const emailSent = mail ? await sendEmail(mail, email, letter.subject, letter.html) : false;
     return { data: { accessId: access.id, inviteUrl, emailSent } };
   }
 

@@ -1,5 +1,6 @@
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { escapeHtml } from '../journey/site-renderer.js';
+import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { emailConfig, sendEmail } from './email.js';
 import { sendTelegramMessage, telegramConfig } from './telegram.js';
 
@@ -9,16 +10,21 @@ export interface LeadForMessage { name: string; contact: string; message: string
 
 export function leadText(lead: LeadForMessage, appUrl: string | undefined): string {
   return [
-    `Новая заявка с сайта «${lead.siteName}»`,
-    `Имя: ${lead.name}`,
-    `Контакт: ${lead.contact}`,
-    lead.message ? `Сообщение: ${lead.message}` : null,
-    appUrl ? `Все заявки: ${new URL(`/projects/${lead.projectId}/leads`, appUrl).toString()}` : null,
+    tr('Новая заявка с сайта «{0}»', [lead.siteName]),
+    tr('Имя: {0}', [lead.name]),
+    tr('Контакт: {0}', [lead.contact]),
+    lead.message ? tr('Сообщение: {0}', [lead.message]) : null,
+    appUrl ? tr('Все заявки: {0}', [new URL(`/projects/${lead.projectId}/leads`, appUrl).toString()]) : null,
   ].filter(Boolean).join('\n');
 }
 
-/** Notifies the project owner about a stored lead and records the outcome per channel. Never throws. */
+/** Notifies the project owner, in the owner's account language, about a stored lead and records the outcome per channel. Never throws. */
 export async function notifyLead(prisma: PrismaClient, leadId: string): Promise<{ telegram: ChannelStatus; email: ChannelStatus }> {
+  const owner = await prisma.siteLead.findUnique({ where: { id: leadId }, select: { project: { select: { owner: { select: { locale: true } } } } } });
+  return runWithLocale(contentLocale(owner?.project.owner.locale), () => notifyLeadIn(prisma, leadId));
+}
+
+async function notifyLeadIn(prisma: PrismaClient, leadId: string): Promise<{ telegram: ChannelStatus; email: ChannelStatus }> {
   const lead = await prisma.siteLead.findUnique({
     where: { id: leadId },
     select: {
@@ -40,7 +46,7 @@ export async function notifyLead(prisma: PrismaClient, leadId: string): Promise<
   if (lead.publication.notifyEmail) {
     const config = emailConfig();
     email = !config ? 'not_configured'
-      : (await sendEmail(config, lead.project.owner.email, `Новая заявка: ${lead.project.name}`, `<pre style="font:15px/1.5 system-ui,sans-serif;white-space:pre-wrap">${escapeHtml(text)}</pre>`)) ? 'sent' : 'failed';
+      : (await sendEmail(config, lead.project.owner.email, tr('Новая заявка: {0}', [lead.project.name]), `<pre style="font:15px/1.5 system-ui,sans-serif;white-space:pre-wrap">${escapeHtml(text)}</pre>`)) ? 'sent' : 'failed';
   }
   await prisma.siteLead.update({ where: { id: lead.id }, data: { telegramStatus: telegram, emailStatus: email } });
   return { telegram, email };

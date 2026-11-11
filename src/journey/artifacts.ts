@@ -1,5 +1,6 @@
 // Typed artifact schemas, deterministic validation, locking/merge rules, templates and text import.
 import { tr } from '../i18n/i18n.js';
+import { PLACEHOLDER } from './placeholder.js';
 import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
 import type { ArtifactType } from './catalog.js';
 import { normalizeSchedule, scheduleIssues, type BookingConfig, type Schedule } from './schedule.js';
@@ -274,7 +275,7 @@ export function completenessIssues(type: ArtifactType, content: unknown): Comple
     artifact.sections.forEach((section) => { if (!section.title) issues.push({ key: section.key, message: tr("У блока «{0}» нет заголовка.", [sectionTypeLabels[section.type]]) }); });
     if (!artifact.seo.title) issues.push({ key: 'seo', message: 'Добавьте заголовок для поисковиков.' });
     for (const section of artifact.sections) {
-      if (/\[(?:укажите|заполните|добавьте)[^\]]*\]/i.test(JSON.stringify(section))) {
+      if (PLACEHOLDER.test(JSON.stringify(section))) {
         issues.push({ key: section.key, message: tr("В блоке «{0}» остались места в квадратных скобках — замените их своими данными.", [section.title || sectionTypeLabels[section.type]]) });
       }
     }
@@ -288,7 +289,7 @@ export function emptyBrief(): Brief {
   return { businessName: '', whatYouDo: '', audience: '', city: null, mainAction: null, phone: null, messenger: null, email: null, address: null, tone: null };
 }
 
-const actionButton: Record<MainAction, string> = { call: 'Позвонить', message: 'Написать нам', visit: 'Как нас найти', email: 'Написать письмо', form: 'Оставить заявку' };
+const actionButton: Record<MainAction, () => string> = { call: () => tr('Позвонить'), message: () => tr('Написать нам'), visit: () => tr('Как нас найти'), email: () => tr('Написать письмо'), form: () => tr('Оставить заявку') };
 
 function firstSentence(text: string, max: number): string {
   const sentence = text.split(/(?<=[.!?])\s/)[0] ?? text;
@@ -297,36 +298,36 @@ function firstSentence(text: string, max: number): string {
 
 /** Deterministic content draft used when no AI provider is configured. Missing facts become visible placeholders. */
 export function templateContent(brief: Brief, offer: Offer | null): ContentArtifact {
-  const button = actionButton[brief.mainAction ?? 'message'];
-  const place = brief.city ? ` в ${brief.city}` : '';
+  const button = actionButton[brief.mainAction ?? 'message']();
+  const place = brief.city ? tr(" в {0}", [brief.city]) : '';
   const sections: ContentSection[] = [
-    { key: 'hero', type: 'hero', title: brief.businessName || '[укажите название]', text: `${brief.whatYouDo || '[опишите, чем вы занимаетесь]'}${place && !brief.whatYouDo.includes(brief.city ?? '') ? `${place}.` : ''}`.trim(), items: [], buttonLabel: button, imageId: null },
-    { key: 'about', type: 'about', title: 'Для кого мы работаем', text: brief.audience || '[опишите ваших клиентов]', items: [], buttonLabel: null, imageId: null },
+    { key: 'hero', type: 'hero', title: brief.businessName || tr("[укажите название]"), text: `${brief.whatYouDo || tr("[опишите, чем вы занимаетесь]")}${place && !brief.whatYouDo.includes(brief.city ?? '') ? `${place}.` : ''}`.trim(), items: [], buttonLabel: button, imageId: null },
+    { key: 'about', type: 'about', title: tr("Для кого мы работаем"), text: brief.audience || tr("[опишите ваших клиентов]"), items: [], buttonLabel: null, imageId: null },
   ];
   if (offer?.services.length) {
-    sections.push({ key: 'services', type: 'services', title: 'Услуги и цены', text: '', items: offer.services.map((service) => ({ title: service.price ? `${service.name} — ${service.price}` : service.name, text: service.description ?? '' })), buttonLabel: null, imageId: null });
+    sections.push({ key: 'services', type: 'services', title: tr("Услуги и цены"), text: '', items: offer.services.map((service) => ({ title: service.price ? `${service.name} — ${service.price}` : service.name, text: service.description ?? '' })), buttonLabel: null, imageId: null });
   } else {
-    sections.push({ key: 'benefits', type: 'benefits', title: 'Почему выбирают нас', text: '', items: [1, 2, 3].map((number) => ({ title: `[укажите преимущество ${number}]`, text: '' })), buttonLabel: null, imageId: null });
+    sections.push({ key: 'benefits', type: 'benefits', title: tr("Почему выбирают нас"), text: '', items: [1, 2, 3].map((number) => ({ title: tr("[укажите преимущество {0}]", [number]), text: '' })), buttonLabel: null, imageId: null });
   }
   sections.push({
-    key: 'steps', type: 'steps', title: 'Как это работает', text: '',
+    key: 'steps', type: 'steps', title: tr("Как это работает"), text: '',
     items: [
-      { title: brief.mainAction === 'visit' ? 'Приходите к нам' : 'Свяжитесь с нами', text: brief.mainAction === 'visit' ? 'Адрес и часы работы — в контактах ниже.' : 'Ответим и уточним детали.' },
-      { title: 'Обсудим задачу', text: 'Подберём вариант под ваши пожелания.' },
-      { title: 'Получите результат', text: 'Сделаем в оговорённый срок.' },
+      { title: brief.mainAction === 'visit' ? tr("Приходите к нам") : tr("Свяжитесь с нами"), text: brief.mainAction === 'visit' ? tr("Адрес и часы работы — в контактах ниже.") : tr("Ответим и уточним детали.") },
+      { title: tr("Обсудим задачу"), text: tr("Подберём вариант под ваши пожелания.") },
+      { title: tr("Получите результат"), text: tr("Сделаем в оговорённый срок.") },
     ],
     buttonLabel: null, imageId: null,
   });
   const form = brief.mainAction === 'form';
   sections.push({
-    key: 'contacts', type: 'contacts', title: form ? 'Оставьте заявку' : 'Контакты',
-    text: brief.mainAction === 'visit' ? 'Будем рады видеть вас.' : form ? 'Заполните форму — мы свяжемся с вами.' : 'Напишите или позвоните — ответим на вопросы.',
+    key: 'contacts', type: 'contacts', title: form ? tr("Оставьте заявку") : tr("Контакты"),
+    text: brief.mainAction === 'visit' ? tr("Будем рады видеть вас.") : form ? tr("Заполните форму — мы свяжемся с вами.") : tr("Напишите или позвоните — ответим на вопросы."),
     items: [], buttonLabel: form ? null : button, imageId: null,
   });
-  const title = brief.businessName ? `${brief.businessName}${brief.city ? ` — ${brief.city}` : ''}` : '[укажите название]';
+  const title = brief.businessName ? `${brief.businessName}${brief.city ? ` — ${brief.city}` : ''}` : tr("[укажите название]");
   return {
     sections,
-    seo: { title: title.slice(0, 70), description: firstSentence(brief.whatYouDo || '[опишите, чем вы занимаетесь]', 160) },
+    seo: { title: title.slice(0, 70), description: firstSentence(brief.whatYouDo || tr("[опишите, чем вы занимаетесь]"), 160) },
   };
 }
 
@@ -337,11 +338,11 @@ export function importContentText(text: string): ContentArtifact {
   const sections: ContentSection[] = blocks.map((block, index) => {
     const [first, ...rest] = block.split('\n');
     const lower = first.toLowerCase();
-    const type: SectionType = index === 0 ? 'hero' : /контакт|связ|адрес/.test(lower) ? 'contacts' : /вопрос/.test(lower) ? 'faq' : /услуг|цен/.test(lower) ? 'services' : /как.*работ|этап/.test(lower) ? 'steps' : 'about';
-    return { key: index === 0 ? 'hero' : `block-${index + 1}`, type, title: first.slice(0, 120), text: rest.join('\n').slice(0, 1200), items: [], buttonLabel: index === 0 ? 'Связаться' : null, imageId: null };
+    const type: SectionType = index === 0 ? 'hero' : /контакт|связ|адрес|contact|reach|address|find us/.test(lower) ? 'contacts' : /вопрос|question|faq/.test(lower) ? 'faq' : /услуг|цен|service|price/.test(lower) ? 'services' : /как.*работ|этап|how .*work|step/.test(lower) ? 'steps' : 'about';
+    return { key: index === 0 ? 'hero' : `block-${index + 1}`, type, title: first.slice(0, 120), text: rest.join('\n').slice(0, 1200), items: [], buttonLabel: index === 0 ? tr("Связаться") : null, imageId: null };
   });
   if (!sections.some((section) => section.type === 'contacts')) {
-    sections.push({ key: 'contacts', type: 'contacts', title: 'Контакты', text: '', items: [], buttonLabel: 'Связаться', imageId: null });
+    sections.push({ key: 'contacts', type: 'contacts', title: tr("Контакты"), text: '', items: [], buttonLabel: tr("Связаться"), imageId: null });
   }
   return normalizeContent({ sections, seo: { title: sections[0].title.slice(0, 70), description: firstSentence(sections[0].text || sections[0].title, 160) } });
 }
