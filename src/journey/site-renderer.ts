@@ -3,6 +3,7 @@ import type { Brief, ContentArtifact, DesignArtifact, Offer, SiteMeta } from './
 import { PLACEHOLDER } from './placeholder.js';
 import { pageIssues } from './artifacts.js';
 import type { Sitemap, SitemapPage } from './sitemap.js';
+import { catalogIssues, tenge, type Catalog } from './products.js';
 import { doable, scheduleIssues, type BookingConfig } from './schedule.js';
 import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 
@@ -95,6 +96,8 @@ export interface RenderInput {
   expectedContractVersion?: string | null;
   /** Multi-page site: the accepted «Карта сайта». Each page is rendered separately with a menu. */
   sitemap?: Sitemap | null;
+  /** Store route: the accepted catalogue; the home page gets a storefront and buttons lead to it. */
+  store?: Catalog | null;
 }
 
 function photo(id: string | null, images: Record<string, ImageInfo> | undefined, eager: boolean): string {
@@ -143,7 +146,7 @@ function renderSiteIn(input: RenderInput, page: SitemapPage | null): string {
   const font = fonts.find((item) => item.id === design.font) ?? fonts[0];
   const radius = design.corners === 'sharp' ? '2px' : '16px';
   const align = design.heroLayout === 'left' ? 'left' : 'center';
-  const directHref = input.booking ? BOOKING_PATH : primaryActionHref(brief);
+  const directHref = input.booking ? BOOKING_PATH : input.store ? '#catalog' : primaryActionHref(brief);
   const actionHref = directHref?.startsWith('#') ? `${contactsPath(input, page)}${directHref}` : directHref;
   const links = contactLinks(brief);
 
@@ -168,7 +171,7 @@ function renderSiteIn(input: RenderInput, page: SitemapPage | null): string {
     }
     return `<section class="section ${escapeHtml(section.type)}" id="${escapeHtml(section.key)}"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${photo(section.imageId, input.images, false)}${paragraphs(section.text)}${items}${button}</div></section>`;
   }).join('\n');
-  const bookingHtml = input.booking && home ? bookingSection(input.booking, input.draft) : '';
+  const bookingHtml = input.booking && home ? bookingSection(input.booking, input.draft) : input.store && home ? storeSection(input.store, input.draft, input.images) : '';
   // A page without a first screen still gets a heading with its name.
   const pageHead = page && content.sections[0]?.type !== 'hero' ? `<header class="hero page-head"><div class="wrap"><p class="brand">${escapeHtml(brief.businessName)}</p><h1>${escapeHtml(page.title)}</h1>${page.purpose ? `<p>${escapeHtml(page.purpose)}</p>` : ''}</div></header>\n` : '';
 
@@ -189,7 +192,8 @@ p{margin:0 0 12px;color:var(--muted)}.hero{padding:64px 0 56px;text-align:${alig
 .booking-list{list-style:none;padding:0;margin:16px 0;display:grid;gap:10px}.booking-list li{display:flex;justify-content:space-between;gap:12px;background:var(--surface);border:1px solid rgba(0,0,0,.08);border-radius:var(--radius);padding:14px 16px}.booking-list span{color:var(--muted);white-space:nowrap}.booking-note{font-size:14px}
 footer{padding:28px 0;color:var(--muted);font-size:14px;text-align:center}.draft{background:#fff3cd;color:#5c4400;text-align:center;font-size:14px;padding:8px}
 .menu{background:var(--surface);border-bottom:1px solid rgba(0,0,0,.08)}.menu .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;padding-top:10px;padding-bottom:10px}.menu .logo{font-weight:800;color:var(--text);text-decoration:none;margin-right:auto}.menu ul{list-style:none;margin:0;padding:0;display:flex;gap:4px;overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}.menu li a,.menu li span{display:block;padding:10px 12px;border-radius:var(--radius);color:var(--text);text-decoration:none;font-size:15px;white-space:nowrap;min-height:44px}.menu [aria-current="page"]{background:var(--accent);color:var(--accent-text)}.page-head{padding:40px 0 28px}
-@media(min-width:720px){.items{grid-template-columns:repeat(2,1fr)}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}`;
+.products{list-style:none;padding:0;margin:18px 0;display:grid;gap:14px}.product{background:var(--surface);border:1px solid rgba(0,0,0,.08);border-radius:var(--radius);padding:16px}.product .photo{margin:0 0 12px}.product p{margin:0 0 8px}.product .price{font-weight:800;color:var(--text);font-size:19px}.product .button{margin-top:4px}.store-terms{font-size:15px}.cart-link{display:inline-block;margin-top:8px;font-weight:700;color:var(--accent)}
+@media(min-width:720px){.items,.products{grid-template-columns:repeat(2,1fr)}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}`;
 
   const lang = ['ru', 'kk', 'en'].includes(input.locale) ? input.locale : 'ru';
   return `<!DOCTYPE html>
@@ -227,6 +231,25 @@ function bookingSection(booking: BookingConfig, draft: boolean): string {
   const note = draft ? `<p class="booking-note">${tr('В предпросмотре запись не работает — она заработает, когда сайт будет опубликован на BuildPath.')}</p>` : '';
   return `<section class="section booking" id="booking"><div class="wrap"><h2>${tr('Онлайн-запись')}</h2><p>${tr('Выберите услугу, мастера и свободное время — запись займёт минуту.')}</p><ul class="booking-list">${rows}</ul><a class="button" href="${BOOKING_PATH}">${tr('Выбрать время')}</a>${note}</div></section>`;
 }
+
+/** The storefront: products in stock with price and an «add to cart» link. The cart lives in the address, no scripts or cookies. */
+function storeSection(store: Catalog, draft: boolean, images: Record<string, ImageInfo> | undefined): string {
+  const products = store.products.filter((product) => product.available && product.price > 0);
+  const cards = products.map((product) => {
+    const add = draft ? `<span class="button">${tr('В корзину')}</span>` : `<a class="button" href="${CART_PATH}?i=${escapeHtml(product.key)}:1">${tr('В корзину')}</a>`;
+    return `<li class="product">${photo(product.imageId, images, false)}<h3>${escapeHtml(product.name)}</h3>${product.description ? `<p>${escapeHtml(product.description)}</p>` : ''}<p class="price">${escapeHtml(tenge(product.price))}${product.unit ? ` / ${escapeHtml(product.unit)}` : ''}</p>${add}</li>`;
+  }).join('');
+  const sold = store.products.filter((product) => !product.available).map((product) => escapeHtml(product.name));
+  const note = draft ? `<p class="booking-note">${tr('В предпросмотре корзина не работает — она заработает, когда сайт будет опубликован на BuildPath.')}</p>` : '';
+  const terms = [
+    store.minOrder ? tr('Минимальный заказ — {0}.', [tenge(store.minOrder)]) : '',
+    store.delivery.map((option) => `${escapeHtml(option.title)}${option.price ? ` — ${escapeHtml(tenge(option.price))}` : ` — ${tr('бесплатно')}`}`).join(' · '),
+  ].filter(Boolean).map((line) => `<p class="store-terms">${line}</p>`).join('');
+  return `<section class="section store" id="catalog"><div class="wrap"><h2>${tr('Каталог')}</h2>${terms}<ul class="products">${cards}</ul>${sold.length ? `<p class="store-terms">${tr('Нет в наличии: {0}.', [sold.join(', ')])}</p>` : ''}${draft ? '' : `<a class="cart-link" href="${CART_PATH}">${tr('Корзина →')}</a>`}${note}</div></section>`;
+}
+
+/** Cart and order pages of a published store (served by the BuildPath sites server). */
+export const CART_PATH = '/cart';
 
 function placeBooking(sections: string, booking: string): string {
   if (!booking) return sections;
@@ -268,6 +291,7 @@ function siteMetaIn(input: RenderInput): SiteMeta {
     theme: { background: palette.background, text: palette.text, muted: palette.muted, accent: palette.accent, accentText: palette.accentText, font: font.stack, radius: input.design.corners === 'sharp' ? '2px' : '16px' },
     ownerContacts,
     ...(input.booking ? { booking: input.booking } : {}),
+    ...(input.store ? { store: input.store } : {}),
   };
 }
 
@@ -280,6 +304,12 @@ export function checkSite(input: RenderInput): SiteCheck[] {
     checks.push({ id, required, title, status: ok ? 'passed' : warnOnly ? 'warning' : 'failed', details: ok ? passText : failText });
   };
   const hero = content.sections.find((section) => section.type === 'hero');
+  if (input.store) {
+    const issues = catalogIssues(input.store);
+    add('store', true, issues.length === 0, tr('Каталог и заказ'), tr('Есть товары в наличии с ценой, способ получения и способ оплаты.'), `${issues.map((issue) => issue.message).join(' ')} ${tr('Исправьте на этапе «Каталог товаров».')}`);
+    const ownerContact = Boolean(input.brief.phone || input.brief.email || input.brief.messenger);
+    add('store-privacy', true, ownerContact, tr('Заказ и согласие'), tr('Форма заказа просит согласие на обработку данных и ведёт на страницу о данных с вашими контактами.'), tr('Для приёма заказов нужен хотя бы один ваш контакт (телефон, email или мессенджер) — он будет на странице о данных и на странице заказа.'));
+  }
   if (input.sitemap) {
     const issues = pageIssues(content, input.sitemap);
     add('pages', true, issues.length === 0, tr('Страницы по карте сайта'), tr('У каждой страницы из карты есть блоки и описание для поисковиков; главная начинается с первого экрана.'), `${issues.map((issue) => issue.message).join(' ')} ${tr('Исправьте на этапе «Структура и тексты».')}`);

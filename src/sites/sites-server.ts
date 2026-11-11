@@ -16,6 +16,9 @@ import { messagePage, parseLeadForm, privacyPage, thanksPage } from './site-page
 import { BOOKING_CANCEL_PATH, BOOKING_FORM_PATH, bookingPage, confirmPage, mastersFor, mastersPage, parseBookingForm, parseQuery, servicesPage, timesPage } from './booking-pages.js';
 import { busyBetween, canClientCancel, createBooking, tokenHash } from './booking-store.js';
 import { notifyBooking } from '../notifications/booking-notifier.js';
+import { notifyOrder } from '../notifications/order-notifier.js';
+import { ORDER_CANCEL_PATH, ORDER_FORM_PATH, cartPage, orderPage, parseOrderForm } from './store-pages.js';
+import { canClientCancelOrder, createOrder } from './store-orders.js';
 import { localDay as localDayOf, openDays, slotsFor } from '../journey/schedule.js';
 
 export interface SitesServerOptions {
@@ -31,6 +34,7 @@ export interface SitesServerOptions {
   perSitePerDay: number;
   notify: (leadId: string) => Promise<unknown>;
   notifyBooking: (bookingId: string, kind: 'created' | 'cancelled_by_client') => Promise<unknown>;
+  notifyOrder?: (orderId: string, kind: 'created' | 'cancelled_by_client') => Promise<unknown>;
 }
 
 export function sitesOptionsFromEnv(prisma: PrismaClient, env: NodeJS.ProcessEnv = process.env): SitesServerOptions {
@@ -44,6 +48,7 @@ export function sitesOptionsFromEnv(prisma: PrismaClient, env: NodeJS.ProcessEnv
     https: config.urlTemplate.startsWith('https://'), perIpPerHour: 5, perSitePerDay: 200,
     notify: (leadId) => notifyLead(prisma, leadId),
     notifyBooking: (bookingId, kind) => notifyBooking(prisma, bookingId, kind),
+    notifyOrder: (orderId, kind) => notifyOrder(prisma, orderId, kind),
   };
 }
 
@@ -105,7 +110,9 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
   /** Serves only photos that the published page itself shows, so unpublished photos in the project library stay private. */
   async function sendImage(response: ServerResponse, site: Site, id: string, head: boolean) {
     const notFound = () => send(response, 404, 'Not found', 'text/plain');
-    if (!site.html.includes(`/img/${id}.webp`)) return notFound();
+    // Only photos the published pages actually show (any page of a multi-page site).
+    const ref = `/img/${id}.webp`;
+    if (!site.html.includes(ref) && ![...site.pages.values()].some((html) => html.includes(ref))) return notFound();
     const row = await prisma.projectImage.findFirst({ where: { id, projectId: site.projectId }, select: { data: true, sha256: true } });
     if (!row) return notFound();
     const data = Buffer.from(row.data);
@@ -198,6 +205,56 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     const day = query.day && days.some((item) => item.day === query.day) ? query.day : days[0]?.day ?? null;
     const slots = day ? slotsFor(config.schedule, service.name, masterKey, day, busy, now) : [];
     return html(timesPage(meta, config, { service: query.service!, master }, days, day, slots));
+  }
+
+  async function handleOrderForm(request: IncomingMessage, response: ServerResponse, site: Site) {
+    const meta = site.meta!;
+    const store = meta.store!;
+    if (!sameOrigin(request, site)) return send(response, 403, messagePage(meta, 'Заказ не отправлен', 'Заказать можно только со страницы этого сайта.'), 'text/html');
+    if (!String(request.headers['content-type'] ?? '').startsWith('application/x-www-form-urlencoded')) return send(response, 415, messagePage(meta, 'Заказ не отправлен', 'Неподдерживаемый формат формы.'), 'text/html');
+    const raw = await readBody(request, 10_000);
+    if (raw === null) return send(response, 413, messagePage(meta, 'Заказ не отправлен', 'Слишком большой запрос.'), 'text/html');
+    const parsed = parseOrderForm(raw, store);
+    if (!parsed.ok && parsed.spam) return send(response, 303, '', 'text/plain', false, { Location: '/cart' });
+    if (!parsed.ok) return send(response, 400, cartPage(meta, store, parsed.cart, parsed.error, parsed.values), 'text/html', true);
+    const ipHash = createHash('sha256').update(`${options.ipSalt}:${clientIp(request)}`).digest('hex');
+    const [perIp, perSite] = await Promise.all([
+      prisma.storeOrder.count({ where: { publicationId: site.publicationId, ipHash, createdAt: { gte: new Date(Date.now() - 3_600_000) } } }),
+      prisma.storeOrder.count({ where: { publicationId: site.publicationId, createdAt: { gte: new Date(Date.now() - 86_400_000) } } }),
+    ]);
+    if (perIp >= options.perIpPerHour || perSite >= options.perSitePerDay) {
+      return send(response, 429, messagePage(meta, 'Слишком много заказов', 'С этого устройства уже было несколько заказов. Попробуйте позже или свяжитесь по контактам на сайте.'), 'text/html', false, { 'Retry-After': '3600' });
+    }
+    const result = await createOrder(prisma, site, store, parsed.form, ipHash);
+    if (!result.ok) return send(response, 303, '', 'text/plain', false, { Location: '/cart' });
+    send(response, 303, '', 'text/plain', false, { Location: `/order/${result.token}?new=1` });
+    void options.notifyOrder?.(result.id, 'created').catch(() => undefined);
+  }
+
+  async function orderByToken(site: Site, token: string) {
+    if (!/^[A-Za-z0-9_-]{32}$/.test(token)) return null;
+    return prisma.storeOrder.findFirst({
+      where: { tokenHash: tokenHash(token), publicationId: site.publicationId },
+      select: { id: true, number: true, items: true, itemsTiyn: true, deliveryTitle: true, deliveryTiyn: true, totalTiyn: true, paymentMethod: true, status: true, address: true, createdAt: true },
+    });
+  }
+
+  async function handleOrderView(url: URL, response: ServerResponse, site: Site, token: string) {
+    const order = await orderByToken(site, token);
+    if (!order) return send(response, 404, messagePage(site.meta, 'Заказ не найден', 'Ссылка неверная или заказ уже удалён.'), 'text/html');
+    send(response, 200, orderPage(site.meta!, { ...order, items: order.items as Array<{ name: string; price: number; quantity: number }> }, token, url.searchParams.get('new') === '1', site.meta!.store!.payment.transferNote), 'text/html', true,
+      { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+  }
+
+  async function handleOrderCancel(request: IncomingMessage, response: ServerResponse, site: Site) {
+    if (!sameOrigin(request, site)) return send(response, 403, messagePage(site.meta, 'Не отменено', 'Отменить можно только со страницы этого сайта.'), 'text/html');
+    const raw = await readBody(request, 2_000);
+    const token = new URLSearchParams(raw ?? '').get('token') ?? '';
+    const order = await orderByToken(site, token);
+    if (!order) return send(response, 404, messagePage(site.meta, 'Заказ не найден', 'Ссылка неверная или заказ уже удалён.'), 'text/html');
+    const updated = canClientCancelOrder(order.status) ? await prisma.storeOrder.updateMany({ where: { id: order.id, status: 'new' }, data: { status: 'cancelled_by_client' } }) : { count: 0 };
+    send(response, 303, '', 'text/plain', false, { Location: `/order/${token}` });
+    if (updated.count) void options.notifyOrder?.(order.id, 'cancelled_by_client').catch(() => undefined);
   }
 
   async function handleBookingForm(request: IncomingMessage, response: ServerResponse, site: Site) {
@@ -299,6 +356,10 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
   async function handleSite(request: IncomingMessage, response: ServerResponse, url: URL, path: string, site: Site) {
     if (request.method === 'POST' && path === LEAD_FORM_PATH) return handleLead(request, response, site);
     const booking = Boolean(site.meta?.booking);
+    const store = Boolean(site.meta?.store);
+    const noStore = () => send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет магазина.'), 'text/html');
+    if (request.method === 'POST' && path === ORDER_FORM_PATH) return store ? handleOrderForm(request, response, site) : noStore();
+    if (request.method === 'POST' && path === ORDER_CANCEL_PATH) return store ? handleOrderCancel(request, response, site) : noStore();
     if (request.method === 'POST' && path === BOOKING_FORM_PATH) return booking ? handleBookingForm(request, response, site) : send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет онлайн-записи.'), 'text/html');
     if (request.method === 'POST' && path === BOOKING_CANCEL_PATH) return booking ? handleBookingCancel(request, response, site) : send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет онлайн-записи.'), 'text/html');
     if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, '', 'text/plain', false, { Allow: 'GET, HEAD' });
@@ -306,13 +367,16 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     const image = /^\/img\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.webp$/.exec(path);
     if (image) return sendImage(response, site, image[1]!, request.method === 'HEAD');
     if (booking && path === '/book') return handleBookingPage(url, response, site);
+    if (store && path === '/cart') return send(response, 200, cartPage(site.meta!, site.meta!.store!, url.searchParams.get('i')), 'text/html', true, { 'Cache-Control': 'no-store' });
+    const orderLink = /^\/order\/([A-Za-z0-9_-]{32})$/.exec(path);
+    if (store && orderLink) return handleOrderView(url, response, site, orderLink[1]!);
     const manage = /^\/book\/b\/([A-Za-z0-9_-]{32})$/.exec(path);
     if (booking && manage) return handleBookingView(url, response, site, manage[1]!);
     switch (path) {
       case '/': return send(response, 200, site.html, 'text/html', site.hasForm, cacheHeaders);
       case '/privacy': return send(response, 200, privacyPage(site.meta, options.retentionDays, options.remindersByEmail), 'text/html', false, cacheHeaders);
       case '/thanks': return send(response, 200, thanksPage(site.meta), 'text/html', false, { 'Cache-Control': 'no-store' });
-      case '/robots.txt': return send(response, 200, `User-agent: *\nAllow: /\nDisallow: /thanks\nDisallow: /book\nSitemap: ${site.canonical}/sitemap.xml\n`, 'text/plain', false, cacheHeaders);
+      case '/robots.txt': return send(response, 200, `User-agent: *\nAllow: /\nDisallow: /thanks\nDisallow: /book\nDisallow: /cart\nDisallow: /order\nSitemap: ${site.canonical}/sitemap.xml\n`, 'text/plain', false, cacheHeaders);
       case '/sitemap.xml': return send(response, 200, `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${['/', ...site.pages.keys()].map((page) => `<url><loc>${site.canonical}${page}</loc></url>`).join('')}</urlset>\n`, 'application/xml', false, cacheHeaders);
       default: {
         // Other pages of a multi-page site; «/services/» also works, as on static hosts.
@@ -336,7 +400,8 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     const cutoff = new Date(Date.now() - options.retentionDays * 86_400_000);
     const result = await prisma.siteLead.deleteMany({ where: { createdAt: { lt: cutoff } } });
     const bookings = await prisma.booking.deleteMany({ where: { endsAt: { lt: cutoff } } });
-    return result.count + bookings.count;
+    const orders = await prisma.storeOrder.deleteMany({ where: { createdAt: { lt: cutoff } } });
+    return result.count + bookings.count + orders.count;
   }
 
   /** Sends client reminders that are due; the link points at the site's own domain when it is connected. */

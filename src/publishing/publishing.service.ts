@@ -265,4 +265,31 @@ export class PublishingService {
     ]);
     return this.bookings(userId, projectId, booking.startsAt.getTime() > Date.now() - 12 * 3_600_000 ? 'upcoming' : 'past');
   }
+
+  /** Orders of the store: open ones (new, confirmed) first by time, or closed ones (done, cancelled) newest first. */
+  async orders(userId: string, projectId: string, scope: 'open' | 'closed') {
+    const { project } = await this.load(userId, projectId, true);
+    const rows = await this.prisma.storeOrder.findMany({
+      where: { projectId, status: { in: scope === 'open' ? ['new', 'confirmed'] : ['done', 'cancelled_by_owner', 'cancelled_by_client'] } },
+      orderBy: { createdAt: scope === 'open' ? 'asc' : 'desc' }, take: 200,
+      select: { id: true, number: true, items: true, itemsTiyn: true, deliveryTitle: true, deliveryTiyn: true, totalTiyn: true, paymentMethod: true, clientName: true, clientPhone: true, address: true, comment: true, status: true, telegramStatus: true, createdAt: true, updatedAt: true },
+    });
+    const live = project.publication?.status === 'live';
+    return { data: { orders: rows, live, siteName: project.name, siteUrl: live && project.publication ? sitesConfig().urlFor(project.publication.slug) : null } };
+  }
+
+  /** Owner moves an order along: new → confirmed → done; a new or confirmed order can be cancelled. */
+  async setOrderStatus(userId: string, projectId: string, orderId: string, status: 'confirmed' | 'done' | 'cancelled_by_owner') {
+    await this.load(userId, projectId, true);
+    if (!isUuid(orderId)) throw new NotFoundException('ORDER_NOT_FOUND');
+    const order = await this.prisma.storeOrder.findFirst({ where: { id: orderId, projectId }, select: { id: true, status: true } });
+    if (!order) throw new NotFoundException('ORDER_NOT_FOUND');
+    const from: Record<typeof status, string[]> = { confirmed: ['new'], done: ['new', 'confirmed'], cancelled_by_owner: ['new', 'confirmed'] };
+    if (!from[status].includes(order.status)) throw new ConflictException('ORDER_STATUS_NOT_ALLOWED');
+    // The condition on the old status makes a change made in the meantime (for example, the client cancelling) win.
+    const updated = await this.prisma.storeOrder.updateMany({ where: { id: order.id, status: order.status }, data: { status } });
+    if (!updated.count) throw new ConflictException('ORDER_STATUS_NOT_ALLOWED');
+    await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'order_status_changed', details: { orderId, status } } });
+    return this.orders(userId, projectId, status === 'confirmed' ? 'open' : 'closed');
+  }
 }

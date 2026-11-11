@@ -1638,6 +1638,42 @@ paths:
         '200': { description: Bookings list }
         '400': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/orders:
+    get:
+      tags: [Publishing]
+      operationId: listStoreOrders
+      summary: Orders of the published store (owner or manager)
+      description: 'Store route. open: new and confirmed orders, oldest first; closed: done and cancelled, newest first; at most 200. Amounts are in tiyn; item prices are whole tenge copied from the accepted catalogue at order time.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: scope, in: query, required: false, schema: { type: string, enum: [open, closed], default: open } }
+      responses:
+        '200': { description: 'orders (id, number, items [{ key, name, price, quantity }], itemsTiyn, deliveryTitle, deliveryTiyn, totalTiyn, paymentMethod on_delivery|transfer, clientName, clientPhone, address, comment, status new|confirmed|done|cancelled_by_owner|cancelled_by_client, telegramStatus, createdAt, updatedAt), live, siteUrl, siteName' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/orders/{orderId}/status:
+    post:
+      tags: [Publishing]
+      operationId: setStoreOrderStatus
+      summary: Owner confirms, completes or cancels an order
+      description: 'confirmed only from new; done and cancelled_by_owner from new or confirmed. A change the client made in the meantime (cancelling) wins: the request then fails with ORDER_STATUS_NOT_ALLOWED. The client sees the status on their order page; no message is sent.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: orderId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [status], properties: { status: { type: string, enum: [confirmed, done, cancelled_by_owner] } } }
+      responses:
+        '200': { description: Orders list }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/masters:
     get:
       tags: [Publishing]
@@ -3613,7 +3649,7 @@ components:
       in: path
       name: stageKey
       required: true
-      schema: { type: string, enum: [goal, process, offer, schedule, sitemap, techplan, content, design, build] }
+      schema: { type: string, enum: [goal, process, offer, products, schedule, sitemap, techplan, content, design, build] }
     RuleId:
       in: path
       name: ruleId
@@ -4697,7 +4733,7 @@ components:
         locale: { type: string, enum: [en, ru, kk] }
         projectType:
           type: string
-          enum: [landing, company_site, multipage, booking]
+          enum: [landing, company_site, multipage, store, booking]
           description: Creates the stage route from the versioned journey catalog and makes the project active.
         startStageKey:
           type: string
@@ -4715,7 +4751,7 @@ components:
         startMode: { type: string, enum: [build, improve, design_implementation, analysis_only] }
         status: { type: string, enum: [draft, active, paused, completed, archived, live] }
         locale: { type: string, enum: [en, ru, kk] }
-        projectType: { type: [string, 'null'], enum: [landing, company_site, multipage, booking, null] }
+        projectType: { type: [string, 'null'], enum: [landing, company_site, multipage, store, booking, null] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     ProjectResponse:
@@ -4918,7 +4954,7 @@ components:
                 type: object
                 required: [key, title, description, stages]
                 properties:
-                  key: { type: string, enum: [landing, company_site, multipage, booking] }
+                  key: { type: string, enum: [landing, company_site, multipage, store, booking] }
                   title: { type: string }
                   description: { type: string }
                   goodFor: { type: string }

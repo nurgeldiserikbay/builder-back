@@ -8,7 +8,7 @@ export interface Sitemap { pages: SitemapPage[] }
 
 export const SITEMAP_LIMITS = { pages: 7, minPages: 2, sections: 8 } as const;
 /** Addresses the platform itself uses on published sites. */
-export const RESERVED_PATHS = ['book', 'privacy', 'thanks', 'img', 'admin', 'robots.txt', 'sitemap.xml', 'health', 'index.html'];
+export const RESERVED_PATHS = ['book', 'cart', 'order', 'privacy', 'thanks', 'img', 'admin', 'robots.txt', 'sitemap.xml', 'health', 'index.html'];
 const KEY = /^[a-z][a-z0-9-]{0,23}$/;
 const PATH = /^\/(?:[a-z0-9][a-z0-9-]{0,29})?$/;
 

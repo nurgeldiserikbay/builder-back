@@ -1,12 +1,12 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.5.0';
+export const ROUTE_CATALOG_VERSION = '1.6.0';
 
-export type StageKey = 'goal' | 'process' | 'offer' | 'schedule' | 'sitemap' | 'techplan' | 'content' | 'design' | 'build';
-export type ArtifactType = 'brief' | 'process' | 'offer' | 'schedule' | 'sitemap' | 'techplan' | 'content' | 'design' | 'site';
+export type StageKey = 'goal' | 'process' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'techplan' | 'content' | 'design' | 'build';
+export type ArtifactType = 'brief' | 'process' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'techplan' | 'content' | 'design' | 'site';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
-export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'booking';
+export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking';
 
 export interface FieldOption { value: string; label: string; hint: string }
 
@@ -190,6 +190,24 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     importHint: null,
     playbook: { version: '1.0.0', instructions: [] },
   },
+  products: {
+    key: 'products',
+    version: '1.0.0',
+    title: 'Каталог товаров',
+    purpose: 'Перечислим, что вы продаёте, по какой цене, как клиент получит заказ и как заплатит. Из этого соберутся витрина, корзина и форма заказа.',
+    outcome: 'Товары с ценой и наличием, способы получения с ценой доставки, способы оплаты и минимальный заказ.',
+    artifactType: 'catalog',
+    inputs: ['goal'],
+    ai: {
+      level: 'none',
+      whatItDoes: 'Каталог заполняете вы: цены и наличие ИИ не придумывает. Можно вставить список товаров готовым текстом — по товару на строку, цена через тире.',
+      instructionExamples: [],
+    },
+    acceptance: ['Цены и наличие верные', 'Способы получения и их цена такие, как на самом деле', 'Понятно, как клиент платит'],
+    acceptExplanation: 'После публикации клиенты смогут собрать корзину и оформить заказ по этим ценам. Изменения цен вступят в силу, когда вы примете новую версию и пересоберёте сайт.',
+    importHint: 'Вставьте список товаров: по одному на строку, цена через тире. Например: «Мыло ручной работы — 2 500».',
+    playbook: { version: '1.0.0', instructions: [] },
+  },
   sitemap: {
     key: 'sitemap',
     version: '1.0.0',
@@ -223,7 +241,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     purpose: 'Покажем, как будет устроено то, что мы соберём: из чего состоит система, какие данные хранятся, как идёт каждый сценарий по шагам и какие шаги вашего процесса сделает сайт. Для разработчиков здесь же — точное описание (контракт API).',
     outcome: 'Схема данных, сценарии по шагам, что покрывает сайт из вашего процесса, страницы, ограничения и контракт API.',
     artifactType: 'techplan',
-    inputs: ['goal', 'process', 'schedule', 'sitemap'],
+    inputs: ['goal', 'process', 'schedule', 'sitemap', 'products'],
     ai: {
       level: 'none',
       whatItDoes: 'Архитектуру составляет платформа по принятым этапам, без ИИ: так она всегда совпадает с тем, что будет собрано. Вы можете добавить заметки для разработчиков.',
@@ -293,7 +311,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     outcome: 'Готовая страница сайта, отчёт проверок и файлы для скачивания.',
     artifactType: 'site',
     // schedule exists only on the online booking route; inputs are limited to the stages of the route.
-    inputs: ['content', 'design', 'schedule', 'techplan', 'sitemap'],
+    inputs: ['content', 'design', 'schedule', 'techplan', 'sitemap', 'products'],
     ai: {
       level: 'none',
       whatItDoes: 'Сборку делает платформа по правилам, без ИИ: так результат всегда одинаковый и проверяемый.',
@@ -334,6 +352,15 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     stages: ['goal', 'process', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт из нескольких страниц с меню, файлы всех страниц, карта сайта и все тексты проекта.',
   },
+  store: {
+    key: 'store',
+    title: 'Небольшой интернет-магазин',
+    description: 'Витрина с товарами, корзина и заказ без регистрации: клиент выбирает товары и способ получения, а вы получаете заказ в Telegram и видите все заказы в проекте.',
+    goodFor: 'Небольшим магазинам и мастерским: до 60 товаров, самовывоз или доставка, оплата при получении или переводом.',
+    examples: ['Кондитерская', 'Цветы', 'Мыло ручной работы', 'Кофе в зёрнах'],
+    stages: ['goal', 'process', 'products', 'techplan', 'content', 'design', 'build'],
+    resultExplanation: 'Опубликованный магазин с витриной, корзиной и формой заказа, каталог и все тексты проекта. Заказы принимаются, когда сайт опубликован на BuildPath. Онлайн-оплаты пока нет.',
+  },
   booking: {
     key: 'booking',
     title: 'Онлайн-запись к мастеру',
@@ -356,6 +383,8 @@ export function routeInputs(route: StageKey[], key: StageKey): StageKey[] {
   if (key === 'content' && route.includes('offer')) own.push('offer');
   // Texts of a multi-page site are written page by page from the map.
   if (key === 'content' && route.includes('sitemap')) own.push('sitemap');
+  // The storefront texts mention what the store sells.
+  if (key === 'content' && route.includes('products')) own.push('products');
   return own;
 }
 

@@ -7,6 +7,7 @@ import type { Brief, MainAction } from './artifacts.js';
 import { ArtifactValidationError, stableStringify } from './artifacts.js';
 import { doable, weekdayShort, type Schedule } from './schedule.js';
 import type { Sitemap } from './sitemap.js';
+import { tenge, type Catalog } from './products.js';
 import type { BusinessProcess, Capability } from './process.js';
 
 export const TECHPLAN_VERSION = '1.1.0';
@@ -18,7 +19,7 @@ export interface Sequence { title: string; participants: string[]; messages: Arr
 export interface CoverageStep { scenario: string; actor: string; action: string; capability: Capability; status: 'built' | 'manual' | 'not_built'; how: string }
 export interface TechPlan {
   planVersion: string;
-  kind: 'booking' | 'site';
+  kind: 'booking' | 'site' | 'store';
   summary: string;
   /** Parts of the system and what each does. */
   components: TechPlanItem[];
@@ -211,18 +212,23 @@ paths:
 }
 
 /** What the product does for each step of the owner's process. */
-export function coverageOf(kind: 'booking' | 'site', mainAction: MainAction | null, process: BusinessProcess): CoverageStep[] {
+export function coverageOf(kind: 'booking' | 'site' | 'store', mainAction: MainAction | null, process: BusinessProcess): CoverageStep[] {
   const built = (how: string) => ({ status: 'built' as const, how });
   const notBuilt = (how: string) => ({ status: 'not_built' as const, how });
   const bookingOnly = (how: string) => (kind === 'booking' ? built(how) : notBuilt(tr("Это делает тип проекта «Онлайн-запись к мастеру».")));
+  const storeOnly = (how: string) => (kind === 'store' ? built(how) : notBuilt(tr("Это делает тип проекта «Небольшой интернет-магазин».")));
   const verdict = (capability: Capability): { status: CoverageStep['status']; how: string } => {
     switch (capability) {
+      case 'choose_products': return storeOnly(tr("Каталог на сайте и корзина без регистрации."));
+      case 'order': return storeOnly(tr("Форма заказа: способ получения, оплата при получении или переводом."));
+      case 'cancel_order': return storeOnly(tr("Личная ссылка клиента на заказ с кнопкой отмены, пока заказ не подтверждён."));
+      case 'manage_orders': return storeOnly(tr("Страница «Заказы» в проекте: подтвердить, выполнить, отменить."));
       case 'view_info': return built(tr("Страницы сайта."));
       case 'contact': return built(tr("Кнопки звонка, мессенджера и письма на сайте."));
       case 'request_form': return mainAction === 'form'
         ? built(tr("Форма заявки на сайте, опубликованном на BuildPath."))
         : notBuilt(tr("Форма появится, если в «Цели сайта» выбрать главным действием «Оставить заявку на сайте»."));
-      case 'notify_owner': return kind === 'booking' || mainAction === 'form' ? built(tr("Уведомление в Telegram и на почту.")) : notBuilt(tr("Без формы или записи уведомлять не о чем: клиент связывается с вами напрямую."));
+      case 'notify_owner': return kind !== 'site' || mainAction === 'form' ? built(tr("Уведомление в Telegram и на почту.")) : notBuilt(tr("Без формы или записи уведомлять не о чем: клиент связывается с вами напрямую."));
       case 'choose_slot': return bookingOnly(tr("Шаги записи: услуга → мастер → день и время, только свободное время."));
       case 'book': return bookingOnly(tr("Форма записи; одно время не займут дважды."));
       case 'cancel_booking': return bookingOnly(tr("Личная ссылка клиента на запись с кнопкой отмены."));
@@ -244,11 +250,11 @@ export function coverageOf(kind: 'booking' | 'site', mainAction: MainAction | nu
 
 const field = (name: string, type: string) => ({ name, type });
 
-export function buildTechPlan(input: { projectType: string; brief: Brief | null; schedule: Schedule | null; process: BusinessProcess | null; sitemap?: Sitemap | null }, ownerNotes: string | null): TechPlan {
+export function buildTechPlan(input: { projectType: string; brief: Brief | null; schedule: Schedule | null; process: BusinessProcess | null; sitemap?: Sitemap | null; store?: Catalog | null }, ownerNotes: string | null): TechPlan {
   const { schedule } = input;
   const name = input.brief?.businessName || tr("ваш бизнес");
   const mainAction = input.brief?.mainAction ?? null;
-  const kind = input.projectType === 'booking' && schedule ? 'booking' : 'site';
+  const kind = input.projectType === 'booking' && schedule ? 'booking' : input.projectType === 'store' && input.store ? 'store' : 'site';
   const coverage = input.process ? coverageOf(kind, mainAction, input.process) : null;
   const hosting = [
     { option: 'BuildPath', plain: kind === 'booking' ? tr("Работает сразу после публикации; записи хранятся в BuildPath.") : tr("Публикация одной кнопкой; заявки хранятся в BuildPath.") },
@@ -298,6 +304,7 @@ export function buildTechPlan(input: { projectType: string; brief: Brief | null;
       ownerNotes,
     };
   }
+  if (kind === 'store') return storePlan(input.store!, name, coverage, ownerNotes);
   const sched = schedule!;
   const services = sched.services.map((service) => `${service.name} (${minutes(service.minutes)})`).join(', ');
   const masters = sched.masters.map((master) => {
@@ -366,6 +373,65 @@ export function buildTechPlan(input: { projectType: string; brief: Brief | null;
     hosting,
     limits: [tr("Рабочие часы задаются по дням недели: перерывов и выходных на конкретные даты пока нет."), tr("Нет предоплаты и онлайн-оплаты."), tr("На своём сервере нет напоминаний и кабинетов мастеров.")],
     api: bookingApiContract(),
+    ownerNotes,
+  };
+}
+
+function storePlan(store: Catalog, name: string, coverage: CoverageStep[] | null, ownerNotes: string | null): TechPlan {
+  const inStock = store.products.filter((product) => product.available && product.price > 0);
+  const pay = [store.payment.onDelivery ? tr('при получении') : '', store.payment.transfer ? tr('переводом') : ''].filter(Boolean).join(tr(' или '));
+  return {
+    planVersion: TECHPLAN_VERSION, kind: 'store',
+    summary: tr('Магазин «{0}»: витрина с товарами, корзина и заказ без регистрации и без скриптов. Клиент выбирает способ получения и оплату ({1}), вы получаете заказ в Telegram или на почту и ведёте его на странице «Заказы».', [name, pay || tr('не выбрана')]),
+    components: [
+      { title: tr('Витрина и корзина'), plain: tr('Каталог на главной странице; корзина хранится в адресе страницы, поэтому не нужны ни регистрация, ни cookies.'), technical: tr('Статический HTML/CSS; /cart?i=товар:количество считается на сервере по принятому каталогу; без JavaScript.') },
+      { title: tr('Приём заказов'), plain: tr('Цены берутся из принятого каталога, а не из формы; у заказа свой номер.'), technical: tr('POST /__forms/order (urlencoded), проверка Origin, ловушка для ботов, лимит 5 заказов в час с адреса; номер по порядку под advisory-lock проекта.') },
+      { title: tr('Заказы для владельца'), plain: tr('Новые и подтверждённые заказы, звонок клиенту одной кнопкой, статусы «подтверждён», «выполнен», «отменён».'), technical: tr('Страница «Заказы» в BuildPath; переходы статусов проверяются на сервере.') },
+      { title: tr('Уведомления'), plain: tr('Новый заказ и отмена клиентом — вам в Telegram и/или на почту.'), technical: tr('Бот Telegram и почта (Resend), на языке вашего аккаунта.') },
+    ],
+    dataModel: [
+      { key: 'order', name: tr('Заказ'), plain: tr('Кто, что и как заказал.'), fields: [field(tr('Номер'), tr('по порядку')), field(tr('Товары'), tr('название, цена, количество — копия на момент заказа')), field(tr('Получение'), tr('способ и цена доставки')), field(tr('Оплата'), tr('при получении · переводом')), field(tr('Имя и телефон'), tr('текст')), field(tr('Адрес'), tr('если доставка')), field(tr('Статус'), tr('новый · подтверждён · выполнен · отменён'))], links: [{ to: 'product', kind: 'many', label: tr('товары') }] },
+      { key: 'product', name: tr('Товар'), plain: tr('В каталоге: {0} в наличии из {1}.', [inStock.length, store.products.length]), fields: [field(tr('Название'), tr('текст до 80')), field(tr('Цена'), tr('целые тенге')), field(tr('В наличии'), tr('да · нет')), field(tr('Фото'), tr('из библиотеки проекта'))], links: [] },
+      { key: 'delivery', name: tr('Способ получения'), plain: store.delivery.map((option) => `${option.title} — ${option.price ? tenge(option.price) : tr('бесплатно')}`).join('; '), fields: [field(tr('Название'), tr('текст')), field(tr('Цена'), tr('целые тенге')), field(tr('Нужен адрес'), tr('да · нет'))], links: [] },
+    ],
+    sequences: [
+      { title: tr('Заказ'), participants: [tr('Клиент'), tr('Сайт'), tr('Сервер BuildPath'), tr('Вы')], messages: [
+        { from: 0, to: 1, text: tr('Кладёт товары в корзину') },
+        { from: 1, to: 2, text: tr('Считает корзину по каталогу (GET /cart)') },
+        { from: 0, to: 1, text: tr('Выбирает получение и оплату, оставляет имя и телефон') },
+        { from: 1, to: 2, text: tr('Создаёт заказ (POST /__forms/order)') },
+        { from: 2, to: 3, text: tr('Уведомление о новом заказе') },
+        { from: 2, to: 0, text: tr('Личная ссылка на заказ') },
+        { from: 3, to: 0, text: tr('Звонит и подтверждает') },
+      ] },
+    ],
+    coverage,
+    features: [
+      { title: tr('Цены только из каталога'), plain: tr('Клиент не может изменить цену: сервер пересчитывает корзину по принятой версии каталога.'), technical: tr('Состав и цены копируются в заказ; итог = товары + доставка, проверяется ограничением в базе.') },
+      ...(store.minOrder ? [{ title: tr('Минимальный заказ'), plain: tr('Оформить заказ можно от {0}.', [tenge(store.minOrder)]), technical: tr('Проверяется и в корзине, и при отправке формы.') }] : []),
+      { title: tr('Отмена клиентом'), plain: tr('По личной ссылке клиент может отменить заказ, пока вы его не подтвердили.'), technical: tr('В ссылке случайный токен 192 бит; хранится только его SHA-256.') },
+    ],
+    roles: [
+      { title: tr('Клиент'), plain: tr('Оформляет и отменяет свой заказ. Аккаунт не нужен.'), technical: tr('Без входа; согласие на обработку данных обязательно.') },
+      { title: tr('Вы (владелец)'), plain: tr('Меняете каталог, видите все заказы и меняете их статус.'), technical: tr('Владелец и менеджеры проекта.') },
+    ],
+    data: [
+      { title: tr('Хранение'), plain: tr('Заказы удаляются автоматически через 12 месяцев.'), technical: tr('Срок LEAD_RETENTION_DAYS (по умолчанию 365); IP хранится только как солёный хэш.') },
+    ],
+    pages: [
+      { path: '/', title: tr('Главная'), plain: tr('Ваш сайт с каталогом товаров.') },
+      { path: '/cart', title: tr('Корзина'), plain: tr('Товары, способ получения и оплаты, контакты.') },
+      { path: '/order/…', title: tr('Мой заказ'), plain: tr('Личная страница клиента: состав, итог, статус и отмена.') },
+      { path: '/privacy', title: tr('Данные'), plain: tr('Какие данные собираются, зачем и как попросить удалить.') },
+    ],
+    notifications: [tr('Вам: новый заказ и отмена — в Telegram и/или на почту.'), tr('Клиенту: подтверждение на экране и личная ссылка на заказ. Письма и SMS клиенту не отправляются.')],
+    hosting: [
+      { option: 'BuildPath', plain: tr('Работает сразу после публикации; заказы хранятся в BuildPath.') },
+      { option: tr('Свой сервер'), plain: tr('Пока не подходит: программы для приёма заказов на своём сервере нет.') },
+      { option: 'GitHub Pages', plain: tr('Не подходит: там нельзя принимать заказы.') },
+    ],
+    limits: [tr('До 60 товаров, без вариантов (размер, цвет) и остатков на складе.'), tr('Нет онлайн-оплаты: только при получении или переводом после подтверждения.'), tr('Нет писем клиенту — только страница заказа по ссылке.')],
+    api: '',
     ownerNotes,
   };
 }

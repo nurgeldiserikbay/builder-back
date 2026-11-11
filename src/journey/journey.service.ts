@@ -18,11 +18,12 @@ import {
 import {
   ArtifactValidationError, changedKeys, completenessIssues, defaultDesign, emptyBrief, importBriefText, importContentText,
   importOfferText, lockableKeys, stableStringify, mergeProposal, normalizeArtifact, normalizeContent, sectionTypeLabels, templateContent,
-  contentImageIds, type Brief, type ContentArtifact, type DesignArtifact, type Offer, type SiteArtifact,
+  contentImageIds, importCatalogText, type Brief, type ContentArtifact, type DesignArtifact, type Offer, type SiteArtifact,
 } from './artifacts.js';
 import { inlineImages } from '../images/image-processing.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderPages, renderSite, siteMeta, type ImageInfo } from './site-renderer.js';
 import { RESERVED_PATHS, SITEMAP_LIMITS, templateSitemap, type Sitemap } from './sitemap.js';
+import { CATALOG_LIMITS, templateCatalog, type Catalog } from './products.js';
 import { describeChanges } from './change-summary.js';
 import { costOf } from '../budget/budget.js';
 import { StageAiError, buildStagePrompt, configuredStageProvider, type StageAiProvider } from './stage-ai.js';
@@ -419,6 +420,7 @@ export class JourneyService {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
           ...(definition.artifactType === 'techplan' ? { techplan: { preview: techPlanPreview, outdated: techPlanOutdated } } : {}),
           ...(definition.artifactType === 'process' ? { process: { capabilities: CAPABILITIES, actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS } } : {}),
+          ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
           ...(stageKey === 'content' && ctx.route.includes('sitemap') ? { pages: (await this.checkContext(ctx, stageKey)).sitemap?.pages ?? null } : {}),
           ...(definition.artifactType === 'schedule' ? { schedule: { template: scheduleTemplate, timezones: TIMEZONES, weekdays: WEEKDAYS, slotSteps: SLOT_STEPS } } : {}),
@@ -464,6 +466,7 @@ export class JourneyService {
     return inProject(ctx, () => buildTechPlan({
       projectType: ctx.type.key, brief: (inputs.goal?.content as Brief | undefined) ?? null, schedule: schedule ?? null,
       process: (inputs.process?.content as BusinessProcess | undefined) ?? null, sitemap: (inputs.sitemap?.content as Sitemap | undefined) ?? null,
+      store: (inputs.products?.content as Catalog | undefined) ?? null,
     }, notes));
   }
 
@@ -783,7 +786,7 @@ export class JourneyService {
     let content: unknown;
     try {
       const { sitemap } = await this.checkContext(ctx, stageKey);
-      content = inProject(ctx, () => (definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : importContentText(text, sitemap)));
+      content = inProject(ctx, () => (definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : definition.artifactType === 'catalog' ? importCatalogText(text) : importContentText(text, sitemap)));
     } catch (error) { validationError(error); }
     const issues = completenessIssues(definition.artifactType, content, await this.checkContext(ctx, stageKey));
     // Imported material counts as accepted only when it is complete, its own inputs are accepted and the person importing
@@ -854,7 +857,8 @@ export class JourneyService {
       const id = useDraft ? stage.currentVersionId ?? stage.approvedVersionId : accepted;
       return this.versionContent(id);
     };
-    const [goal, offer, content, design, schedule, techplan, sitemap] = await Promise.all([pick('goal'), pick('offer'), pick('content'), pick('design'), pick('schedule'), pick('techplan'), pick('sitemap')]);
+    const [goal, offer, content, design, schedule, techplan, sitemap, products] = await Promise.all([pick('goal'), pick('offer'), pick('content'), pick('design'), pick('schedule'), pick('techplan'), pick('sitemap'), pick('products')]);
+    if (acceptedOnly && ctx.route.includes('products') && !products) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     if (acceptedOnly && ctx.route.includes('sitemap') && !sitemap) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     if (acceptedOnly && ctx.route.includes('schedule') && !schedule) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     if (!goal || !content) throw new ConflictException(acceptedOnly ? 'STAGE_INPUTS_NOT_ACCEPTED' : 'PREVIEW_NOT_READY');
@@ -865,6 +869,8 @@ export class JourneyService {
     if (schedule) versionIds.schedule = schedule.id;
     if (techplan) versionIds.techplan = techplan.id;
     if (sitemap) versionIds.sitemap = sitemap.id;
+    if (products) versionIds.products = products.id;
+    const store = (products?.content as Catalog | undefined) ?? null;
     const offerContent = (offer?.content as Offer | undefined) ?? null;
     const booking: BookingConfig | null = schedule ? {
       schedule: schedule.content as Schedule,
@@ -875,11 +881,12 @@ export class JourneyService {
       input: {
         brief: goal.content as Brief, offer: (offer?.content as Offer | undefined) ?? null, content: content.content as ContentArtifact,
         design: (design?.content as DesignArtifact | undefined) ?? defaultDesign, locale: ctx.project.locale, draft: !acceptedOnly,
-        images: await this.imageInfo(ctx.project.id, contentImageIds(content.content)),
+        images: await this.imageInfo(ctx.project.id, [...contentImageIds(content.content), ...(store?.products.map((product) => product.imageId).filter((id): id is string => Boolean(id)) ?? [])]),
         booking,
         contractVersion: (techplan?.content as TechPlan | undefined)?.planVersion ?? null,
         expectedContractVersion: ctx.route.includes('techplan') ? TECHPLAN_VERSION : null,
         sitemap: (sitemap?.content as Sitemap | undefined) ?? null,
+        store,
       },
     };
   }
@@ -1397,7 +1404,7 @@ export class JourneyService {
     const plan = get<TechPlan>('techplan');
     if (plan) {
       files.push({ name: 'architecture.md', mimeType: 'text/markdown', content: inProject(ctx, () => techPlanMarkdown(plan)) });
-      if (plan.api || plan.kind !== 'site') files.push({ name: plan.kind === 'site' ? 'lead-api.yaml' : 'booking-api.yaml', mimeType: 'text/yaml', content: plan.api || inProject(ctx, () => bookingApiContract()) });
+      if (plan.api || plan.kind === 'booking') files.push({ name: plan.kind === 'site' ? 'lead-api.yaml' : 'booking-api.yaml', mimeType: 'text/yaml', content: plan.api || inProject(ctx, () => bookingApiContract()) });
     }
     files.push({
       name: 'project.json', mimeType: 'application/json',
