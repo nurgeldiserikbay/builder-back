@@ -1,0 +1,45 @@
+# Entry point for a Render deployment (see README.md next to this file).
+# Render terminates HTTPS, so Caddy listens on plain HTTP on $PORT and only routes:
+#   /api/*  -> the API service (same origin for the app: first-party cookies, no CORS)
+#   rest    -> the web app (WEB_UPSTREAM: builder-front for the app, builder-admin for the console)
+# Upstreams are public https://*.onrender.com addresses because free Render services cannot receive
+# private-network traffic. The upstream Host header is rewritten so Render routes the request.
+{
+	auto_https off
+	admin off
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+(common_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "{$FRAME_POLICY:frame-ancestors 'none'}"
+		-Server
+	}
+}
+
+:{$PORT:10000} {
+	encode zstd gzip
+	import common_headers
+	@noindex expression `{$NOINDEX:false} == true`
+	header @noindex X-Robots-Tag "noindex, nofollow"
+
+	handle /__gateway/health {
+		respond "ok" 200
+	}
+	handle /api/* {
+		reverse_proxy {$API_UPSTREAM} {
+			header_up Host {upstream_hostport}
+		}
+	}
+	handle {
+		reverse_proxy {$WEB_UPSTREAM} {
+			header_up Host {upstream_hostport}
+		}
+	}
+}
