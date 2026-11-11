@@ -89,3 +89,12 @@ export function activeProvider(env = process.env): ProviderKey | null {
   if (env.PAYMENTS_PROVIDER === 'freedompay' || (!env.PAYMENTS_PROVIDER && freedomConfig(env))) return freedomConfig(env) ? 'freedompay' : null;
   return null;
 }
+
+/**
+ * Returns money through the provider. The test provider does it at once; for a real provider the refund is made in
+ * its merchant cabinet by staff, who record the reference — BuildPath does not call a refund API it has not verified.
+ */
+export function automaticRefund(provider: string): ((paymentId: string | null, amountTiyn: number) => { reference: string }) | null {
+  if (provider !== 'mock') return null;
+  return (paymentId, amountTiyn) => ({ reference: `mock-refund-${(paymentId ?? 'x').slice(-8)}-${amountTiyn}` });
+}

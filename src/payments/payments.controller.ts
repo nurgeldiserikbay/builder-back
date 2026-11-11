@@ -30,6 +30,20 @@ export class ProjectWalletController {
     if (!input || Object.keys(input).some((key) => key !== 'amount') || typeof input.amount !== 'number') throw new BadRequestException('TOP_UP_AMOUNT_INVALID');
     return this.payments.startTopUp(request.user.id, projectId, input.amount);
   }
+
+  @Post('top-ups/:topUpId/refund')
+  @HttpCode(200)
+  refund(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('topUpId') topUpId: string, @Body() raw: unknown) {
+    const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+    if (!input || Object.keys(input).some((key) => key !== 'amount' && key !== 'reason') || typeof input.amount !== 'number' || (input.reason !== undefined && typeof input.reason !== 'string')) throw new BadRequestException('REFUND_AMOUNT_INVALID');
+    return this.payments.requestRefund(request.user.id, projectId, topUpId, input.amount, (input.reason as string | undefined) ?? '');
+  }
+
+  @Delete('top-ups/:topUpId/refund')
+  @HttpCode(200)
+  cancelRefund(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('topUpId') topUpId: string) {
+    return this.payments.cancelRefund(request.user.id, projectId, topUpId);
+  }
 }
 
 /** Provider callbacks and the development payment page. No session: callbacks are checked by signature. */
@@ -107,6 +121,13 @@ export class SpecialistPaymentsController {
     return this.payments.deletePayoutDetails(request.user.id);
   }
 
+  @Get('projects/:projectId/receipts/:kind/:id')
+  @Header('Cache-Control', 'no-store')
+  receipt(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('kind') kind: string, @Param('id') id: string) {
+    if (kind !== 'top-up' && kind !== 'stage') throw new BadRequestException('RECEIPT_NOT_FOUND');
+    return this.payments.receipt(request.user.id, projectId, kind, id);
+  }
+
   @Post('projects/:projectId/payments/:paymentId/checkout')
   @HttpCode(200)
   checkout(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('paymentId') paymentId: string) {
@@ -141,5 +162,37 @@ export class AdminPayoutsController {
     const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
     if (!input || Object.keys(input).some((key) => key !== 'reference') || typeof input.reference !== 'string') throw new BadRequestException('PAYOUT_REFERENCE_INVALID');
     return this.payments.markPaidOut(request.staff.id, paymentId, input.reference);
+  }
+
+  @Post(':paymentId/refund')
+  @HttpCode(200)
+  @StaffRoles('super_admin')
+  refund(@Param('paymentId') paymentId: string, @Body() raw: unknown, @Req() request: StaffRequest) {
+    const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+    if (!input || Object.keys(input).some((key) => key !== 'reference' && key !== 'note') || typeof input.note !== 'string' || (input.reference !== undefined && input.reference !== null && typeof input.reference !== 'string')) throw new BadRequestException('INVALID_REQUEST_BODY');
+    return this.payments.refundStagePayment(request.staff.id, paymentId, { reference: (input.reference as string | null | undefined) ?? null, note: input.note });
+  }
+}
+
+@Controller('admin/refunds')
+@UseGuards(StaffAuthGuard, StaffRolesGuard)
+export class AdminRefundsController {
+  constructor(private readonly payments: PaymentsService) {}
+
+  @Get()
+  @Header('Cache-Control', 'no-store')
+  @StaffRoles('super_admin', 'operations_auditor')
+  list() {
+    return this.payments.refundQueue();
+  }
+
+  @Post(':topUpId')
+  @HttpCode(200)
+  @StaffRoles('super_admin')
+  decide(@Param('topUpId') topUpId: string, @Body() raw: unknown, @Req() request: StaffRequest) {
+    const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+    if (!input || Object.keys(input).some((key) => !['decision', 'reference', 'note'].includes(key)) || (input.decision !== 'refund' && input.decision !== 'reject')) throw new BadRequestException('INVALID_REQUEST_BODY');
+    const text = (value: unknown) => (typeof value === 'string' ? value : null);
+    return this.payments.decideRefund(request.staff.id, topUpId, input.decision, { reference: text(input.reference), note: text(input.note) });
   }
 }

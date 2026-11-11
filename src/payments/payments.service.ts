@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { PrismaService } from '../database/prisma.service.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { DEFAULT_TOKENS, costOf } from '../budget/budget.js';
-import { PaymentProviderError, activeProvider, freedomCallback, freedomCheckout, freedomConfig, freedomReply } from './providers.js';
+import { PaymentProviderError, activeProvider, automaticRefund, freedomCallback, freedomCheckout, freedomConfig, freedomReply } from './providers.js';
 export { activeProvider } from './providers.js';
 import { billingSettings, projectBalance } from './wallet.js';
 import { STAGE_ORDER_PREFIX, normalizeIban, splitFee } from './payouts.js';
@@ -29,7 +29,10 @@ export class PaymentsService {
     const settings = await billingSettings(this.prisma);
     const [balance, topUps] = await Promise.all([
       projectBalance(this.prisma, projectId, settings.prepaidSince),
-      this.prisma.projectTopUp.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' }, take: 20, select: { id: true, amountTiyn: true, status: true, provider: true, createdAt: true, paidAt: true } }),
+      this.prisma.projectTopUp.findMany({
+        where: { projectId }, orderBy: { createdAt: 'desc' }, take: 20,
+        select: { id: true, amountTiyn: true, status: true, provider: true, createdAt: true, paidAt: true, refundedTiyn: true, refundStatus: true, refundRequestedTiyn: true, refundRequestedAt: true, refundDecidedAt: true, refundNote: true },
+      }),
     ]);
     const typical = settings.priced ? costOf({ inputTokens: DEFAULT_TOKENS.input, outputTokens: DEFAULT_TOKENS.output }, settings) ?? 0 : 0;
     return {
@@ -38,7 +41,12 @@ export class PaymentsService {
         balance: tenge(balance.balanceTiyn), paid: tenge(balance.paidTiyn), spent: tenge(balance.spentTiyn),
         minTopUp: tenge(settings.minTopUpTiyn), maxTopUp: tenge(MAX_TOP_UP_TIYN), typicalRequest: tenge(typical),
         requestsLeft: typical > 0 ? Math.max(0, Math.floor(balance.balanceTiyn / typical)) : null,
-        topUps: topUps.map((item) => ({ ...item, amount: tenge(item.amountTiyn) })),
+        refunded: tenge(balance.refundedTiyn), pendingRefund: tenge(balance.pendingRefundTiyn),
+        topUps: topUps.map(({ refundRequestedTiyn, refundedTiyn, ...item }) => ({
+          ...item, amount: tenge(item.amountTiyn), refunded: tenge(refundedTiyn), refundRequested: refundRequestedTiyn === null ? null : tenge(refundRequestedTiyn),
+          // Only money not yet spent on AI can be returned.
+          refundable: item.status === 'paid' && item.refundStatus !== 'requested' ? tenge(Math.max(0, Math.min(item.amountTiyn - refundedTiyn, balance.balanceTiyn))) : 0,
+        })),
       },
     };
   }
@@ -137,6 +145,150 @@ export class PaymentsService {
     const paid = result === 'paid';
     await this.settle(orderId, { status: paid ? 'paid' : 'failed', amountTiyn: order.amountTiyn, currency: 'KZT', providerPaymentId: `mock-${orderId.slice(-8)}` });
     return `${appBase()}/projects/${order.projectId}?payment=${paid ? 'success' : 'failure'}`;
+  }
+
+  // --- Refunds ---
+
+  /** The owner asks to return the unspent part of a paid top-up. The amount is set aside at once so it cannot be spent meanwhile. */
+  async requestRefund(userId: string, projectId: string, topUpId: string, amountTenge: number, reason: string) {
+    const access = await this.journey.projectAccess(userId, projectId);
+    if (!access.canDecide) throw new ForbiddenException('WALLET_FORBIDDEN');
+    if (!isUuid(topUpId)) throw new NotFoundException('TOP_UP_NOT_FOUND');
+    const amountTiyn = Math.round(amountTenge * 100);
+    if (!Number.isFinite(amountTenge) || amountTiyn < 100) throw new BadRequestException('REFUND_AMOUNT_INVALID');
+    const cleanReason = reason.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 300);
+    const settings = await billingSettings(this.prisma);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`wallet:${projectId}`}))`;
+      const topUp = await tx.projectTopUp.findFirst({ where: { id: topUpId, projectId }, select: { id: true, status: true, amountTiyn: true, refundedTiyn: true, refundStatus: true } });
+      if (!topUp || topUp.status !== 'paid') throw new NotFoundException('TOP_UP_NOT_FOUND');
+      if (topUp.refundStatus === 'requested') throw new ConflictException('REFUND_ALREADY_REQUESTED');
+      const balance = await projectBalance(tx, projectId, settings.prepaidSince);
+      if (amountTiyn > topUp.amountTiyn - topUp.refundedTiyn || amountTiyn > balance.balanceTiyn) throw new ConflictException('REFUND_MORE_THAN_LEFT');
+      await tx.projectTopUp.update({ where: { id: topUp.id }, data: { refundStatus: 'requested', refundRequestedTiyn: amountTiyn, refundReason: cleanReason || null, refundRequestedAt: new Date(), refundDecidedAt: null, refundNote: null, refundReference: null } });
+      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'refund_requested', details: { topUpId, amount: tenge(amountTiyn) } } });
+    });
+    return this.wallet(userId, projectId);
+  }
+
+  async cancelRefund(userId: string, projectId: string, topUpId: string) {
+    const access = await this.journey.projectAccess(userId, projectId);
+    if (!access.canDecide) throw new ForbiddenException('WALLET_FORBIDDEN');
+    if (!isUuid(topUpId)) throw new NotFoundException('TOP_UP_NOT_FOUND');
+    const updated = await this.prisma.projectTopUp.updateMany({ where: { id: topUpId, projectId, refundStatus: 'requested' }, data: { refundStatus: null, refundRequestedTiyn: null, refundRequestedAt: null } });
+    if (!updated.count) throw new ConflictException('REFUND_NOT_REQUESTED');
+    await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'refund_cancelled', details: { topUpId } } });
+    return this.wallet(userId, projectId);
+  }
+
+  /** Staff: refund requests waiting for a decision, then recent decisions. */
+  async refundQueue() {
+    const rows = await this.prisma.projectTopUp.findMany({
+      where: { refundStatus: { not: null } }, orderBy: [{ refundStatus: 'asc' }, { refundRequestedAt: 'asc' }], take: 100,
+      select: { id: true, projectId: true, amountTiyn: true, refundedTiyn: true, refundStatus: true, refundRequestedTiyn: true, refundReason: true, refundRequestedAt: true, refundDecidedAt: true, refundReference: true, refundNote: true, provider: true, providerPaymentId: true, paidAt: true, project: { select: { name: true, owner: { select: { email: true } } } } },
+    });
+    return {
+      data: {
+        automatic: Object.fromEntries(['mock', 'freedompay'].map((key) => [key, Boolean(automaticRefund(key))])),
+        items: rows.map((row) => ({
+          id: row.id, project: row.project.name, owner: row.project.owner.email, provider: row.provider, providerPaymentId: row.providerPaymentId, paidAt: row.paidAt,
+          amount: tenge(row.amountTiyn), refunded: tenge(row.refundedTiyn), requested: row.refundRequestedTiyn === null ? null : tenge(row.refundRequestedTiyn),
+          status: row.refundStatus, reason: row.refundReason, requestedAt: row.refundRequestedAt, decidedAt: row.refundDecidedAt, reference: row.refundReference, note: row.refundNote,
+          automatic: Boolean(automaticRefund(row.provider)),
+        })),
+      },
+    };
+  }
+
+  /**
+   * Staff decide on a refund request. With the test provider the money «returns» at once; with a real provider staff
+   * make the refund in its merchant cabinet first and record its reference here.
+   */
+  async decideRefund(staffId: string, topUpId: string, decision: 'refund' | 'reject', input: { reference: string | null; note: string | null }) {
+    if (!isUuid(topUpId)) throw new NotFoundException('TOP_UP_NOT_FOUND');
+    const note = input.note?.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 300) || null;
+    const topUp = await this.prisma.projectTopUp.findUnique({ where: { id: topUpId }, select: { id: true, projectId: true, userId: true, provider: true, providerPaymentId: true, refundStatus: true, refundRequestedTiyn: true } });
+    if (!topUp || topUp.refundStatus !== 'requested' || !topUp.refundRequestedTiyn) throw new ConflictException('REFUND_NOT_REQUESTED');
+    let reference: string | null = null;
+    if (decision === 'refund') {
+      const auto = automaticRefund(topUp.provider);
+      reference = auto ? auto(topUp.providerPaymentId, topUp.refundRequestedTiyn).reference : (input.reference?.replace(/[\u0000-\u001f]/g, '').trim() ?? '');
+      if (!reference || reference.length < 3 || reference.length > 100) throw new BadRequestException('REFUND_REFERENCE_REQUIRED');
+    } else if (!note) throw new BadRequestException('REFUND_NOTE_REQUIRED');
+    const amountTiyn = topUp.refundRequestedTiyn;
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.projectTopUp.updateMany({
+        where: { id: topUp.id, refundStatus: 'requested' },
+        data: decision === 'refund'
+          ? { refundStatus: 'refunded', refundedTiyn: { increment: amountTiyn }, refundRequestedTiyn: null, refundDecidedAt: new Date(), refundDecidedByStaffId: staffId, refundReference: reference, refundNote: note }
+          : { refundStatus: 'rejected', refundRequestedTiyn: null, refundDecidedAt: new Date(), refundDecidedByStaffId: staffId, refundNote: note },
+      });
+      if (!updated.count) throw new ConflictException('REFUND_NOT_REQUESTED');
+      await tx.adminAuditEvent.create({ data: { staffId, eventType: decision === 'refund' ? 'refund.made' : 'refund.rejected', targetType: 'project_top_up', targetId: topUp.id, details: { amount: tenge(amountTiyn), reference, note } } });
+      await tx.projectEvent.create({ data: { projectId: topUp.projectId, type: decision === 'refund' ? 'refund_made' : 'refund_rejected', details: { topUpId: topUp.id, amount: tenge(amountTiyn) } } });
+    });
+    await this.notify(topUp.userId, decision === 'refund'
+      ? `BuildPath вернул ${tenge(amountTiyn).toLocaleString('ru-RU')} ₸ с баланса проекта. Деньги придут на карту, с которой вы платили; обычно это занимает несколько рабочих дней.`
+      : `Возврат ${tenge(amountTiyn).toLocaleString('ru-RU')} ₸ отклонён: ${note}. Деньги снова доступны на балансе проекта.`);
+    return this.refundQueue();
+  }
+
+  /** Staff: money held for a specialist goes back to the owner (e.g. a dispute settled in the owner's favour). Only before the payout. */
+  async refundStagePayment(staffId: string, paymentId: string, input: { reference: string | null; note: string }) {
+    if (!isUuid(paymentId)) throw new NotFoundException('PAYMENT_NOT_FOUND');
+    const note = input.note.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 300);
+    if (note.length < 3) throw new BadRequestException('REFUND_NOTE_REQUIRED');
+    const payment = await this.prisma.stagePayment.findUnique({ where: { id: paymentId }, select: { id: true, projectId: true, status: true, amountTiyn: true, provider: true, providerPaymentId: true, assignment: { select: { userId: true, stage: { select: { stageKey: true } } } } } });
+    if (!payment || payment.status !== 'held') throw new ConflictException('PAYMENT_NOT_HELD');
+    const auto = automaticRefund(payment.provider ?? '');
+    const reference = auto ? auto(payment.providerPaymentId, payment.amountTiyn).reference : (input.reference?.trim() ?? '');
+    if (!reference || reference.length < 3 || reference.length > 100) throw new BadRequestException('REFUND_REFERENCE_REQUIRED');
+    const updated = await this.prisma.stagePayment.updateMany({ where: { id: paymentId, status: 'held' }, data: { status: 'refunded', refundedAt: new Date(), refundReference: reference, refundNote: note } });
+    if (!updated.count) throw new ConflictException('PAYMENT_NOT_HELD');
+    await this.prisma.$transaction([
+      this.prisma.adminAuditEvent.create({ data: { staffId, eventType: 'refund.stage_payment', targetType: 'stage_payment', targetId: paymentId, details: { amount: tenge(payment.amountTiyn), reference, note } } }),
+      this.prisma.projectEvent.create({ data: { projectId: payment.projectId, type: 'specialist_payment_refunded', stageKey: payment.assignment.stage.stageKey, details: { paymentId, amount: tenge(payment.amountTiyn) } } }),
+    ]);
+    await this.notify(payment.assignment.userId, `Оплата ${tenge(payment.amountTiyn).toLocaleString('ru-RU')} ₸ за этап «${stageDefinitions[payment.assignment.stage.stageKey as StageKey]?.title ?? ''}» возвращена владельцу проекта: ${note}.`);
+    return this.payoutQueue();
+  }
+
+  // --- Receipts ---
+
+  /**
+   * A payment confirmation the payer can keep or print. It is not a fiscal receipt: those are issued by the provider or
+   * a fiscal data operator once a real provider is connected, and the test provider says so on the document.
+   */
+  async receipt(userId: string, projectId: string, kind: 'top-up' | 'stage', id: string) {
+    const access = await this.journey.projectAccess(userId, projectId);
+    if (!access.canDecide) throw new ForbiddenException('WALLET_FORBIDDEN');
+    if (!isUuid(id)) throw new NotFoundException('RECEIPT_NOT_FOUND');
+    const number = (date: Date) => `BP-${date.toISOString().slice(0, 10).replace(/-/g, '')}-${id.slice(0, 8).toUpperCase()}`;
+    const buyer = await this.prisma.project.findUnique({ where: { id: projectId }, select: { owner: { select: { name: true, email: true } } } });
+    if (kind === 'top-up') {
+      const row = await this.prisma.projectTopUp.findFirst({ where: { id, projectId, status: 'paid' }, select: { amountTiyn: true, refundedTiyn: true, paidAt: true, provider: true, providerPaymentId: true, refundDecidedAt: true, refundReference: true, userId: true } });
+      if (!row?.paidAt) throw new NotFoundException('RECEIPT_NOT_FOUND');
+      const payer = await this.prisma.user.findUnique({ where: { id: row.userId }, select: { name: true, email: true } });
+      return { data: {
+        number: number(row.paidAt), paidAt: row.paidAt, payer: payer?.name || payer?.email || buyer?.owner.email, payerEmail: payer?.email ?? null, project: access.name,
+        items: [{ title: 'Пополнение баланса проекта для запросов к ИИ', amount: tenge(row.amountTiyn) }], total: tenge(row.amountTiyn), currency: 'KZT',
+        refunds: row.refundedTiyn ? [{ amount: tenge(row.refundedTiyn), at: row.refundDecidedAt, reference: row.refundReference }] : [],
+        provider: row.provider, providerPaymentId: row.providerPaymentId, test: row.provider === 'mock', seller: 'BuildPath',
+      } };
+    }
+    const row = await this.prisma.stagePayment.findFirst({ where: { id, projectId, status: { in: ['held', 'paid_out', 'refunded'] } }, select: { amountTiyn: true, feeTiyn: true, payoutTiyn: true, paidAt: true, provider: true, providerPaymentId: true, status: true, refundedAt: true, refundReference: true, assignment: { select: { email: true, user: { select: { name: true } }, stage: { select: { stageKey: true } } } } } });
+    if (!row?.paidAt) throw new NotFoundException('RECEIPT_NOT_FOUND');
+    const stage = stageDefinitions[row.assignment.stage.stageKey as StageKey]?.title ?? row.assignment.stage.stageKey;
+    return { data: {
+      number: number(row.paidAt), paidAt: row.paidAt, payer: buyer?.owner.name || buyer?.owner.email, payerEmail: buyer?.owner.email ?? null, project: access.name,
+      items: [
+        { title: `Работа специалиста (${row.assignment.user?.name || row.assignment.email}), этап «${stage}»`, amount: tenge(row.payoutTiyn ?? row.amountTiyn) },
+        ...(row.feeTiyn ? [{ title: 'Комиссия BuildPath', amount: tenge(row.feeTiyn) }] : []),
+      ],
+      total: tenge(row.amountTiyn), currency: 'KZT',
+      refunds: row.status === 'refunded' ? [{ amount: tenge(row.amountTiyn), at: row.refundedAt, reference: row.refundReference }] : [],
+      provider: row.provider, providerPaymentId: row.providerPaymentId, test: row.provider === 'mock', seller: 'BuildPath',
+    } };
   }
 
   // --- Specialists paid through BuildPath ---

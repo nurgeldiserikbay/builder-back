@@ -1824,6 +1824,99 @@ paths:
       responses:
         '200': { description: Payout queue }
         '409': { description: PAYMENT_NOT_HELD }
+  /admin/payouts/{paymentId}/refund:
+    post:
+      tags: [Admin]
+      operationId: refundStagePayment
+      summary: Return money held for a specialist to the owner, before the payout (super_admin, audited)
+      description: "With the test provider the refund is immediate; with a real provider staff refund in the merchant cabinet first and pass its reference."
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: paymentId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [note], properties: { note: { type: string, minLength: 3, maxLength: 300 }, reference: { type: [string, 'null'], maxLength: 100 } } }
+      responses:
+        '200': { description: Payout queue }
+        '400': { description: REFUND_REFERENCE_REQUIRED or REFUND_NOTE_REQUIRED }
+        '409': { description: PAYMENT_NOT_HELD }
+  /admin/refunds:
+    get:
+      tags: [Admin]
+      operationId: listRefunds
+      summary: Refund requests for project balances, waiting first
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      responses:
+        '200': { description: 'automatic (per provider), items (id, project, owner, provider, amount, refunded, requested, status, reason, requestedAt, decidedAt, reference, note, automatic)' }
+  /admin/refunds/{topUpId}:
+    post:
+      tags: [Admin]
+      operationId: decideRefund
+      summary: Refund or reject a balance refund request (super_admin, audited)
+      description: "refund: immediate with the test provider, otherwise requires the reference of the refund made in the provider's cabinet. reject: requires a note shown to the owner; the amount becomes available again."
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: topUpId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [decision], properties: { decision: { type: string, enum: [refund, reject] }, reference: { type: [string, 'null'], maxLength: 100 }, note: { type: [string, 'null'], maxLength: 300 } } }
+      responses:
+        '200': { description: Refund queue }
+        '400': { description: REFUND_REFERENCE_REQUIRED or REFUND_NOTE_REQUIRED }
+        '409': { description: REFUND_NOT_REQUESTED }
+  /projects/{projectId}/wallet/top-ups/{topUpId}/refund:
+    post:
+      tags: [Billing]
+      operationId: requestRefund
+      summary: Ask to return the unspent part of a paid top-up
+      description: "Owner or anyone who decides on the project. At most what is left of this top-up and of the balance; the amount is set aside until staff decide."
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: topUpId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [amount], properties: { amount: { type: number, minimum: 1 }, reason: { type: string, maxLength: 300 } } }
+      responses:
+        '200': { description: Wallet }
+        '400': { description: REFUND_AMOUNT_INVALID }
+        '409': { description: REFUND_MORE_THAN_LEFT or REFUND_ALREADY_REQUESTED }
+    delete:
+      tags: [Billing]
+      operationId: cancelRefund
+      summary: Withdraw a refund request that staff have not decided yet
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: topUpId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Wallet }
+        '409': { description: REFUND_NOT_REQUESTED }
+  /projects/{projectId}/receipts/{kind}/{id}:
+    get:
+      tags: [Billing]
+      operationId: getReceipt
+      summary: Payment confirmation for a top-up or a specialist payment (not a fiscal receipt)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: kind, in: path, required: true, schema: { type: string, enum: [top-up, stage] } }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'number, paidAt, payer, payerEmail, project, items (title, amount), total, currency, refunds, provider, providerPaymentId, test, seller' }
+        '404': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/changes/{noticeId}/explain:
     post:
       tags: [Journey]
