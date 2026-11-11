@@ -241,8 +241,8 @@ export function checkSite(input: RenderInput): SiteCheck[] {
     add('booking-services', false, missing.length === 0, 'Все услуги доступны для записи', 'Все услуги из списка можно забронировать.',
       `На ${missing.map((service) => `«${service.name}»`).join(', ')} записаться нельзя: их нет в расписании. Добавьте длительность на этапе «Расписание и запись», если на них нужна запись.`, true);
     if (input.expectedContractVersion) {
-      add('contract', true, input.contractVersion === input.expectedContractVersion, 'Соответствует техническому плану', `Программа записи сделана по версии плана ${input.expectedContractVersion}.`,
-        input.contractVersion ? `План принят для версии ${input.contractVersion}, а платформа собирает версию ${input.expectedContractVersion}. Откройте этап «Технический план», обновите его и примите.` : 'Технический план ещё не принят.');
+      add('contract', true, input.contractVersion === input.expectedContractVersion, 'Соответствует архитектуре', `Программа записи сделана по версии архитектуры ${input.expectedContractVersion}.`,
+        input.contractVersion ? `Архитектура принята для версии ${input.contractVersion}, а платформа собирает версию ${input.expectedContractVersion}. Откройте этап «Архитектура», обновите его и примите.` : 'Архитектура ещё не принята.');
     }
     const ownerContact = Boolean(brief.phone || brief.email || brief.messenger || brief.address);
     add('booking-privacy', true, ownerContact, 'Запись и согласие', 'Запись просит согласие на обработку данных и ведёт на страницу о данных с вашими контактами.',

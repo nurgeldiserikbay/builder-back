@@ -3608,7 +3608,7 @@ components:
       in: path
       name: stageKey
       required: true
-      schema: { type: string, enum: [goal, offer, schedule, techplan, content, design, build] }
+      schema: { type: string, enum: [goal, process, offer, schedule, techplan, content, design, build] }
     RuleId:
       in: path
       name: ruleId

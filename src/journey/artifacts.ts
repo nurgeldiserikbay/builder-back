@@ -4,6 +4,7 @@ import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
 import type { ArtifactType } from './catalog.js';
 import { normalizeSchedule, scheduleIssues, type BookingConfig, type Schedule } from './schedule.js';
 import { normalizeTechPlan } from './techplan.js';
+import { normalizeProcess, processIssues, type BusinessProcess } from './process.js';
 
 export type MainAction = 'call' | 'message' | 'visit' | 'email' | 'form';
 export type Tone = 'friendly' | 'formal' | 'bold';
@@ -168,6 +169,7 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown): unknown {
     case 'design': return normalizeDesign(raw);
     case 'schedule': return normalizeSchedule(raw);
     case 'techplan': return normalizeTechPlan(raw);
+    case 'process': return normalizeProcess(raw);
     default: throw new ArtifactValidationError('ARTIFACT_NOT_EDITABLE');
   }
 }
@@ -180,6 +182,7 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'design') return ['palette', 'font', 'corners', 'heroLayout'];
   if (type === 'schedule') return ['timezone', 'services', 'masters', 'rules'];
   if (type === 'techplan') return ['ownerNotes'];
+  if (type === 'process') return ['actors', 'scenarios', 'rules', 'data'];
   return [];
 }
 
@@ -262,6 +265,7 @@ export function completenessIssues(type: ArtifactType, content: unknown): Comple
     if (brief.mainAction === 'visit' && !brief.address) issues.push({ key: 'address', message: 'Чтобы к вам пришли, нужен адрес.' });
   }
   if (type === 'schedule') issues.push(...scheduleIssues(content as Schedule));
+  if (type === 'process') issues.push(...processIssues(content as BusinessProcess));
   if (type === 'offer' && (content as Offer).services.length === 0) issues.push({ key: 'services', message: 'Добавьте хотя бы одну услугу.' });
   if (type === 'content') {
     const artifact = content as ContentArtifact;

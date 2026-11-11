@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { WorktimeService } from './worktime.service.js';
 import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, type BookingConfig, type Schedule } from './schedule.js';
+import { CAPABILITIES, PROCESS_LIMITS, templateProcess, type BusinessProcess } from './process.js';
 import { TECHPLAN_VERSION, bookingApiContract, sameTechPlan, buildTechPlan, techPlanMarkdown, techPlanNotes, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
 import {
@@ -402,11 +403,12 @@ export class JourneyService {
           configured: Boolean(ai), remainingToday: ai ? await this.remainingAiRuns(projectId) : 0,
           budget: assignment ? { limit: assignment.aiBudget, used: assignment.aiUsed } : null,
           month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null,
-          templateAvailable: !ai && (stageKey === 'content' || stageKey === 'design'),
+          templateAvailable: !ai && (stageKey === 'content' || stageKey === 'design' || stageKey === 'process'),
         },
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
           ...(definition.artifactType === 'techplan' ? { techplan: { preview: techPlanPreview, outdated: techPlanOutdated } } : {}),
+          ...(definition.artifactType === 'process' ? { process: { capabilities: CAPABILITIES, actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS } } : {}),
           ...(definition.artifactType === 'schedule' ? { schedule: { template: scheduleTemplate, timezones: TIMEZONES, weekdays: WEEKDAYS, slotSteps: SLOT_STEPS } } : {}),
           ...(stageKey === 'build' ? { technology: (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'technologies' } }, select: { optionKey: true } }))?.optionKey ?? null } : {}),
         },
@@ -442,11 +444,14 @@ export class JourneyService {
     return tx.projectEvent.create({ data: { projectId, actorUserId: userId, type, stageKey, details: details as never } });
   }
 
-  private async techPlanFor(ctx: Parameters<JourneyService['acceptedInputs']>[0], key: StageKey, notes: string | null): Promise<TechPlan> {
+  private async techPlanFor(ctx: Parameters<JourneyService['acceptedInputs']>[0] & { type: { key: string } }, key: StageKey, notes: string | null): Promise<TechPlan> {
     const inputs = await this.acceptedInputs(ctx, key);
     const schedule = inputs.schedule?.content as Schedule | undefined;
-    if (!schedule) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
-    return buildTechPlan({ brief: (inputs.goal?.content as Brief | undefined) ?? null, offer: null, schedule }, notes);
+    if (ctx.route.includes('schedule') && !schedule) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+    return buildTechPlan({
+      projectType: ctx.type.key, brief: (inputs.goal?.content as Brief | undefined) ?? null, schedule: schedule ?? null,
+      process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
+    }, notes);
   }
 
   async saveDraft(userId: string, projectId: string, key: string, input: { content: unknown; baseVersionId: string | null }) {
@@ -539,6 +544,7 @@ export class JourneyService {
       let draft: unknown;
       if (stageKey === 'content') draft = templateContent(inputs.goal?.content as Brief ?? emptyBrief(), (inputs.offer?.content as Offer | undefined) ?? null);
       else if (stageKey === 'design') draft = defaultDesign;
+      else if (stageKey === 'process') draft = templateProcess(ctx.type.key, (inputs.goal?.content as Brief | undefined) ?? null);
       else throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
       const merged = normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, draft, stage.lockedKeys, null));
       const version = await this.prisma.$transaction(async (tx) => {
@@ -1360,8 +1366,8 @@ export class JourneyService {
     if (site) files.push({ name: 'site.html', mimeType: 'text/html', content: await this.inline(projectId, site.html) });
     const plan = get<TechPlan>('techplan');
     if (plan) {
-      files.push({ name: 'techplan.md', mimeType: 'text/markdown', content: techPlanMarkdown(plan) });
-      files.push({ name: 'booking-api.yaml', mimeType: 'text/yaml', content: plan.api || bookingApiContract() });
+      files.push({ name: 'architecture.md', mimeType: 'text/markdown', content: techPlanMarkdown(plan) });
+      if (plan.api || plan.kind !== 'site') files.push({ name: plan.kind === 'site' ? 'lead-api.yaml' : 'booking-api.yaml', mimeType: 'text/yaml', content: plan.api || bookingApiContract() });
     }
     files.push({
       name: 'project.json', mimeType: 'application/json',

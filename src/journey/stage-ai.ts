@@ -2,6 +2,7 @@
 import type { ArtifactType, StageDefinition } from './catalog.js';
 import { sectionTypes } from './artifacts.js';
 import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
+import { ACTOR_KINDS, CAPABILITIES } from './process.js';
 
 export interface StageAiRequest { system: string; user: string; schemaName: string; schema: Record<string, unknown> }
 export interface StageAiUsage { inputTokens: number | null; outputTokens: number | null }
@@ -67,6 +68,24 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
           corners: { type: 'string', enum: corners.map((item) => item.id) }, heroLayout: { type: 'string', enum: heroLayouts.map((item) => item.id) },
         },
       };
+    case 'process': {
+      const strings = { type: 'array', items: { type: 'string' } };
+      return {
+        type: 'object', additionalProperties: false, required: ['actors', 'scenarios', 'rules', 'data'],
+        properties: {
+          actors: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'name', 'kind'], properties: { key: { type: 'string' }, name: { type: 'string' }, kind: { type: 'string', enum: [...ACTOR_KINDS] } } } },
+          scenarios: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'title', 'goal', 'steps'], properties: {
+            key: { type: 'string' }, title: { type: 'string' }, goal: { type: 'string' },
+            steps: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'actor', 'action', 'capability'], properties: { key: { type: 'string' }, actor: { type: 'string' }, action: { type: 'string' }, capability: { type: 'string', enum: Object.keys(CAPABILITIES) } } } },
+          } } },
+          rules: strings,
+          data: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'name', 'fields', 'links'], properties: {
+            key: { type: 'string' }, name: { type: 'string' }, fields: strings,
+            links: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['to', 'kind', 'label'], properties: { to: { type: 'string' }, kind: { type: 'string', enum: ['one', 'many'] }, label: { type: 'string' } } } },
+          } } },
+        },
+      };
+    }
     default:
       throw new StageAiError('AI_NOT_SUPPORTED_FOR_STAGE');
   }
