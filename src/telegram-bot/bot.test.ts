@@ -39,3 +39,48 @@ describe('bot texts', () => {
     assert.ok(!errorText('SOMETHING_ELSE').includes('SOMETHING'));
   });
 });
+
+describe('Bot language', () => {
+  it('writes texts in the language it runs in', async () => {
+    const { runWithLocale } = await import('../i18n/i18n.js');
+    const { helpText } = await import('./bot-texts.js');
+    runWithLocale('en', () => {
+      assert.equal(errorText('STAGE_LOCKED'), 'The stage is still locked: the previous ones need to be accepted first.');
+      assert.ok(helpText().startsWith('I help you run BuildPath projects right in Telegram.'));
+      assert.ok(artifactSummary('brief', { businessName: 'Nails', whatYouDo: 'Manicure', audience: '', mainAction: 'form' }).includes('Main action: leave a request on the site'));
+      assert.equal(artifactSummary('site', { checks: [] }), 'All required checks passed.');
+    });
+    assert.equal(errorText('STAGE_LOCKED'), 'Этап ещё закрыт: сначала нужно принять предыдущие.');
+  });
+
+  it('answers in the account language, or in the Telegram app language before linking', async () => {
+    const http = await import('node:http');
+    const sent: string[] = [];
+    const server = http.createServer((request, response) => {
+      let body = '';
+      request.on('data', (chunk) => { body += chunk; });
+      request.on('end', () => { sent.push(JSON.parse(body || '{}').text ?? ''); response.setHeader('content-type', 'application/json'); response.end('{"ok":true}'); });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    Object.assign(process.env, { TELEGRAM_BOT_TOKEN: 'T', TELEGRAM_BOT_USERNAME: 'buildpath_bot', TELEGRAM_WEBHOOK_SECRET: 'S', TELEGRAM_API_BASE_URL: `http://127.0.0.1:${port}` });
+    try {
+      const { TelegramLinkService } = await import('../publishing/telegram-link.service.js');
+      let linked: unknown = null;
+      const prisma = { externalIdentity: { findUnique: async () => linked } };
+      const service = new TelegramLinkService(prisma as never, {} as never);
+      const message = (language: string) => ({ message: { text: 'hello', chat: { id: 1, type: 'private' }, from: { id: 2, language_code: language } } });
+      await service.handleUpdate('S', message('en'));
+      await service.handleUpdate('S', message('ru'));
+      // Linked, with outdated legal consent: the reply follows the account language, not the app language.
+      linked = { userId: 'u1', user: { locale: 'en', deletionRequestedAt: null, consents: [] } };
+      await service.handleUpdate('S', message('ru'));
+      assert.match(sent[0]!, /^This is the BuildPath bot\./);
+      assert.match(sent[1]!, /^Это бот BuildPath\./);
+      assert.match(sent[2]!, /^We have updated the terms/);
+    } finally {
+      server.close();
+      for (const key of ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME', 'TELEGRAM_WEBHOOK_SECRET', 'TELEGRAM_API_BASE_URL']) delete process.env[key];
+    }
+  });
+});

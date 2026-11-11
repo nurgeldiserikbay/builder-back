@@ -7,7 +7,7 @@ import {
   Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException,
 } from '@nestjs/common';
 import { WorktimeService } from './worktime.service.js';
-import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, type BookingConfig, type Schedule } from './schedule.js';
+import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, weekdayShort, type BookingConfig, type Schedule } from './schedule.js';
 import { CAPABILITIES, PROCESS_LIMITS, templateProcess, type BusinessProcess } from './process.js';
 import { TECHPLAN_VERSION, bookingApiContract, sameTechPlan, buildTechPlan, techPlanMarkdown, techPlanNotes, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
@@ -23,7 +23,7 @@ import {
 import { inlineImages } from '../images/image-processing.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderPages, renderSite, siteMeta, type ImageInfo } from './site-renderer.js';
 import { RESERVED_PATHS, SITEMAP_LIMITS, templateSitemap, type Sitemap } from './sitemap.js';
-import { CATALOG_LIMITS, templateCatalog, type Catalog } from './products.js';
+import { CATALOG_LIMITS, templateCatalog, tenge, type Catalog } from './products.js';
 import { describeChanges } from './change-summary.js';
 import { costOf } from '../budget/budget.js';
 import { StageAiError, buildStagePrompt, configuredStageProvider, type StageAiProvider } from './stage-ai.js';
@@ -1362,42 +1362,60 @@ export class JourneyService {
     const site = get<SiteArtifact>('build');
     const openItems = stages.filter((stage) => !stage.accepted).map((stage) => `Этап «${stage.title}» не принят (${stage.statusLabel.toLowerCase()}).`);
     const technology = (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'technologies' } }, select: { optionKey: true, reason: true } }));
-    const technologyLabel: Record<string, string> = { buildpath: 'технологии BuildPath', developer: 'свой стек у разработчика', constructor: 'конструктор сайтов' };
-    const lines: string[] = [`# ${ctx.project.name}`, '', `Тип проекта: ${ctx.type.title}`, `Сформировано: ${new Date().toISOString()}`];
-    if (technology) lines.push(`Технологии: ${technologyLabel[technology.optionKey] ?? technology.optionKey}${technology.reason ? ` — ${technology.reason}` : ''}`);
-    lines.push('');
-    for (const stage of stages) lines.push(`- ${stage.title}: ${stage.accepted ? `принят, версия ${stage.accepted.versionNumber}` : stage.statusLabel.toLowerCase()}`);
-    if (brief) {
-      lines.push('', '## Паспорт проекта', '', `- Название: ${brief.businessName}`, `- Чем занимаемся: ${brief.whatYouDo}`, `- Клиенты: ${brief.audience}`);
-      if (brief.city) lines.push(`- Город: ${brief.city}`);
-      for (const [label, value] of [['Телефон', brief.phone], ['Мессенджер', brief.messenger], ['Email', brief.email], ['Адрес', brief.address]] as const) if (value) lines.push(`- ${label}: ${value}`);
-    }
-    if (offer) {
-      lines.push('', '## Услуги', '');
-      for (const service of offer.services) lines.push(`- ${service.name}${service.price ? ` — ${service.price}` : ''}${service.description ? `. ${service.description}` : ''}`);
-      if (offer.hours) lines.push('', `Часы работы: ${offer.hours}`);
-    }
-    const schedule = get<Schedule>('schedule');
-    if (schedule) {
-      lines.push('', '## Расписание и запись', '', `Часовой пояс: ${schedule.timezone}. Шаг времени: ${schedule.rules.slotStep} мин. Запись не позже чем за ${schedule.rules.minNoticeHours} ч, на ${schedule.rules.horizonDays} дн. вперёд; отмена клиентом — не позже чем за ${schedule.rules.cancelHours} ч.`, '');
-      for (const service of schedule.services) lines.push(`- ${service.name}: ${service.minutes} мин`);
-      for (const master of schedule.masters) {
-        const days = master.week.map((day, index) => (day ? `${WEEKDAYS[index]} ${day.from}–${day.to}` : null)).filter(Boolean).join(', ');
-        lines.push(`- Мастер ${master.name}: ${master.services.length ? master.services.join(', ') : 'все услуги'}; ${days || 'нет рабочих дней'}`);
+    const stagesInfo = stages;
+    // project.md is a project file: written in the project's language, with stage names translated.
+    const projectMarkdown = (): string => {
+      const stages = stagesInfo.map((stage) => ({ ...stage, title: tr(stage.title), statusLabel: tr(stage.statusLabel) }));
+      const openItems = stages.filter((stage) => !stage.accepted).map((stage) => tr('Этап «{0}» не принят ({1}).', [stage.title, stage.statusLabel.toLowerCase()]));
+      const technologyLabel: Record<string, string> = { buildpath: tr("технологии BuildPath"), developer: tr("свой стек у разработчика"), constructor: tr("конструктор сайтов") };
+      const lines: string[] = [`# ${ctx.project.name}`, '', tr("Тип проекта: {0}", [tr(ctx.type.title)]), tr("Сформировано: {0}", [new Date().toISOString()])];
+      if (technology) lines.push(tr("Технологии: {0}{1}", [technologyLabel[technology.optionKey] ?? technology.optionKey, technology.reason ? ` — ${technology.reason}` : '']));
+      lines.push('');
+      for (const stage of stages) lines.push(`- ${stage.title}: ${stage.accepted ? tr("принят, версия {0}", [stage.accepted.versionNumber]) : stage.statusLabel.toLowerCase()}`);
+      if (brief) {
+        lines.push('', tr("## Паспорт проекта"), '', tr("- Название: {0}", [brief.businessName]), tr("- Чем занимаемся: {0}", [brief.whatYouDo]), tr("- Клиенты: {0}", [brief.audience]));
+        if (brief.city) lines.push(tr("- Город: {0}", [brief.city]));
+        for (const [label, value] of [[tr("Телефон"), brief.phone], [tr("Мессенджер"), brief.messenger], ['Email', brief.email], [tr("Адрес"), brief.address]] as const) if (value) lines.push(`- ${label}: ${value}`);
       }
-    }
-    if (content) {
-      lines.push('', '## Тексты сайта', '', `Заголовок для поиска: ${content.seo.title}`, `Описание для поиска: ${content.seo.description}`);
-      for (const section of content.sections) {
-        lines.push('', `### ${section.title || sectionTypeLabels[section.type]}`, '');
-        if (section.text) lines.push(section.text);
-        for (const item of section.items) lines.push(`- ${item.title}${item.text ? ` — ${item.text}` : ''}`);
-        if (section.buttonLabel) lines.push(`[Кнопка: ${section.buttonLabel}]`);
+      if (offer) {
+        lines.push('', tr("## Услуги"), '');
+        for (const service of offer.services) lines.push(`- ${service.name}${service.price ? ` — ${service.price}` : ''}${service.description ? `. ${service.description}` : ''}`);
+        if (offer.hours) lines.push('', tr("Часы работы: {0}", [offer.hours]));
       }
-    }
-    if (openItems.length) lines.push('', '## Что ещё не сделано', '', ...openItems.map((item) => `- ${item}`));
-    if (site?.meta?.hasForm) lines.push('', '> Форма заявки работает, когда сайт опубликован на BuildPath. На другом хостинге форму нужно подключить к своему обработчику.');
-    const files = [{ name: 'project.md', mimeType: 'text/markdown', content: `${lines.join('\n')}\n` }];
+      const schedule = get<Schedule>('schedule');
+      if (schedule) {
+        lines.push('', tr("## Расписание и запись"), '', tr("Часовой пояс: {0}. Шаг времени: {1} мин. Запись не позже чем за {2} ч, на {3} дн. вперёд; отмена клиентом — не позже чем за {4} ч.", [schedule.timezone, schedule.rules.slotStep, schedule.rules.minNoticeHours, schedule.rules.horizonDays, schedule.rules.cancelHours]), '');
+        for (const service of schedule.services) lines.push(tr("- {0}: {1} мин", [service.name, service.minutes]));
+        for (const master of schedule.masters) {
+          const days = master.week.map((day, index) => (day ? `${weekdayShort(index)} ${day.from}–${day.to}` : null)).filter(Boolean).join(', ');
+          lines.push(tr("- Мастер {0}: {1}; {2}", [master.name, master.services.length ? master.services.join(', ') : tr("все услуги"), days || tr("нет рабочих дней")]));
+        }
+      }
+      const map = get<Sitemap>('sitemap');
+      if (map) {
+        lines.push('', tr('## Карта сайта'), '');
+        for (const page of map.pages) lines.push(`- \`${page.path}\` — ${page.title}${page.purpose ? `: ${page.purpose}` : ''}`);
+      }
+      const store = get<Catalog>('products');
+      if (store) {
+        lines.push('', tr('## Каталог товаров'), '');
+        for (const product of store.products) lines.push(`- ${product.name} — ${tenge(product.price)}${product.unit ? ` / ${product.unit}` : ''}${product.available ? '' : ` (${tr('нет в наличии')})`}`);
+        lines.push('', tr('Получение: {0}', [store.delivery.map((option) => `${option.title} — ${option.price ? tenge(option.price) : tr('бесплатно')}`).join('; ')]));
+      }
+      if (content) {
+        lines.push('', tr("## Тексты сайта"), '', tr("Заголовок для поиска: {0}", [content.seo.title]), tr("Описание для поиска: {0}", [content.seo.description]));
+        for (const section of content.sections) {
+          lines.push('', `### ${section.title || tr(sectionTypeLabels[section.type])}`, '');
+          if (section.text) lines.push(section.text);
+          for (const item of section.items) lines.push(`- ${item.title}${item.text ? ` — ${item.text}` : ''}`);
+          if (section.buttonLabel) lines.push(tr("[Кнопка: {0}]", [section.buttonLabel]));
+        }
+      }
+      if (openItems.length) lines.push('', tr("## Что ещё не сделано"), '', ...openItems.map((item) => `- ${item}`));
+      if (site?.meta?.hasForm) lines.push('', tr("> Форма заявки работает, когда сайт опубликован на BuildPath. На другом хостинге форму нужно подключить к своему обработчику."));
+      return `${lines.join('\n')}\n`;
+    };
+    const files = [{ name: 'project.md', mimeType: 'text/markdown', content: inProject(ctx, projectMarkdown) }];
     if (site) files.push({ name: 'site.html', mimeType: 'text/html', content: await this.inline(projectId, site.html) });
     // Other pages of a multi-page site, laid out as on a static host: /services → pages/services/index.html.
     for (const page of site?.pages ?? []) if (page.path !== '/') files.push({ name: `pages${page.path}/index.html`, mimeType: 'text/html', content: await this.inline(projectId, page.html) });

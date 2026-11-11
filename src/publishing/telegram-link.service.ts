@@ -4,14 +4,15 @@ import { PrismaService } from '../database/prisma.service.js';
 import { answerCallbackQuery, sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
 import { TelegramBotService } from '../telegram-bot/bot.service.js';
 import { consentIsCurrent } from '../auth/auth.service.js';
+import { contentLocale, localeFromHeader, runWithLocale, tr } from '../i18n/i18n.js';
 
-const CONSENT_TEXT = 'Мы обновили оферту и политику конфиденциальности. Откройте BuildPath и примите новую редакцию — после этого бот снова заработает.';
+const consentText = () => tr('Мы обновили оферту и политику конфиденциальности. Откройте BuildPath и примите новую редакцию — после этого бот снова заработает.');
 
 const CODE_TTL_MS = 15 * 60 * 1000;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
-type TelegramMessage = { text?: unknown; voice?: unknown; audio?: unknown; chat?: { id?: unknown; type?: unknown }; from?: { id?: unknown; username?: unknown } };
-type TelegramUpdate = { message?: TelegramMessage; callback_query?: { id?: unknown; data?: unknown; from?: { id?: unknown }; message?: { chat?: { id?: unknown; type?: unknown } } } };
+type TelegramMessage = { text?: unknown; voice?: unknown; audio?: unknown; chat?: { id?: unknown; type?: unknown }; from?: { id?: unknown; username?: unknown; language_code?: unknown } };
+type TelegramUpdate = { message?: TelegramMessage; callback_query?: { id?: unknown; data?: unknown; from?: { id?: unknown; language_code?: unknown }; message?: { chat?: { id?: unknown; type?: unknown } } } };
 const idOf = (value: unknown) => (typeof value === 'number' || typeof value === 'string' ? String(value) : null);
 
 @Injectable()
@@ -52,6 +53,18 @@ export class TelegramLinkService {
 
   /** Telegram webhook. Unknown or malformed updates are acknowledged and ignored. */
   async handleUpdate(secretHeader: string | undefined, update: unknown): Promise<boolean> {
+    return runWithLocale(await this.localeOf(update), () => this.handleUpdateIn(secretHeader, update));
+  }
+
+  /** Replies go in the linked account's language; before linking — in the language of the person's Telegram app. */
+  private async localeOf(update: unknown) {
+    const from = (update as TelegramUpdate)?.callback_query?.from ?? (update as TelegramUpdate)?.message?.from;
+    const id = idOf(from?.id);
+    const row = id ? await this.prisma.externalIdentity.findUnique({ where: { provider_externalId: { provider: 'telegram', externalId: id } }, select: { user: { select: { locale: true } } } }) : null;
+    return row ? contentLocale(row.user.locale) : localeFromHeader(typeof from?.language_code === 'string' ? from.language_code : null);
+  }
+
+  private async handleUpdateIn(secretHeader: string | undefined, update: unknown): Promise<boolean> {
     const config = telegramConfig();
     if (!config?.webhookSecret) return false;
     const expected = Buffer.from(config.webhookSecret);
@@ -65,11 +78,11 @@ export class TelegramLinkService {
       if (!callbackId || !fromId || !chat || callback.message?.chat?.type !== 'private' || typeof callback.data !== 'string' || callback.data.length > 64) return true;
       const identity = await this.identity(fromId);
       if (!identity) {
-        await answerCallbackQuery(config, callbackId, 'Telegram не подключён к BuildPath');
+        await answerCallbackQuery(config, callbackId, tr("Telegram не подключён к BuildPath"));
         return true;
       }
       if (!identity.consentCurrent) {
-        await answerCallbackQuery(config, callbackId, CONSENT_TEXT.slice(0, 190));
+        await answerCallbackQuery(config, callbackId, consentText().slice(0, 190));
         return true;
       }
       // Answer Telegram immediately; AI work can take longer than the webhook timeout.
@@ -97,19 +110,19 @@ export class TelegramLinkService {
         return true;
       });
       await reply(linked
-        ? 'Готово! Telegram привязан к вашему аккаунту BuildPath. Сюда будут приходить заявки с сайтов и уведомления о приёмке этапов. Наберите /projects, чтобы работать с проектами. Отключить: /stop'
-        : 'Ссылка устарела или уже использована. Откройте BuildPath и нажмите «Подключить Telegram» ещё раз.');
+        ? tr("Готово! Telegram привязан к вашему аккаунту BuildPath. Сюда будут приходить заявки с сайтов и уведомления о приёмке этапов. Наберите /projects, чтобы работать с проектами. Отключить: /stop")
+        : tr("Ссылка устарела или уже использована. Откройте BuildPath и нажмите «Подключить Telegram» ещё раз."));
       return true;
     }
     if (/^\/stop(?:@\w+)?$/.test(text)) {
       const deleted = await this.prisma.externalIdentity.deleteMany({ where: { provider: 'telegram', externalId: String(fromId) } });
       await this.prisma.telegramChatState.deleteMany({ where: { chatId: String(chatId) } });
-      await reply(deleted.count ? 'Telegram отключён от BuildPath. Заявки сюда больше не придут.' : 'Этот Telegram не привязан к BuildPath.');
+      await reply(deleted.count ? tr("Telegram отключён от BuildPath. Заявки сюда больше не придут.") : tr("Этот Telegram не привязан к BuildPath."));
       return true;
     }
     const identity = await this.identity(String(fromId));
     if (identity && !identity.consentCurrent) {
-      await reply(CONSENT_TEXT);
+      await reply(consentText());
       return true;
     }
     if (identity) {
@@ -117,7 +130,7 @@ export class TelegramLinkService {
       void this.bot.onMessage(identity.userId, String(chatId), typeof message.text === 'string' ? message.text : null, kind).catch(() => undefined);
       return true;
     }
-    await reply('Это бот BuildPath. Здесь можно вести проекты и получать заявки с сайтов. Чтобы подключиться, откройте проект в BuildPath и нажмите «Подключить Telegram».');
+    await reply(tr("Это бот BuildPath. Здесь можно вести проекты и получать заявки с сайтов. Чтобы подключиться, откройте проект в BuildPath и нажмите «Подключить Telegram»."));
     return true;
   }
 }

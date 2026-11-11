@@ -1,4 +1,4 @@
-import { tr } from '../i18n/i18n.js';
+import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 
@@ -296,6 +296,15 @@ export class ChoicesService {
 
   /** Files that a push would send: only accepted results, the same as the downloadable package. */
   private async files(userId: string, projectId: string): Promise<{ files: GitFile[]; siteIncluded: boolean; complete: boolean }> {
+    return runWithLocale(await this.projectLocale(projectId), () => this.repositoryFiles(userId, projectId));
+  }
+
+  /** README and instructions are project files: in the project's language. */
+  private async projectLocale(projectId: string) {
+    return contentLocale((await this.prisma.project.findUnique({ where: { id: projectId }, select: { locale: true } }))?.locale);
+  }
+
+  private async repositoryFiles(userId: string, projectId: string): Promise<{ files: GitFile[]; siteIncluded: boolean; complete: boolean }> {
     const result = (await this.journey.result(userId, projectId)).data as { complete: boolean; files: Array<{ name: string; content: string }> };
     const pick = (name: string) => result.files.find((file) => file.name === name)?.content;
     const files: GitFile[] = [];
@@ -305,10 +314,10 @@ export class ChoicesService {
     const md = pick('project.md'); if (md) files.push({ path: 'project.md', content: md });
     const json = pick('project.json'); if (json) files.push({ path: 'project.json', content: json });
     files.push({ path: 'README.md', content: [
-      '# Сайт, созданный в BuildPath', '',
-      site ? '- `index.html` — готовая страница сайта. Её можно открыть в браузере или загрузить на любой хостинг статических сайтов.' : '- Сайт ещё не собран: здесь только описание проекта.',
-      '- `project.md` — паспорт проекта и все тексты.', '- `project.json` — все данные проекта для разработчика или переноса.', '',
-      'Файлы обновляются из BuildPath по кнопке «Отправить в репозиторий». Ручные изменения в этих файлах будут заменены при следующей отправке.', '',
+      tr("# Сайт, созданный в BuildPath"), '',
+      site ? tr("- `index.html` — готовая страница сайта. Её можно открыть в браузере или загрузить на любой хостинг статических сайтов.") : tr("- Сайт ещё не собран: здесь только описание проекта."),
+      tr("- `project.md` — паспорт проекта и все тексты."), tr("- `project.json` — все данные проекта для разработчика или переноса."), '',
+      tr("Файлы обновляются из BuildPath по кнопке «Отправить в репозиторий». Ручные изменения в этих файлах будут заменены при следующей отправке."), '',
     ].join('\n') });
     return { files, siteIncluded: Boolean(site), complete: result.complete };
   }
@@ -419,6 +428,11 @@ export class ChoicesService {
   /** Files for an own server: the accepted page, a Caddy config with automatic HTTPS, a compose file and plain instructions. */
   async serverPackage(userId: string, projectId: string) {
     await this.access(userId, projectId, true);
+    return runWithLocale(await this.projectLocale(projectId), () => this.serverPackageIn(userId, projectId));
+  }
+
+  private async serverPackageIn(userId: string, projectId: string) {
+    await this.access(userId, projectId, true);
     const result = (await this.journey.result(userId, projectId)).data as { files: Array<{ name: string; content: string }> };
     const site = result.files.find((file) => file.name === 'site.html')?.content;
     if (!site) throw new ConflictException('SITE_NOT_ACCEPTED');
@@ -432,18 +446,18 @@ export class ChoicesService {
       try { bundle = await bookingBundle(); } catch { throw new ServiceUnavailableException('EXPORT_NOT_BUILT'); }
       return { data: { folder: 'buildpath-site', kind: 'booking_app', files: bookingPackageFiles(artifact, bundle) } };
     }
-    const caddy = ['# Замените ВАШ-ДОМЕН.kz на свой домен. Caddy сам получит HTTPS-сертификат.', 'ВАШ-ДОМЕН.kz {', '\troot * /srv', '\tfile_server', '\tencode gzip', '\theader {', '\t\tX-Content-Type-Options nosniff', '\t\tReferrer-Policy strict-origin-when-cross-origin', '\t}', '}', ''].join('\n');
+    const caddy = [tr("# Замените ВАШ-ДОМЕН.kz на свой домен. Caddy сам получит HTTPS-сертификат."), tr("ВАШ-ДОМЕН.kz {"), '\troot * /srv', '\tfile_server', '\tencode gzip', '\theader {', '\t\tX-Content-Type-Options nosniff', '\t\tReferrer-Policy strict-origin-when-cross-origin', '\t}', '}', ''].join('\n');
     const compose = ['services:', '  site:', '    image: caddy:2', '    restart: unless-stopped', '    ports: ["80:80", "443:443"]', '    volumes:', '      - ./Caddyfile:/etc/caddy/Caddyfile:ro', '      - ./site:/srv:ro', '      - caddy_data:/data', 'volumes:', '  caddy_data: {}', ''].join('\n');
     const readme = [
-      '# Как запустить сайт на своём сервере', '',
-      'Нужно: сервер с Ubuntu 24.04 и домен, направленный на IP сервера (запись A).', '',
-      '1. В файле `Caddyfile` замените `ВАШ-ДОМЕН.kz` на свой домен.',
-      '2. Скопируйте папку с файлами на сервер, например так (на своём компьютере): `scp -r buildpath-site root@IP-СЕРВЕРА:/opt/`',
-      '3. Подключитесь к серверу: `ssh root@IP-СЕРВЕРА` и выполните:', '',
+      tr("# Как запустить сайт на своём сервере"), '',
+      tr("Нужно: сервер с Ubuntu 24.04 и домен, направленный на IP сервера (запись A)."), '',
+      tr("1. В файле `Caddyfile` замените `ВАШ-ДОМЕН.kz` на свой домен."),
+      tr("2. Скопируйте папку с файлами на сервер, например так (на своём компьютере): `scp -r buildpath-site root@IP-СЕРВЕРА:/opt/`"),
+      tr("3. Подключитесь к серверу: `ssh root@IP-СЕРВЕРА` и выполните:"), '',
       '```', 'curl -fsSL https://get.docker.com | sh', 'cd /opt/buildpath-site', 'docker compose up -d', '```', '',
-      '4. Через минуту откройте свой домен в браузере. Вернитесь в BuildPath и нажмите «Проверить адрес».', '',
-      'Обновить сайт: замените файлы в папке `site` новыми из BuildPath — перезапускать ничего не нужно.', '',
-      'Форма заявок BuildPath на своём сервере не работает: на сайте останутся кнопки звонка и мессенджера.', '',
+      tr("4. Через минуту откройте свой домен в браузере. Вернитесь в BuildPath и нажмите «Проверить адрес»."), '',
+      tr("Обновить сайт: замените файлы в папке `site` новыми из BuildPath — перезапускать ничего не нужно."), '',
+      tr("Форма заявок BuildPath на своём сервере не работает: на сайте останутся кнопки звонка и мессенджера."), '',
     ].join('\n');
     return {
       data: {
