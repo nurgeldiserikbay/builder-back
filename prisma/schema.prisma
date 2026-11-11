@@ -313,6 +313,7 @@ model Project {
   images           ProjectImage[]
   leads            SiteLead[]
   bookings         Booking[]
+  masterAccesses   MasterAccess[]
   changeNotices    ChangeNotice[]
   choices          ProjectChoice[]
   repository       CodeRepository?
@@ -1397,3 +1398,25 @@ model PayoutDetails {
   @@map("payout_details")
 }
 
+/// A master of the booking schedule who sees only their own bookings. Invited by e-mail; the link works only for that address.
+model MasterAccess {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String    @map("project_id") @db.Uuid
+  /// Key of the master in the accepted schedule (m1, m2 …).
+  masterKey       String    @map("master_key") @db.VarChar(12)
+  email           String    @db.VarChar(254)
+  userId          String?   @map("user_id") @db.Uuid
+  /// invited | active | revoked
+  status          String    @default("invited") @db.VarChar(10)
+  inviteTokenHash String    @unique(map: "master_accesses_invite_token_hash_key") @map("invite_token_hash") @db.VarChar(64)
+  inviteExpiresAt DateTime  @map("invite_expires_at") @db.Timestamptz(3)
+  invitedByUserId String    @map("invited_by_user_id") @db.Uuid
+  acceptedAt      DateTime? @map("accepted_at") @db.Timestamptz(3)
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, masterKey], map: "master_accesses_project_master_idx")
+  @@index([userId], map: "master_accesses_user_idx")
+  @@map("master_accesses")
+}

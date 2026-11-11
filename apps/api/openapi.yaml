@@ -1638,6 +1638,107 @@ paths:
         '200': { description: Bookings list }
         '400': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/masters:
+    get:
+      tags: [Publishing]
+      operationId: listMasters
+      summary: Masters of the published booking schedule and their access (owner or manager)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'published, masters (key, name, access null or id, email, status invited|active, expired, acceptedAt)' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/masters/{masterKey}/invite:
+    post:
+      tags: [Publishing]
+      operationId: inviteMaster
+      summary: Invite a master by e-mail to see only their own bookings
+      description: "Replaces an unanswered invitation for the same master; refused with MASTER_ALREADY_CONNECTED while one is active. The link works 7 days and only for this address."
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: masterKey, in: path, required: true, schema: { type: string, pattern: '^[a-z0-9]{2,12}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [email], properties: { email: { type: string, maxLength: 254 } } }
+      responses:
+        '200': { description: 'accessId, inviteUrl, emailSent' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/masters/access/{accessId}:
+    delete:
+      tags: [Publishing]
+      operationId: revokeMasterAccess
+      summary: Close a master's access or withdraw the invitation
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: accessId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Masters list }
+        '404': { $ref: '#/components/responses/Problem' }
+  /master-invites/{token}:
+    get:
+      tags: [Publishing]
+      operationId: getMasterInvite
+      summary: What a master invitation gives (public)
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'projectName, invitedBy, masterName, email (masked), status, expired' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /master-invites/{token}/accept:
+    post:
+      tags: [Publishing]
+      operationId: acceptMasterInvite
+      summary: Accept a master invitation with the invited e-mail
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: ok }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '410': { $ref: '#/components/responses/Problem' }
+  /me/master-bookings:
+    get:
+      tags: [Publishing]
+      operationId: listMyMasterBookings
+      summary: The signed-in master's own bookings in every place, from 12 hours ago to 30 days ahead
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'places (accessId, projectId, placeName, masterName, archived, bookings)' }
+  /me/master-bookings/{bookingId}/status:
+    post:
+      tags: [Publishing]
+      operationId: markMasterVisit
+      summary: The master marks whether the client came (after the start; cancelling stays with the owner)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: bookingId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [status], properties: { status: { type: string, enum: [done, no_show] } } }
+      responses:
+        '200': { description: The master's bookings }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /me/payout-details:
     get:
       tags: [Billing]
