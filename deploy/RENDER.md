@@ -27,6 +27,16 @@ means booking reminders and lead cleanup run only while it is awake. Switch it t
 - **Online payments.** `PAYMENTS_PROVIDER=mock` is ignored in production mode; balance top-ups are unavailable here.
 - **Backups beyond Render's own daily snapshots.**
 
+## When it deploys
+
+Only by hand, for larger changes. Pull requests get no previews, and pushes to `main` do not deploy
+(`autoDeployTrigger: off`). To update: merge into `main`, then press **Manual Deploy → Deploy latest commit** on the
+service (or ask Claude to start the deploy). A builder-back change needs two deploys (`buildpath-api`, `buildpath-sites`).
+
+The Hobby workspace includes 500 build minutes a month ($5 per extra 1000); set the pipeline spend limit to $0 in
+Workspace Settings → Build Pipeline so builds stop instead of being billed. Create the Blueprint with auto-sync off,
+so edits to `render.yaml` are applied only when approved.
+
 ## Before creating
 
 1. Merge the open pull requests into `main` in builder-back, builder-front and builder-admin: services deploy from `main`.

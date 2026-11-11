@@ -3,6 +3,7 @@
 # How to create it, what each value means and the monthly cost: deploy/RENDER.md.
 #
 # Paid: api (Starter), app (Starter), database (Basic-256mb). Free and sleeping when idle: admin, sites.
+# Nothing deploys on its own: no PR previews, no deploy on every push to main. Deploys are started by hand.
 # Values marked "sync: false" are asked for once when the Blueprint is created; nothing secret is stored here.
 
 envVarGroups:
@@ -46,6 +47,7 @@ services:
     runtime: docker
     repo: https://github.com/nurgeldiserikbay/builder-back
     branch: main
+    autoDeployTrigger: "off" # deploy by hand for larger changes (deploy/RENDER.md)
     region: frankfurt
     plan: starter
     dockerfilePath: ./Dockerfile
@@ -74,6 +76,7 @@ services:
     runtime: docker
     repo: https://github.com/nurgeldiserikbay/builder-front
     branch: main
+    autoDeployTrigger: "off" # deploy by hand for larger changes (deploy/RENDER.md)
     region: frankfurt
     plan: starter
     dockerfilePath: ./Dockerfile
@@ -94,6 +97,7 @@ services:
     runtime: docker
     repo: https://github.com/nurgeldiserikbay/builder-admin
     branch: main
+    autoDeployTrigger: "off" # deploy by hand for larger changes (deploy/RENDER.md)
     region: frankfurt
     plan: free
     dockerfilePath: ./Dockerfile
@@ -114,6 +118,7 @@ services:
     runtime: docker
     repo: https://github.com/nurgeldiserikbay/builder-back
     branch: main
+    autoDeployTrigger: "off" # deploy by hand for larger changes (deploy/RENDER.md)
     region: frankfurt
     plan: free
     dockerfilePath: ./Dockerfile
