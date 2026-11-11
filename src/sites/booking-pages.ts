@@ -82,7 +82,7 @@ export function timesPage(meta: SiteMeta, config: BookingConfig, query: { servic
 <h2 id="times">${escapeHtml(dayLabel(day))}</h2><ul class="times">${timeLinks}</ul><a class="back" href="${back}">← Назад</a>`);
 }
 
-export function confirmPage(meta: SiteMeta, config: BookingConfig, query: { service: number; master: string; start: Date }, error: string | null = null, values: Partial<Record<'name' | 'phone' | 'comment', string>> = {}): string {
+export function confirmPage(meta: SiteMeta, config: BookingConfig, query: { service: number; master: string; start: Date }, error: string | null = null, values: Partial<Record<'name' | 'phone' | 'comment' | 'email', string>> = {}, askEmail = false): string {
   const service = config.schedule.services[query.service]!;
   const masterName = query.master === 'any' ? 'любой свободный мастер' : config.schedule.masters.find((master) => master.key === query.master)?.name ?? '';
   const tz = config.schedule.timezone;
@@ -92,6 +92,7 @@ ${error ? `<p role="alert"><strong>${escapeHtml(error)}</strong></p>` : ''}
 <form method="post" action="${BOOKING_FORM_PATH}"><input type="hidden" name="s" value="${query.service}"><input type="hidden" name="m" value="${escapeHtml(query.master)}"><input type="hidden" name="t" value="${query.start.toISOString()}">
 <label>Ваше имя<input name="name" required maxlength="80" autocomplete="name" value="${escapeHtml(values.name ?? '')}"></label>
 <label>Телефон<input name="phone" required maxlength="30" inputmode="tel" autocomplete="tel" placeholder="+7 700 000 00 00" value="${escapeHtml(values.phone ?? '')}"></label>
+${askEmail ? `<label>Почта для напоминания (необязательно)<input name="email" type="email" maxlength="254" autocomplete="email" inputmode="email" value="${escapeHtml(values.email ?? '')}"><small>Пришлём одно письмо перед визитом и удалим адрес.</small></label>` : ''}
 <label>Комментарий (необязательно)<textarea name="comment" maxlength="300">${escapeHtml(values.comment ?? '')}</textarea></label>
 <div class="hp" aria-hidden="true"><label>Сайт<input name="website" tabindex="-1" autocomplete="off"></label></div>
 <label class="consent"><input type="checkbox" name="consent" value="yes" required><span>Согласен(на) на обработку моих данных для записи. <a href="/privacy">Как используются данные</a></span></label>
@@ -112,14 +113,14 @@ export function bookingPage(meta: SiteMeta, booking: BookingView, token: string,
 ${justCreated && booking.status === 'booked' ? '<p><strong>Сохраните эту страницу в закладки</strong> — по ней можно посмотреть или отменить запись.</p>' : ''}${cancel}<a class="back" href="/">← На сайт</a>`);
 }
 
-export interface BookingForm { service: number; master: string; start: Date; name: string; phone: string; comment: string | null }
+export interface BookingForm { service: number; master: string; start: Date; name: string; phone: string; comment: string | null; email: string | null }
 
 /** Validates the urlencoded booking form; spam (honeypot) is reported separately so the bot sees a normal answer. */
-export function parseBookingForm(raw: string): { ok: true; form: BookingForm } | { ok: false; spam: boolean; error: string; values: Partial<Record<'name' | 'phone' | 'comment', string>>; query: BookingQuery } {
+export function parseBookingForm(raw: string): { ok: true; form: BookingForm } | { ok: false; spam: boolean; error: string; values: Partial<Record<'name' | 'phone' | 'comment' | 'email', string>>; query: BookingQuery } {
   const form = new URLSearchParams(raw);
   const clean = (value: string | null) => (value ?? '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '').trim();
   const query = parseQuery(new URL(`http://x/book?${new URLSearchParams({ s: form.get('s') ?? '', m: form.get('m') ?? '', t: form.get('t') ?? '' })}`));
-  const values = { name: clean(form.get('name')), phone: clean(form.get('phone')), comment: clean(form.get('comment')) };
+  const values = { name: clean(form.get('name')), phone: clean(form.get('phone')), comment: clean(form.get('comment')), email: clean(form.get('email')) };
   const fail = (error: string) => ({ ok: false as const, spam: false, error, values, query });
   if (clean(form.get('website'))) return { ok: false, spam: true, error: '', values, query };
   if (query.service === null || !query.master || !query.start) return fail('Выберите услугу и время заново.');
@@ -128,5 +129,7 @@ export function parseBookingForm(raw: string): { ok: true; form: BookingForm } |
   const digits = values.phone.replace(/[\s()-]/g, '');
   if (!/^\+?\d{10,15}$/.test(digits)) return fail('Укажите телефон полностью, например +7 700 000 00 00.');
   if (values.comment.length > 300) return fail('Комментарий слишком длинный — до 300 символов.');
-  return { ok: true, form: { service: query.service, master: query.master, start: query.start, name: values.name, phone: values.phone, comment: values.comment || null } };
+  const email = values.email.toLowerCase();
+  if (email && (email.length > 254 || !/^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/.test(email))) return fail('Проверьте почту — например, name@mail.kz. Или оставьте поле пустым.');
+  return { ok: true, form: { service: query.service, master: query.master, start: query.start, name: values.name, phone: values.phone, comment: values.comment || null, email: email || null } };
 }

@@ -1307,6 +1307,14 @@ model Booking {
   clientName     String          @map("client_name") @db.VarChar(80)
   clientPhone    String          @map("client_phone") @db.VarChar(30)
   comment        String?         @db.VarChar(300)
+  /// Only for the reminder; erased once the reminder is sent, failed or no longer needed.
+  clientEmail    String?         @map("client_email") @db.VarChar(254)
+  /// When the e-mail reminder is due; null when there is none.
+  reminderAt     DateTime?       @map("reminder_at") @db.Timestamptz(3)
+  /// pending | sending | sent | failed | skipped
+  reminderStatus String?         @map("reminder_status") @db.VarChar(10)
+  /// The cancel link token sealed with the platform key, so the reminder can carry the link; erased with the e-mail.
+  cancelLinkSealed String?       @map("cancel_link_sealed") @db.Text
   /// booked | cancelled_by_client | cancelled_by_owner | done | no_show
   status         String          @default("booked") @db.VarChar(20)
   /// SHA-256 of the client's cancel link token; the token itself is only in the link.
@@ -1321,6 +1329,7 @@ model Booking {
 
   @@index([publicationId, masterKey, startsAt], map: "bookings_publication_master_start_idx")
   @@index([projectId, startsAt], map: "bookings_project_start_idx")
+  @@index([reminderStatus, reminderAt], map: "bookings_reminder_due_idx")
   @@map("bookings")
 }
 
