@@ -6,7 +6,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { ReviewTargetPolicyError, resolveAndValidateReviewTarget } from '../reviews/url-target-policy.js';
-import { choiceCards, recommend, type CardKey, githubOauthSteps } from './cards.js';
+import { choiceCards, recommend, technologiesCard, type CardKey, githubOauthSteps } from './cards.js';
 import { domainTarget } from '../publishing/domain.js';
 import { checkSite } from './site-check.js';
 import { GITHUB_SCOPES, authorizeUrl, createRepo, exchangeCode, githubOauthConfig, githubUser, writableRepos, type GithubOauthConfig } from './github-oauth.js';
@@ -83,7 +83,7 @@ export class ChoicesService {
       data: {
         card: cardKey === 'code_hosting' && githubOauthConfig() && this.key()
           ? { ...choiceCards[cardKey], options: choiceCards[cardKey].options.map((option) => (option.key === 'github' ? { ...option, steps: githubOauthSteps } : option)) }
-          : choiceCards[cardKey],
+          : cardKey === 'technologies' ? technologiesCard(access.projectType) : choiceCards[cardKey],
         recommendation: recommend(cardKey, access),
         choice: choice ? { optionKey: choice.optionKey, reason: choice.reason, stepsDone: choice.stepsDone, chosenAt: choice.chosenAt, cardVersion: choice.cardVersion, verification: choice.verification ?? null } : null,
         available: met,

@@ -1391,7 +1391,7 @@ paths:
       security: [{ sessionCookie: [] }]
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting, deployment, domain] } }
+        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting, deployment, domain, technologies] } }
       responses:
         '200': { description: 'card, recommendation (optionKey, reason), choice (optionKey, reason, stepsDone, chosenAt, cardVersion) or null, repository (no token, only tokenHint) or null, canDecide, connectAvailable' }
         '404': { $ref: '#/components/responses/Problem' }
@@ -1403,7 +1403,7 @@ paths:
       security: [{ sessionCookie: [] }]
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
-        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting, deployment, domain] } }
+        - { name: cardKey, in: path, required: true, schema: { type: string, enum: [code_hosting, deployment, domain, technologies] } }
       requestBody:
         required: true
         content:

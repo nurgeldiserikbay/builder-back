@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { checkSite, compareSite } from './site-check.js';
-import { choiceCards, recommend } from './cards.js';
+import { choiceCards, recommend, technologiesCard } from './cards.js';
 
 const page = (title: string, body: string) => `<!doctype html><html><head><title>${title}</title></head><body>${body}</body></html>`;
 
@@ -46,5 +46,21 @@ describe('Domain card', () => {
     assert.deepEqual([own.requires?.card, own.requires?.option], ['deployment', 'buildpath']);
     assert.ok(own.steps.some((step) => step.kind === 'domain'));
     assert.ok(own.limits.some((line) => line.includes('.kz')), 'explains the Kazakhstan hosting rule');
+  });
+});
+
+describe('Technologies card', () => {
+  it('recommends what BuildPath generates and is honest about other stacks', () => {
+    assert.equal(recommend('technologies', { hasSpecialists: true }).optionKey, 'buildpath');
+    const keys = choiceCards.technologies.options.map((option) => option.key);
+    assert.deepEqual(keys, ['buildpath', 'developer', 'constructor']);
+    const developer = choiceCards.technologies.options.find((option) => option.key === 'developer')!;
+    assert.ok(developer.limits.some((line) => line.includes('не пишет код')));
+  });
+  it('describes the booking app for booking projects', () => {
+    const booking = technologiesCard('booking').options.find((option) => option.key === 'buildpath')!;
+    assert.match(booking.summary, /Node\.js/);
+    assert.doesNotMatch(technologiesCard('landing').options[0]!.summary, /Node\.js/);
+    assert.equal(choiceCards.technologies.options[0]!.summary.includes('Node.js'), false, 'base card is not changed');
   });
 });
