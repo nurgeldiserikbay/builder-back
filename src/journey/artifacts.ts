@@ -6,6 +6,7 @@ import type { ArtifactType } from './catalog.js';
 import { normalizeSchedule, scheduleIssues, type BookingConfig, type Schedule } from './schedule.js';
 import { normalizeTechPlan } from './techplan.js';
 import { normalizeProcess, processIssues, type BusinessProcess } from './process.js';
+import { normalizeSitemap, sitemapIssues, type Sitemap } from './sitemap.js';
 
 export type MainAction = 'call' | 'message' | 'visit' | 'email' | 'form';
 export type Tone = 'friendly' | 'formal' | 'bold';
@@ -19,8 +20,11 @@ export interface Offer { services: OfferService[]; hours: string | null }
 export const sectionTypes = ['hero', 'about', 'services', 'benefits', 'steps', 'faq', 'contacts', 'cta'] as const;
 export type SectionType = (typeof sectionTypes)[number];
 export interface ContentItem { title: string; text: string }
-export interface ContentSection { key: string; type: SectionType; title: string; text: string; items: ContentItem[]; buttonLabel: string | null; imageId: string | null }
-export interface ContentArtifact { sections: ContentSection[]; seo: { title: string; description: string } }
+/** page: key of the «Карта сайта» page the block is on (multi-page sites only; absent means the single page). */
+export interface ContentSection { key: string; type: SectionType; title: string; text: string; items: ContentItem[]; buttonLabel: string | null; imageId: string | null; page?: string }
+export interface PageSeo { page: string; title: string; description: string }
+/** seo is for the home page; pageSeo holds the other pages of a multi-page site. */
+export interface ContentArtifact { sections: ContentSection[]; seo: { title: string; description: string }; pageSeo?: PageSeo[] }
 export interface DesignArtifact { palette: string; font: string; corners: 'rounded' | 'sharp'; heroLayout: 'centered' | 'left' }
 export interface SiteMeta {
   businessName: string; locale: string; hasForm: boolean;
@@ -33,6 +37,8 @@ export interface SiteArtifact {
   html: string;
   /** Present for builds made after forms/publication were added (catalog 1.1.0). */
   meta?: SiteMeta;
+  /** Multi-page sites: every page, «/» first; html is the home page. */
+  pages?: Array<{ path: string; title: string; html: string }>;
   checks: Array<{ id: string; status: 'passed' | 'warning' | 'failed'; title: string; details: string; required: boolean }>;
   sourceVersionIds: Record<string, string>;
   compiledAt: string;
@@ -124,7 +130,9 @@ export function contentImageIds(content: unknown): string[] {
 
 export function normalizeContent(raw: unknown): ContentArtifact {
   if (!isRecord(raw) || !Array.isArray(raw.sections) || !isRecord(raw.seo)) throw new ArtifactValidationError('ARTIFACT_INVALID');
-  if (raw.sections.length < 1 || raw.sections.length > 12) throw new ArtifactValidationError('FIELD_COUNT:sections');
+  const paged = raw.sections.some((section) => isRecord(section) && typeof section.page === 'string' && section.page !== '');
+  // A multi-page site has up to 12 blocks per page and 7 pages.
+  if (raw.sections.length < 1 || raw.sections.length > (paged ? 60 : 12)) throw new ArtifactValidationError('FIELD_COUNT:sections');
   const keys = new Set<string>();
   const sections = raw.sections.map((section, index) => {
     if (!isRecord(section)) throw new ArtifactValidationError(`FIELD_INVALID:sections.${index}`);
@@ -144,11 +152,22 @@ export function normalizeContent(raw: unknown): ContentArtifact {
       }),
       buttonLabel: str(section.buttonLabel, `sections.${index}.buttonLabel`, 40, false),
       imageId: imageIdOf(section.imageId, `sections.${index}.imageId`),
+      ...(paged ? { page: typeof section.page === 'string' && /^[a-z][a-z0-9-]{0,23}$/.test(section.page) ? section.page : 'home' } : {}),
     };
   });
+  if (paged) {
+    const perPage = new Map<string, number>();
+    for (const section of sections) perPage.set(section.page!, (perPage.get(section.page!) ?? 0) + 1);
+    if ([...perPage.values()].some((count) => count > 12)) throw new ArtifactValidationError('FIELD_COUNT:sections');
+  }
+  const pageSeo = paged && Array.isArray(raw.pageSeo) ? raw.pageSeo.slice(0, 7).flatMap((item, index) => {
+    if (!isRecord(item) || typeof item.page !== 'string' || !/^[a-z][a-z0-9-]{0,23}$/.test(item.page)) return [];
+    return [{ page: item.page, title: str(item.title, `pageSeo.${index}.title`, 70, false) ?? '', description: str(item.description, `pageSeo.${index}.description`, 160, false) ?? '' }];
+  }).filter((item, index, list) => list.findIndex((other) => other.page === item.page) === index) : [];
   return {
     sections,
     seo: { title: str(raw.seo.title, 'seo.title', 70, false) ?? '', description: str(raw.seo.description, 'seo.description', 160, false) ?? '' },
+    ...(paged ? { pageSeo } : {}),
   };
 }
 
@@ -171,19 +190,21 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown): unknown {
     case 'schedule': return normalizeSchedule(raw);
     case 'techplan': return normalizeTechPlan(raw);
     case 'process': return normalizeProcess(raw);
+    case 'sitemap': return normalizeSitemap(raw);
     default: throw new ArtifactValidationError('ARTIFACT_NOT_EDITABLE');
   }
 }
 
 /** Keys that can be locked against AI rewrites: brief/offer/design fields or content section keys. */
 export function lockableKeys(type: ArtifactType, content: unknown): string[] {
-  if (type === 'content') return (content as ContentArtifact).sections.map((section) => section.key).concat('seo');
+  if (type === 'content') return (content as ContentArtifact).sections.map((section) => section.key).concat('seo', ...((content as ContentArtifact).pageSeo ? ['pageSeo'] : []));
   if (type === 'brief') return ['businessName', 'whatYouDo', 'audience', 'city', 'mainAction', 'phone', 'messenger', 'email', 'address', 'tone'];
   if (type === 'offer') return ['services', 'hours'];
   if (type === 'design') return ['palette', 'font', 'corners', 'heroLayout'];
   if (type === 'schedule') return ['timezone', 'services', 'masters', 'rules'];
   if (type === 'techplan') return ['ownerNotes'];
   if (type === 'process') return ['actors', 'scenarios', 'rules', 'data'];
+  if (type === 'sitemap') return ['pages'];
   return [];
 }
 
@@ -191,7 +212,7 @@ function valueAt(type: ArtifactType, content: unknown, key: string): unknown {
   if (!content) return undefined;
   if (type === 'content') {
     const artifact = content as ContentArtifact;
-    return key === 'seo' ? artifact.seo : artifact.sections.find((section) => section.key === key);
+    return key === 'seo' ? artifact.seo : key === 'pageSeo' ? artifact.pageSeo : artifact.sections.find((section) => section.key === key);
   }
   return (content as Record<string, unknown>)[key];
 }
@@ -221,10 +242,10 @@ export function mergeProposal(type: ArtifactType, base: unknown | null, proposal
     const next = proposal as ContentArtifact;
     const photoOf = (key: string) => baseContent.sections.find((section) => section.key === key)?.imageId ?? null;
     if (targetKey) {
-      if (targetKey === 'seo') return { ...baseContent, seo: next.seo };
+      if (targetKey === 'seo') return { ...baseContent, seo: next.seo, ...(next.pageSeo ? { pageSeo: next.pageSeo } : {}) };
       const replacement = next.sections.find((section) => section.key === targetKey) ?? next.sections[0];
       if (!replacement) return baseContent;
-      return { ...baseContent, sections: baseContent.sections.map((section) => (section.key === targetKey ? { ...replacement, key: targetKey, imageId: replacement.imageId ?? section.imageId ?? null } : section)) };
+      return { ...baseContent, sections: baseContent.sections.map((section) => (section.key === targetKey ? { ...replacement, key: targetKey, imageId: replacement.imageId ?? section.imageId ?? null, ...(section.page ? { page: section.page } : {}) } : section)) };
     }
     const proposedByKey = new Map(next.sections.map((section) => [section.key, section]));
     const sections: ContentSection[] = [];
@@ -236,7 +257,8 @@ export function mergeProposal(type: ArtifactType, base: unknown | null, proposal
     for (const section of baseContent.sections) {
       if (keep.has(section.key) && !proposedByKey.has(section.key)) sections.push(section);
     }
-    return { sections: sections.slice(0, 12), seo: keep.has('seo') ? baseContent.seo : next.seo };
+    const pageSeo = keep.has('pageSeo') ? baseContent.pageSeo : next.pageSeo ?? baseContent.pageSeo;
+    return { sections: sections.slice(0, sections.some((section) => section.page) ? 60 : 12), seo: keep.has('seo') ? baseContent.seo : next.seo, ...(pageSeo ? { pageSeo } : {}) };
   }
   const baseRecord = base as Record<string, unknown>;
   const nextRecord = proposal as Record<string, unknown>;
@@ -251,7 +273,8 @@ export function mergeProposal(type: ArtifactType, base: unknown | null, proposal
 
 export interface CompletenessIssue { key: string; message: string }
 
-export function completenessIssues(type: ArtifactType, content: unknown): CompletenessIssue[] {
+/** context.sitemap: the accepted «Карта сайта», so texts of a multi-page site are checked page by page. */
+export function completenessIssues(type: ArtifactType, content: unknown, context: { sitemap?: Sitemap | null } = {}): CompletenessIssue[] {
   const issues: CompletenessIssue[] = [];
   if (type === 'brief') {
     const brief = content as Brief;
@@ -267,10 +290,12 @@ export function completenessIssues(type: ArtifactType, content: unknown): Comple
   }
   if (type === 'schedule') issues.push(...scheduleIssues(content as Schedule));
   if (type === 'process') issues.push(...processIssues(content as BusinessProcess));
+  if (type === 'sitemap') issues.push(...sitemapIssues(content as Sitemap));
   if (type === 'offer' && (content as Offer).services.length === 0) issues.push({ key: 'services', message: 'Добавьте хотя бы одну услугу.' });
   if (type === 'content') {
     const artifact = content as ContentArtifact;
-    if (!artifact.sections.some((section) => section.type === 'hero')) issues.push({ key: 'sections', message: 'Добавьте первый экран.' });
+    if (context.sitemap) issues.push(...pageIssues(artifact, context.sitemap));
+    else if (!artifact.sections.some((section) => section.type === 'hero')) issues.push({ key: 'sections', message: 'Добавьте первый экран.' });
     if (!artifact.sections.some((section) => section.type === 'contacts')) issues.push({ key: 'sections', message: 'Добавьте блок контактов.' });
     artifact.sections.forEach((section) => { if (!section.title) issues.push({ key: section.key, message: tr("У блока «{0}» нет заголовка.", [sectionTypeLabels[section.type]]) }); });
     if (!artifact.seo.title) issues.push({ key: 'seo', message: 'Добавьте заголовок для поисковиков.' });
@@ -280,6 +305,21 @@ export function completenessIssues(type: ArtifactType, content: unknown): Comple
       }
     }
   }
+  return issues;
+}
+
+/** Texts of a multi-page site follow the map: every page has blocks, the home page starts with the first screen, no block is on an unknown page. */
+export function pageIssues(content: ContentArtifact, sitemap: Sitemap): CompletenessIssue[] {
+  const issues: CompletenessIssue[] = [];
+  const known = new Set(sitemap.pages.map((page) => page.key));
+  for (const page of sitemap.pages) {
+    const blocks = content.sections.filter((section) => (section.page ?? 'home') === page.key);
+    if (!blocks.length) issues.push({ key: page.key, message: tr('На странице «{0}» нет блоков.', [page.title]) });
+    else if (page.path === '/' && blocks[0]!.type !== 'hero') issues.push({ key: page.key, message: tr('Главная страница должна начинаться с первого экрана.') });
+    const seo = page.path === '/' ? content.seo : content.pageSeo?.find((item) => item.page === page.key);
+    if (page.path !== '/' && !seo?.title) issues.push({ key: 'pageSeo', message: tr('Добавьте заголовок для поисковиков странице «{0}».', [page.title]) });
+  }
+  for (const section of content.sections) if (!known.has(section.page ?? 'home')) issues.push({ key: section.key, message: tr('Блок «{0}» стоит на странице, которой нет в карте сайта.', [section.title || sectionTypeLabels[section.type]]) });
   return issues;
 }
 
@@ -297,7 +337,8 @@ function firstSentence(text: string, max: number): string {
 }
 
 /** Deterministic content draft used when no AI provider is configured. Missing facts become visible placeholders. */
-export function templateContent(brief: Brief, offer: Offer | null): ContentArtifact {
+export function templateContent(brief: Brief, offer: Offer | null, sitemap: Sitemap | null = null): ContentArtifact {
+  if (sitemap) return templatePages(brief, offer, sitemap);
   const button = actionButton[brief.mainAction ?? 'message']();
   const place = brief.city ? tr(" в {0}", [brief.city]) : '';
   const sections: ContentSection[] = [
@@ -331,20 +372,50 @@ export function templateContent(brief: Brief, offer: Offer | null): ContentArtif
   };
 }
 
+/** A multi-page draft: the blocks of every page in the order the map lists them, plus a search title and description per page. */
+function templatePages(brief: Brief, offer: Offer | null, sitemap: Sitemap): ContentArtifact {
+  const single = templateContent(brief, offer);
+  const button = actionButton[brief.mainAction ?? 'message']();
+  const pick = (type: SectionType): Omit<ContentSection, 'key'> => {
+    const found = single.sections.find((section) => section.type === type);
+    if (found) return found;
+    if (type === 'services') return { type, title: tr('Услуги'), text: '', items: [1, 2, 3].map((number) => ({ title: tr('[укажите услугу {0}]', [number]), text: '' })), buttonLabel: null, imageId: null };
+    if (type === 'benefits') return { type, title: tr('Почему выбирают нас'), text: '', items: [1, 2, 3].map((number) => ({ title: tr('[укажите преимущество {0}]', [number]), text: '' })), buttonLabel: null, imageId: null };
+    if (type === 'faq') return { type, title: tr('Частые вопросы'), text: '', items: [1, 2, 3].map((number) => ({ title: tr('[укажите вопрос {0}]', [number]), text: tr('[добавьте ответ]') })), buttonLabel: null, imageId: null };
+    return { type: 'cta', title: tr('Готовы начать?'), text: tr('Свяжитесь с нами — ответим и подскажем, с чего начать.'), items: [], buttonLabel: button, imageId: null };
+  };
+  const sections: ContentSection[] = sitemap.pages.flatMap((page) => page.sections.map((type) => ({ ...pick(type), key: `${page.key}-${type}`.slice(0, 40), page: page.key })));
+  const name = brief.businessName || tr('[укажите название]');
+  return {
+    sections,
+    seo: single.seo,
+    pageSeo: sitemap.pages.filter((page) => page.path !== '/').map((page) => ({ page: page.key, title: `${page.title} — ${name}`.slice(0, 70), description: firstSentence(page.purpose || page.title, 160) })),
+  };
+}
+
 /** Import pasted text: blocks separated by blank lines; first line of a block is its title. */
-export function importContentText(text: string): ContentArtifact {
-  const blocks = text.replace(/\r/g, '').split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean).slice(0, 12);
+/**
+ * Multi-page sites (sitemap given): blocks go to the current page; a block whose title is a page's menu name
+ * («Услуги», «Контакты») starts that page. The first block is the home page's first screen.
+ */
+export function importContentText(text: string, sitemap: Sitemap | null = null): ContentArtifact {
+  const blocks = text.replace(/\r/g, '').split(/\n\s*\n/).map((block) => block.trim()).filter(Boolean).slice(0, sitemap ? 40 : 12);
   if (!blocks.length) throw new ArtifactValidationError('IMPORT_EMPTY');
+  let page = 'home';
+  const pageByTitle = new Map((sitemap?.pages ?? []).map((item) => [item.title.trim().toLowerCase(), item.key]));
   const sections: ContentSection[] = blocks.map((block, index) => {
     const [first, ...rest] = block.split('\n');
     const lower = first.toLowerCase();
+    if (sitemap && index > 0 && pageByTitle.has(lower.trim())) page = pageByTitle.get(lower.trim())!;
     const type: SectionType = index === 0 ? 'hero' : /контакт|связ|адрес|contact|reach|address|find us/.test(lower) ? 'contacts' : /вопрос|question|faq/.test(lower) ? 'faq' : /услуг|цен|service|price/.test(lower) ? 'services' : /как.*работ|этап|how .*work|step/.test(lower) ? 'steps' : 'about';
-    return { key: index === 0 ? 'hero' : `block-${index + 1}`, type, title: first.slice(0, 120), text: rest.join('\n').slice(0, 1200), items: [], buttonLabel: index === 0 ? tr("Связаться") : null, imageId: null };
+    return { key: index === 0 ? 'hero' : `block-${index + 1}`, type, title: first.slice(0, 120), text: rest.join('\n').slice(0, 1200), items: [], buttonLabel: index === 0 ? tr("Связаться") : null, imageId: null, ...(sitemap ? { page } : {}) };
   });
   if (!sections.some((section) => section.type === 'contacts')) {
-    sections.push({ key: 'contacts', type: 'contacts', title: tr("Контакты"), text: '', items: [], buttonLabel: tr("Связаться"), imageId: null });
+    const contactsPage = sitemap?.pages.find((item) => item.sections.includes('contacts'))?.key ?? 'home';
+    sections.push({ key: 'contacts', type: 'contacts', title: tr("Контакты"), text: '', items: [], buttonLabel: tr("Связаться"), imageId: null, ...(sitemap ? { page: contactsPage } : {}) });
   }
-  return normalizeContent({ sections, seo: { title: sections[0].title.slice(0, 70), description: firstSentence(sections[0].text || sections[0].title, 160) } });
+  const pageSeo = sitemap?.pages.filter((item) => item.path !== '/').map((item) => ({ page: item.key, title: `${item.title} — ${sections[0]!.title}`.slice(0, 70), description: firstSentence(item.purpose || item.title, 160) }));
+  return normalizeContent({ sections, seo: { title: sections[0].title.slice(0, 70), description: firstSentence(sections[0].text || sections[0].title, 160) }, ...(pageSeo ? { pageSeo } : {}) });
 }
 
 /** Import an offer list: one service per line, optional "— price" suffix. */

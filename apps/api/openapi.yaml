@@ -2388,6 +2388,11 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ProjectId'
         - $ref: '#/components/parameters/OptionalVersionId'
+        - name: page
+          in: query
+          required: false
+          description: 'Multi-page sites: path of the page to render, for example /services. The home page when omitted or unknown.'
+          schema: { type: string, pattern: '^/[a-z0-9-]{0,30}$' }
       responses:
         '200':
           description: OK
@@ -3608,7 +3613,7 @@ components:
       in: path
       name: stageKey
       required: true
-      schema: { type: string, enum: [goal, process, offer, schedule, techplan, content, design, build] }
+      schema: { type: string, enum: [goal, process, offer, schedule, sitemap, techplan, content, design, build] }
     RuleId:
       in: path
       name: ruleId
@@ -4692,7 +4697,7 @@ components:
         locale: { type: string, enum: [en, ru, kk] }
         projectType:
           type: string
-          enum: [landing, company_site]
+          enum: [landing, company_site, multipage, booking]
           description: Creates the stage route from the versioned journey catalog and makes the project active.
         startStageKey:
           type: string
@@ -4710,7 +4715,7 @@ components:
         startMode: { type: string, enum: [build, improve, design_implementation, analysis_only] }
         status: { type: string, enum: [draft, active, paused, completed, archived, live] }
         locale: { type: string, enum: [en, ru, kk] }
-        projectType: { type: [string, 'null'], enum: [landing, company_site, null] }
+        projectType: { type: [string, 'null'], enum: [landing, company_site, multipage, booking, null] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     ProjectResponse:
@@ -4913,7 +4918,7 @@ components:
                 type: object
                 required: [key, title, description, stages]
                 properties:
-                  key: { type: string, enum: [landing, company_site] }
+                  key: { type: string, enum: [landing, company_site, multipage, booking] }
                   title: { type: string }
                   description: { type: string }
                   goodFor: { type: string }
@@ -5176,6 +5181,13 @@ components:
             html: { type: string, description: Self-contained HTML without scripts; render it in a sandboxed iframe. }
             draft: { type: boolean }
             versionNumber: { type: [integer, 'null'] }
+            pages:
+              type: array
+              description: 'Pages of a multi-page site in menu order; empty for a single-page site.'
+              items:
+                type: object
+                required: [path, title]
+                properties: { path: { type: string }, title: { type: string } }
     ResultResponse:
       type: object
       required: [data]

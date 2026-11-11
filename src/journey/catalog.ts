@@ -1,12 +1,12 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.4.0';
+export const ROUTE_CATALOG_VERSION = '1.5.0';
 
-export type StageKey = 'goal' | 'process' | 'offer' | 'schedule' | 'techplan' | 'content' | 'design' | 'build';
-export type ArtifactType = 'brief' | 'process' | 'offer' | 'schedule' | 'techplan' | 'content' | 'design' | 'site';
+export type StageKey = 'goal' | 'process' | 'offer' | 'schedule' | 'sitemap' | 'techplan' | 'content' | 'design' | 'build';
+export type ArtifactType = 'brief' | 'process' | 'offer' | 'schedule' | 'sitemap' | 'techplan' | 'content' | 'design' | 'site';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
-export type ProjectTypeKey = 'landing' | 'company_site' | 'booking';
+export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'booking';
 
 export interface FieldOption { value: string; label: string; hint: string }
 
@@ -190,6 +190,32 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     importHint: null,
     playbook: { version: '1.0.0', instructions: [] },
   },
+  sitemap: {
+    key: 'sitemap',
+    version: '1.0.0',
+    title: 'Карта сайта',
+    purpose: 'Решим, из каких страниц состоит сайт: что будет в меню, по какому адресу каждая страница и зачем она посетителю. Схема покажет, как страницы связаны и какие блоки на каждой.',
+    outcome: 'Список страниц с адресом, названием в меню, задачей и блоками; схема сайта.',
+    artifactType: 'sitemap',
+    inputs: ['goal', 'offer'],
+    ai: {
+      level: 'ai_full',
+      whatItDoes: 'ИИ предложит страницы по паспорту проекта и услугам. Уберите лишние, добавьте свои и выберите блоки для каждой страницы.',
+      instructionExamples: ['Добавь страницу с примерами работ', 'Сделай отдельную страницу для каждой услуги', 'Объедини «О нас» и «Вопросы»'],
+    },
+    acceptance: ['В меню только нужные страницы', 'У каждой страницы понятная задача', 'Контакты есть хотя бы на одной странице'],
+    acceptExplanation: 'Тексты будут писаться по страницам этой карты, а сборка сделает по странице на каждую строку. Если карту изменить, тексты и архитектура получат уведомление.',
+    importHint: null,
+    contract: { explanation: 'Карта сайта — договорённость о страницах. Тексты, архитектура и сборка строятся по ней; когда карта меняется, они получают уведомление и показывают, что поменялось.' },
+    playbook: {
+      version: '1.0.0',
+      instructions: [
+        'Propose 3–6 pages for this business; the first page is the home page with path «/».',
+        'Each page: a short menu title (1–2 words), a path in Latin letters like /services, one sentence on what the visitor gets there, and 1–5 block types from the list.',
+        'The home page starts with «hero». Put «contacts» on a contacts page or on the home page. Do not create pages the business has nothing for (no reviews, portfolio or blog unless the inputs mention them).',
+      ],
+    },
+  },
   techplan: {
     key: 'techplan',
     version: '1.0.0',
@@ -197,7 +223,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     purpose: 'Покажем, как будет устроено то, что мы соберём: из чего состоит система, какие данные хранятся, как идёт каждый сценарий по шагам и какие шаги вашего процесса сделает сайт. Для разработчиков здесь же — точное описание (контракт API).',
     outcome: 'Схема данных, сценарии по шагам, что покрывает сайт из вашего процесса, страницы, ограничения и контракт API.',
     artifactType: 'techplan',
-    inputs: ['goal', 'process', 'schedule'],
+    inputs: ['goal', 'process', 'schedule', 'sitemap'],
     ai: {
       level: 'none',
       whatItDoes: 'Архитектуру составляет платформа по принятым этапам, без ИИ: так она всегда совпадает с тем, что будет собрано. Вы можете добавить заметки для разработчиков.',
@@ -224,15 +250,16 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     },
     acceptance: ['Есть первый экран с главной кнопкой', 'Есть блок с контактами', 'Нет незаполненных мест в квадратных скобках', 'Тексты не обещают того, чего вы не делаете'],
     acceptExplanation: 'Принятые тексты пойдут в сборку сайта. Блоки, которые вы правили руками, ИИ без вашей просьбы не перепишет.',
-    importHint: 'Если тексты уже готовы, вставьте их: каждый блок начните с заголовка на отдельной строке, между блоками — пустая строка.',
+    importHint: 'Если тексты уже готовы, вставьте их: каждый блок начните с заголовка на отдельной строке, между блоками — пустая строка. На многостраничном сайте блок с заголовком, как у страницы в меню («Услуги», «Контакты»), начинает эту страницу.',
     playbook: {
       version: '1.0.0',
       instructions: [
         'Write for the audience from the brief, in the brief tone, in the project language.',
-        'Structure: hero with the main action button first, contacts last; 4–7 sections in total.',
+        'Single-page site: hero with the main action button first, contacts last; 4–7 sections in total.',
         'Do not invent testimonials, numbers of clients, years of experience, awards, prices or guarantees not present in the inputs.',
         'Hero text up to 2 sentences; section text up to 4 sentences; list items up to 2 sentences.',
-        'Use square-bracket placeholders like [укажите ...] only when a needed fact is missing, so the owner sees what to add.',
+        'Use square-bracket placeholders like [укажите ...] (Russian) or [add ...] (English) only when a needed fact is missing, so the owner sees what to add.',
+        'If the confirmed inputs contain a sitemap: write the blocks of every page in map order, with the block types the map lists for it, and set page to the page key (the home page is «home»); 4–7 blocks on the home page, 1–5 on the others; fill pageSeo for every page except home. Otherwise set page to null and return an empty pageSeo.',
       ],
     },
   },
@@ -266,7 +293,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     outcome: 'Готовая страница сайта, отчёт проверок и файлы для скачивания.',
     artifactType: 'site',
     // schedule exists only on the online booking route; inputs are limited to the stages of the route.
-    inputs: ['content', 'design', 'schedule', 'techplan'],
+    inputs: ['content', 'design', 'schedule', 'techplan', 'sitemap'],
     ai: {
       level: 'none',
       whatItDoes: 'Сборку делает платформа по правилам, без ИИ: так результат всегда одинаковый и проверяемый.',
@@ -298,6 +325,15 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     stages: ['goal', 'process', 'offer', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница компании в виде файла, список услуг и все тексты проекта.',
   },
+  multipage: {
+    key: 'multipage',
+    title: 'Многостраничный сайт',
+    description: 'Несколько страниц с меню: главная, услуги, о вас, вопросы, контакты — у каждой свой адрес и своё описание для поисковиков.',
+    goodFor: 'Компаниям с несколькими направлениями услуг, клиникам, школам, сервисам, которым тесно на одной странице.',
+    examples: ['Стоматология', 'Языковая школа', 'Ремонт квартир', 'Юридическая фирма'],
+    stages: ['goal', 'process', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
+    resultExplanation: 'Опубликованный сайт из нескольких страниц с меню, файлы всех страниц, карта сайта и все тексты проекта.',
+  },
   booking: {
     key: 'booking',
     title: 'Онлайн-запись к мастеру',
@@ -318,6 +354,8 @@ export function routeInputs(route: StageKey[], key: StageKey): StageKey[] {
   const own = stageDefinitions[key].inputs.filter((input) => route.includes(input));
   // Content of a company site also depends on the offer stage.
   if (key === 'content' && route.includes('offer')) own.push('offer');
+  // Texts of a multi-page site are written page by page from the map.
+  if (key === 'content' && route.includes('sitemap')) own.push('sitemap');
   return own;
 }
 

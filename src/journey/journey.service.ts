@@ -21,7 +21,8 @@ import {
   contentImageIds, type Brief, type ContentArtifact, type DesignArtifact, type Offer, type SiteArtifact,
 } from './artifacts.js';
 import { inlineImages } from '../images/image-processing.js';
-import { checkSite, corners, fonts, heroLayouts, palettes, renderSite, siteMeta, type ImageInfo } from './site-renderer.js';
+import { checkSite, corners, fonts, heroLayouts, palettes, renderPages, renderSite, siteMeta, type ImageInfo } from './site-renderer.js';
+import { RESERVED_PATHS, SITEMAP_LIMITS, templateSitemap, type Sitemap } from './sitemap.js';
 import { describeChanges } from './change-summary.js';
 import { costOf } from '../budget/budget.js';
 import { StageAiError, buildStagePrompt, configuredStageProvider, type StageAiProvider } from './stage-ai.js';
@@ -189,6 +190,12 @@ export class JourneyService {
     if (pinned) return pinned;
     const stage = this.stageOf(ctx, input);
     return isSatisfied(ctx.dep[input]) ? stage.approvedVersionId : null;
+  }
+
+  /** Accepted inputs a completeness check needs: texts of a multi-page site are checked against the accepted map. */
+  private async checkContext(ctx: Parameters<JourneyService['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null }> {
+    if (key !== 'content' || !ctx.route.includes('sitemap')) return { sitemap: null };
+    return { sitemap: ((await this.acceptedInputs(ctx, key)).sitemap?.content as Sitemap | undefined) ?? null };
   }
 
   private async acceptedInputs(ctx: { route: StageKey[]; stages: StageRow[]; dep: StatusMap; pins: Map<StageKey, Map<StageKey, string>> }, key: StageKey) {
@@ -391,7 +398,7 @@ export class JourneyService {
           id: current.id, versionNumber: current.versionNumber, origin: current.origin, note: current.note, createdAt: current.createdAt,
           content: site ? { checks: site.checks, compiledAt: site.compiledAt, sourceVersionIds: site.sourceVersionIds } : current.content,
         } : null,
-        issues: current && definition.artifactType !== 'site' ? completenessIssues(definition.artifactType, current.content) : [],
+        issues: current && definition.artifactType !== 'site' ? completenessIssues(definition.artifactType, current.content, await this.checkContext(ctx, stageKey)) : [],
         versions: versions.map((version) => {
           const run = runs.find((item) => item.id === version.generationRunId);
           return {
@@ -406,12 +413,14 @@ export class JourneyService {
           configured: Boolean(ai), remainingToday: ai ? await this.remainingAiRuns(projectId) : 0,
           budget: assignment ? { limit: assignment.aiBudget, used: assignment.aiUsed } : null,
           month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null,
-          templateAvailable: !ai && (stageKey === 'content' || stageKey === 'design' || stageKey === 'process'),
+          templateAvailable: !ai && (stageKey === 'content' || stageKey === 'design' || stageKey === 'process' || stageKey === 'sitemap'),
         },
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
           ...(definition.artifactType === 'techplan' ? { techplan: { preview: techPlanPreview, outdated: techPlanOutdated } } : {}),
           ...(definition.artifactType === 'process' ? { process: { capabilities: CAPABILITIES, actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS } } : {}),
+          ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
+          ...(stageKey === 'content' && ctx.route.includes('sitemap') ? { pages: (await this.checkContext(ctx, stageKey)).sitemap?.pages ?? null } : {}),
           ...(definition.artifactType === 'schedule' ? { schedule: { template: scheduleTemplate, timezones: TIMEZONES, weekdays: WEEKDAYS, slotSteps: SLOT_STEPS } } : {}),
           ...(stageKey === 'build' ? { technology: (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'technologies' } }, select: { optionKey: true } }))?.optionKey ?? null } : {}),
         },
@@ -454,7 +463,7 @@ export class JourneyService {
     // Built in the project's language, so every viewer gets the same plan whatever their interface language.
     return inProject(ctx, () => buildTechPlan({
       projectType: ctx.type.key, brief: (inputs.goal?.content as Brief | undefined) ?? null, schedule: schedule ?? null,
-      process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
+      process: (inputs.process?.content as BusinessProcess | undefined) ?? null, sitemap: (inputs.sitemap?.content as Sitemap | undefined) ?? null,
     }, notes));
   }
 
@@ -546,7 +555,8 @@ export class JourneyService {
       // Without AI the platform still offers a deterministic draft for stages that have one; instructions need AI.
       if (input.instruction || input.targetKey) throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
       let draft: unknown;
-      if (stageKey === 'content') draft = inProject(ctx, () => templateContent(inputs.goal?.content as Brief ?? emptyBrief(), (inputs.offer?.content as Offer | undefined) ?? null));
+      if (stageKey === 'content') draft = inProject(ctx, () => templateContent(inputs.goal?.content as Brief ?? emptyBrief(), (inputs.offer?.content as Offer | undefined) ?? null, (inputs.sitemap?.content as Sitemap | undefined) ?? null));
+      else if (stageKey === 'sitemap') draft = inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null));
       else if (stageKey === 'design') draft = defaultDesign;
       else if (stageKey === 'process') draft = inProject(ctx, () => templateProcess(ctx.type.key, (inputs.goal?.content as Brief | undefined) ?? null));
       else throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
@@ -772,9 +782,10 @@ export class JourneyService {
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     let content: unknown;
     try {
-      content = inProject(ctx, () => (definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : importContentText(text)));
+      const { sitemap } = await this.checkContext(ctx, stageKey);
+      content = inProject(ctx, () => (definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : importContentText(text, sitemap)));
     } catch (error) { validationError(error); }
-    const issues = completenessIssues(definition.artifactType, content);
+    const issues = completenessIssues(definition.artifactType, content, await this.checkContext(ctx, stageKey));
     // Imported material counts as accepted only when it is complete, its own inputs are accepted and the person importing
     // may accept stages. A specialist's import is a draft like any other: the owner accepts it, and that is when they are paid.
     const complete = issues.length === 0 && inputsSatisfied(ctx.route, ctx.dep, stageKey) && ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role);
@@ -799,7 +810,11 @@ export class JourneyService {
     if (this.waitingBranches(ctx, 'build').length) throw new ConflictException('BRANCHES_NOT_ALIGNED');
     const sources = await this.renderSources(ctx, true);
     const renderInput = { ...sources.input, draft: false };
-    const site: SiteArtifact = { html: renderSite(renderInput), meta: siteMeta(renderInput), checks: checkSite(renderInput), sourceVersionIds: sources.versionIds, compiledAt: new Date().toISOString() };
+    const pages = renderPages(renderInput);
+    const site: SiteArtifact = {
+      html: pages[0]!.html, ...(renderInput.sitemap ? { pages } : {}), meta: siteMeta(renderInput), checks: checkSite(renderInput),
+      sourceVersionIds: sources.versionIds, compiledAt: new Date().toISOString(),
+    };
     const version = await this.prisma.$transaction(async (tx) => {
       const created = await this.createVersion(tx, { projectId, stage, artifactType: 'site', content: site, origin: 'compiled', note: 'Сборка из принятых этапов', userId });
       await this.event(tx, projectId, userId, 'site_built', 'build', { versionNumber: created.versionNumber, failed: site.checks.filter((check) => check.status === 'failed').map((check) => check.id) });
@@ -839,7 +854,8 @@ export class JourneyService {
       const id = useDraft ? stage.currentVersionId ?? stage.approvedVersionId : accepted;
       return this.versionContent(id);
     };
-    const [goal, offer, content, design, schedule, techplan] = await Promise.all([pick('goal'), pick('offer'), pick('content'), pick('design'), pick('schedule'), pick('techplan')]);
+    const [goal, offer, content, design, schedule, techplan, sitemap] = await Promise.all([pick('goal'), pick('offer'), pick('content'), pick('design'), pick('schedule'), pick('techplan'), pick('sitemap')]);
+    if (acceptedOnly && ctx.route.includes('sitemap') && !sitemap) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     if (acceptedOnly && ctx.route.includes('schedule') && !schedule) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     if (!goal || !content) throw new ConflictException(acceptedOnly ? 'STAGE_INPUTS_NOT_ACCEPTED' : 'PREVIEW_NOT_READY');
     if (acceptedOnly && !design) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
@@ -848,6 +864,7 @@ export class JourneyService {
     if (design) versionIds.design = design.id;
     if (schedule) versionIds.schedule = schedule.id;
     if (techplan) versionIds.techplan = techplan.id;
+    if (sitemap) versionIds.sitemap = sitemap.id;
     const offerContent = (offer?.content as Offer | undefined) ?? null;
     const booking: BookingConfig | null = schedule ? {
       schedule: schedule.content as Schedule,
@@ -862,11 +879,12 @@ export class JourneyService {
         booking,
         contractVersion: (techplan?.content as TechPlan | undefined)?.planVersion ?? null,
         expectedContractVersion: ctx.route.includes('techplan') ? TECHPLAN_VERSION : null,
+        sitemap: (sitemap?.content as Sitemap | undefined) ?? null,
       },
     };
   }
 
-  async preview(userId: string, projectId: string, versionId: string | null) {
+  async preview(userId: string, projectId: string, versionId: string | null, pagePath: string | null = null) {
     const ctx = await this.load(userId, projectId, 'read');
     const own = ctx.viewer.kind === 'specialist' ? ctx.viewer.assignments.map((item) => item.stageKey) : undefined;
     // A preview shows the page texts, so specialists see it only when their stage works with them.
@@ -877,10 +895,14 @@ export class JourneyService {
       if (!isUuid(versionId)) throw new NotFoundException('VERSION_NOT_FOUND');
       const version = await this.prisma.stageArtifactVersion.findFirst({ where: { id: versionId, stageId: build.id }, select: { content: true, versionNumber: true } });
       if (!version) throw new NotFoundException('VERSION_NOT_FOUND');
-      return { data: { html: await this.inline(projectId, (version.content as unknown as SiteArtifact).html), draft: false, versionNumber: version.versionNumber } };
+      const built = version.content as unknown as SiteArtifact;
+      const page = built.pages?.find((item) => item.path === pagePath) ?? null;
+      return { data: { html: await this.inline(projectId, page?.html ?? built.html), draft: false, versionNumber: version.versionNumber, pages: (built.pages ?? []).map(({ path, title }) => ({ path, title })) } };
     }
     const sources = await this.renderSources(ctx, false, own);
-    return { data: { html: await this.inline(projectId, renderSite(sources.input)), draft: true, versionNumber: null } };
+    const map = sources.input.sitemap;
+    const page = map?.pages.find((item) => item.path === pagePath) ?? null;
+    return { data: { html: await this.inline(projectId, renderSite(sources.input, page?.key ?? null)), draft: true, versionNumber: null, pages: (map?.pages ?? []).map(({ path, title }) => ({ path, title })) } };
   }
 
   async accept(userId: string, projectId: string, key: string, versionId: string) {
@@ -903,7 +925,7 @@ export class JourneyService {
       const sources = await this.renderSources(ctx, true);
       if (stableStringify(sources.versionIds) !== stableStringify(site.sourceVersionIds)) throw new ConflictException('BUILD_OUTDATED');
     } else {
-      const issues = completenessIssues(definition.artifactType, version.content);
+      const issues = completenessIssues(definition.artifactType, version.content, await this.checkContext(ctx, key as StageKey));
       if (issues.length) throw new UnprocessableEntityException(`STAGE_INCOMPLETE:${issues.map((issue) => issue.key).join(',')}`);
     }
     await this.prisma.$transaction(async (tx) => {
@@ -1227,7 +1249,7 @@ export class JourneyService {
     const version = await this.versionContent(versionId);
     const definition = stageDefinitions[stageKey];
     if (version && definition.artifactType !== 'site') {
-      const issues = completenessIssues(definition.artifactType, version.content);
+      const issues = completenessIssues(definition.artifactType, version.content, await this.checkContext(ctx, key as StageKey));
       if (issues.length) throw new UnprocessableEntityException(`STAGE_INCOMPLETE:${issues.map((issue) => issue.key).join(',')}`);
     }
     await this.prisma.$transaction(async (tx) => {
@@ -1370,6 +1392,8 @@ export class JourneyService {
     if (site?.meta?.hasForm) lines.push('', '> Форма заявки работает, когда сайт опубликован на BuildPath. На другом хостинге форму нужно подключить к своему обработчику.');
     const files = [{ name: 'project.md', mimeType: 'text/markdown', content: `${lines.join('\n')}\n` }];
     if (site) files.push({ name: 'site.html', mimeType: 'text/html', content: await this.inline(projectId, site.html) });
+    // Other pages of a multi-page site, laid out as on a static host: /services → pages/services/index.html.
+    for (const page of site?.pages ?? []) if (page.path !== '/') files.push({ name: `pages${page.path}/index.html`, mimeType: 'text/html', content: await this.inline(projectId, page.html) });
     const plan = get<TechPlan>('techplan');
     if (plan) {
       files.push({ name: 'architecture.md', mimeType: 'text/markdown', content: inProject(ctx, () => techPlanMarkdown(plan)) });
