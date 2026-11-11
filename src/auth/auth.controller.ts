@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   Post,
+  Put,
   Req,
   Res,
   UseGuards,
@@ -96,6 +97,18 @@ export class AuthController {
   @AllowWithoutConsent()
   me(@Req() request: AuthenticatedRequest): { data: SafeUser } {
     return { data: request.user };
+  }
+
+  /** Interface language for e-mails and Telegram messages; the web interface keeps its own choice in a cookie. */
+  @Put('me/locale')
+  @HttpCode(204)
+  @UseGuards(AuthGuard)
+  @AllowWithoutConsent()
+  async setLocale(@Req() request: AuthenticatedRequest, @Body() raw: unknown): Promise<void> {
+    const body = objectBody(raw);
+    rejectUnknown(body, ['locale']);
+    if (body.locale !== 'en' && body.locale !== 'ru' && body.locale !== 'kk') throw new BadRequestException('INVALID_LOCALE');
+    await this.auth.setLocale(request.user.id, body.locale);
   }
 
   @Post('me/consent')

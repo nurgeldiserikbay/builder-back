@@ -1,4 +1,5 @@
 // Typed artifact schemas, deterministic validation, locking/merge rules, templates and text import.
+import { tr } from '../i18n/i18n.js';
 import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
 import type { ArtifactType } from './catalog.js';
 import { normalizeSchedule, scheduleIssues, type BookingConfig, type Schedule } from './schedule.js';
@@ -266,11 +267,11 @@ export function completenessIssues(type: ArtifactType, content: unknown): Comple
     const artifact = content as ContentArtifact;
     if (!artifact.sections.some((section) => section.type === 'hero')) issues.push({ key: 'sections', message: 'Добавьте первый экран.' });
     if (!artifact.sections.some((section) => section.type === 'contacts')) issues.push({ key: 'sections', message: 'Добавьте блок контактов.' });
-    artifact.sections.forEach((section) => { if (!section.title) issues.push({ key: section.key, message: `У блока «${sectionTypeLabels[section.type]}» нет заголовка.` }); });
+    artifact.sections.forEach((section) => { if (!section.title) issues.push({ key: section.key, message: tr("У блока «{0}» нет заголовка.", [sectionTypeLabels[section.type]]) }); });
     if (!artifact.seo.title) issues.push({ key: 'seo', message: 'Добавьте заголовок для поисковиков.' });
     for (const section of artifact.sections) {
       if (/\[(?:укажите|заполните|добавьте)[^\]]*\]/i.test(JSON.stringify(section))) {
-        issues.push({ key: section.key, message: `В блоке «${section.title || sectionTypeLabels[section.type]}» остались места в квадратных скобках — замените их своими данными.` });
+        issues.push({ key: section.key, message: tr("В блоке «{0}» остались места в квадратных скобках — замените их своими данными.", [section.title || sectionTypeLabels[section.type]]) });
       }
     }
   }

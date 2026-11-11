@@ -1,3 +1,4 @@
+import { tr } from '../i18n/i18n.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 
@@ -261,7 +262,7 @@ export class ChoicesService {
     if (input.create) {
       if (!input.confirm) throw new BadRequestException('CONFIRMATION_REQUIRED');
       try {
-        fullName = (await createRepo(config, token, { name: input.create.name, isPrivate: input.create.isPrivate, description: `Сайт «${access.name}», собранный в BuildPath` })).fullName;
+        fullName = (await createRepo(config, token, { name: input.create.name, isPrivate: input.create.isPrivate, description: tr("Сайт «{0}», собранный в BuildPath", [access.name]) })).fullName;
       } catch (error) {
         if (error instanceof GitProviderError) throw error.code === 'REPO_NAME_TAKEN' ? new ConflictException(error.code) : new UnprocessableEntityException(error.code);
         throw error;
@@ -330,7 +331,7 @@ export class ChoicesService {
     const { files } = await this.files(userId, projectId);
     const token = this.decrypt(repo.tokenEncrypted, key);
     try {
-      const { commitUrl } = await this.client(repo.provider as GitProviderKey, token, repo.baseUrl).commit(repo.repoPath, repo.defaultBranch, files, `BuildPath: ${access.name} — принятая версия`);
+      const { commitUrl } = await this.client(repo.provider as GitProviderKey, token, repo.baseUrl).commit(repo.repoPath, repo.defaultBranch, files, tr("BuildPath: {0} — принятая версия", [access.name]));
       await this.prisma.$transaction([
         this.prisma.codeRepository.update({ where: { projectId }, data: { lastPushAt: new Date(), lastCommitUrl: commitUrl || null, lastError: null } }),
         this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'repository_pushed', details: { repoPath: repo.repoPath, files: files.map((file) => file.path), commitUrl } } }),

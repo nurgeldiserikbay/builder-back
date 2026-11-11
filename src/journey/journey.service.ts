@@ -1,3 +1,4 @@
+import { tr } from '../i18n/i18n.js';
 import {
   BadGatewayException, BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus,
   Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException,
@@ -221,13 +222,13 @@ export class JourneyService {
     const nextStatus = next ? ctx.statuses[next] : null;
     const title = next ? stageDefinitions[next].title : '';
     const nextText = !next ? (specialist ? 'Ваш этап принят владельцем. Спасибо за работу!' : 'Все этапы приняты. Опубликуйте сайт или скачайте результат ниже. Вернуться к любому этапу можно в любой момент.')
-      : next && ctx.openNotices.some((notice) => notice.targetKey === next) ? `Изменился этап, на котором построен «${title}». Посмотрите, что изменилось, и решите: принять, оставить как есть или обсудить.`
-      : nextStatus === 'stale' ? `Изменился предыдущий этап. Проверьте «${title}» и подтвердите или обновите.`
-        : nextStatus === 'in_review' ? (specialist ? `Этап «${title}» на приёмке у владельца. Пока он проверяет, вносить изменения нельзя.` : `Специалист отправил этап «${title}» на приёмку. Проверьте и примите или верните на доработку.`)
-          : nextStatus === 'changes_requested' ? `Владелец попросил доработать этап «${title}».`
-            : nextStatus === 'awaiting_lead' ? `Этап «${title}» ждёт, когда приглашённый специалист примет приглашение. Вы можете продолжить сами.`
-              : nextStatus === 'in_progress' ? (specialist ? `Доработайте этап «${title}» и отправьте владельцу на приёмку.` : `Проверьте черновик этапа «${title}» и примите его, если всё устраивает.`)
-                : `Начните этап «${title}». ${stageDefinitions[next].outcome}`;
+      : next && ctx.openNotices.some((notice) => notice.targetKey === next) ? tr("Изменился этап, на котором построен «{0}». Посмотрите, что изменилось, и решите: принять, оставить как есть или обсудить.", [title])
+      : nextStatus === 'stale' ? tr("Изменился предыдущий этап. Проверьте «{0}» и подтвердите или обновите.", [title])
+        : nextStatus === 'in_review' ? (specialist ? tr("Этап «{0}» на приёмке у владельца. Пока он проверяет, вносить изменения нельзя.", [title]) : tr("Специалист отправил этап «{0}» на приёмку. Проверьте и примите или верните на доработку.", [title]))
+          : nextStatus === 'changes_requested' ? tr("Владелец попросил доработать этап «{0}».", [title])
+            : nextStatus === 'awaiting_lead' ? tr("Этап «{0}» ждёт, когда приглашённый специалист примет приглашение. Вы можете продолжить сами.", [title])
+              : nextStatus === 'in_progress' ? (specialist ? tr("Доработайте этап «{0}» и отправьте владельцу на приёмку.", [title]) : tr("Проверьте черновик этапа «{0}» и примите его, если всё устраивает.", [title]))
+                : tr("Начните этап «{0}». {1}", [title, stageDefinitions[next].outcome]);
     const ai = this.ai();
     // Who works on each stage, for the project map. Owners and managers see specialists; a specialist sees only themself.
     const leads = new Map<string, { kind: 'specialist' | 'invited'; name: string }>();
@@ -610,7 +611,7 @@ export class JourneyService {
       }, select: { id: true } });
       const created = await this.createVersion(tx, {
         projectId, stage, artifactType: definition.artifactType, content: merged, origin: 'ai_generated',
-        note: instruction ? `ИИ: ${instruction.text}` : 'ИИ: черновик', userId, generationRunId: run.id,
+        note: instruction ? tr("ИИ: {0}", [instruction.text]) : 'ИИ: черновик', userId, generationRunId: run.id,
       });
       await tx.generationRun.update({ where: { id: run.id }, data: { resultVersionId: created.id } });
       await this.event(tx, projectId, userId, 'stage_generated', key, { provider: provider.name, versionNumber: created.versionNumber, targetKey: input.targetKey });
@@ -745,7 +746,7 @@ export class JourneyService {
     const source = await this.prisma.stageArtifactVersion.findFirst({ where: { id: versionId, stageId: stage.id }, select: { content: true, versionNumber: true } });
     if (!source) throw new NotFoundException('VERSION_NOT_FOUND');
     const version = await this.prisma.$transaction(async (tx) => {
-      const created = await this.createVersion(tx, { projectId, stage, artifactType: definition.artifactType, content: source.content, origin: 'restored', note: `Возврат к версии ${source.versionNumber}`, userId });
+      const created = await this.createVersion(tx, { projectId, stage, artifactType: definition.artifactType, content: source.content, origin: 'restored', note: tr("Возврат к версии {0}", [source.versionNumber]), userId });
       await this.event(tx, projectId, userId, 'stage_version_restored', key, { from: source.versionNumber, versionNumber: created.versionNumber });
       return created;
     });
@@ -909,7 +910,7 @@ export class JourneyService {
       await this.event(tx, projectId, userId, 'stage_accepted', key, { versionNumber: version.versionNumber });
       notices.push(...await this.createChangeNotices(tx, ctx, stageKey, stage.approvedVersionId, version, userId));
     });
-    for (const notice of notices) await this.notifyChange(ctx, notice.targetKey, `В проекте «${ctx.project.name}» изменился этап «${definition.title}», на котором построен этап «${stageDefinitions[notice.targetKey].title}». Посмотрите, что изменилось, и решите: принять или обсудить. ${this.stageLink(projectId, notice.targetKey)}`.trim(), 'target');
+    for (const notice of notices) await this.notifyChange(ctx, notice.targetKey, tr("В проекте «{0}» изменился этап «{1}», на котором построен этап «{2}». Посмотрите, что изменилось, и решите: принять или обсудить. {3}", [ctx.project.name, definition.title, stageDefinitions[notice.targetKey].title, this.stageLink(projectId, notice.targetKey)]).trim(), 'target');
     return this.journey(userId, projectId);
   }
 
@@ -966,7 +967,7 @@ export class JourneyService {
     const recipients = new Set([ctx.project.ownerUserId, ...(lead?.userId ? [lead.userId] : [])]);
     for (const recipient of recipients) {
       await this.notifyUser(recipient, text).catch(() => undefined);
-      await this.emailUser(recipient, `BuildPath: изменения на этапе «${stageDefinitions[key].title}»`, text).catch(() => undefined);
+      await this.emailUser(recipient, tr("BuildPath: изменения на этапе «{0}»", [stageDefinitions[key].title]), text).catch(() => undefined);
     }
   }
 
@@ -1097,17 +1098,17 @@ export class JourneyService {
       const link = this.stageLink(notice.projectId, targetKey);
       const lead = await this.prisma.stageAssignment.findFirst({ where: { stageId: notice.targetStageId, role: 'lead', status: 'active' }, select: { userId: true } });
       if (!notice.remindedAt) {
-        const text = `Ждём решения: этап «${stageDefinitions[sourceKey].title}» в проекте «${notice.project.name}» изменился, а этап «${stageDefinitions[targetKey].title}» ещё не ответил — срок прошёл. Примите изменения, оставьте этап как есть или обсудите. ${link}`.trim();
+        const text = tr("Ждём решения: этап «{0}» в проекте «{1}» изменился, а этап «{2}» ещё не ответил — срок прошёл. Примите изменения, оставьте этап как есть или обсудите. {3}", [stageDefinitions[sourceKey].title, notice.project.name, stageDefinitions[targetKey].title, link]).trim();
         for (const recipient of new Set([notice.project.ownerUserId, ...(lead?.userId ? [lead.userId] : [])])) {
           await this.notifyUser(recipient, text).catch(() => undefined);
-          await this.emailUser(recipient, `BuildPath: ждём решения по этапу «${stageDefinitions[targetKey].title}»`, text).catch(() => undefined);
+          await this.emailUser(recipient, tr("BuildPath: ждём решения по этапу «{0}»", [stageDefinitions[targetKey].title]), text).catch(() => undefined);
         }
         await this.prisma.changeNotice.update({ where: { id: notice.id }, data: { remindedAt: now } });
         reminded += 1;
       } else if (notice.respondBy && notice.respondBy.getTime() < now.getTime() - 2 * 86_400_000) {
-        const text = `Решение по изменению этапа «${stageDefinitions[sourceKey].title}» в проекте «${notice.project.name}» задерживается${lead?.userId ? ' — ведущий этапа не ответил' : ''}. Вы можете решить за этап «${stageDefinitions[targetKey].title}» сами. ${link}`.trim();
+        const text = tr("Решение по изменению этапа «{0}» в проекте «{1}» задерживается{2}. Вы можете решить за этап «{3}» сами. {4}", [stageDefinitions[sourceKey].title, notice.project.name, lead?.userId ? ' — ведущий этапа не ответил' : '', stageDefinitions[targetKey].title, link]).trim();
         await this.notifyUser(notice.project.ownerUserId, text).catch(() => undefined);
-        await this.emailUser(notice.project.ownerUserId, `BuildPath: решите за этап «${stageDefinitions[targetKey].title}»`, text).catch(() => undefined);
+        await this.emailUser(notice.project.ownerUserId, tr("BuildPath: решите за этап «{0}»", [stageDefinitions[targetKey].title]), text).catch(() => undefined);
         await this.prisma.$transaction([
           this.prisma.changeNotice.update({ where: { id: notice.id }, data: { escalatedAt: now } }),
           this.prisma.projectEvent.create({ data: { projectId: notice.projectId, type: 'change_notice_escalated', stageKey: targetKey, details: { noticeId: notice.id, sourceStageKey: sourceKey } } }),
@@ -1154,7 +1155,7 @@ export class JourneyService {
         }
         await this.event(tx, projectId, userId, input.action === 'accept' ? 'change_accepted' : 'change_accepted_no_change', targetKey, { sourceStageKey: sourceKey, byOwner: byOwnerOverLead });
       });
-      if (byOwnerOverLead && targetSide.leadUserId) await this.notifyUser(targetSide.leadUserId, `Владелец проекта «${ctx.project.name}» решил по изменению этапа «${sourceTitle}»: ${input.action === 'accept' ? 'обновить' : 'оставить без изменений'} этап «${targetTitle}». ${this.stageLink(projectId, targetKey)}`.trim()).catch(() => undefined);
+      if (byOwnerOverLead && targetSide.leadUserId) await this.notifyUser(targetSide.leadUserId, tr("Владелец проекта «{0}» решил по изменению этапа «{1}»: {2} этап «{3}». {4}", [ctx.project.name, sourceTitle, input.action === 'accept' ? 'обновить' : 'оставить без изменений', targetTitle, this.stageLink(projectId, targetKey)]).trim()).catch(() => undefined);
     } else if (input.action === 'discuss') {
       if (!targetSide.allowed) throw new ForbiddenException('CHANGE_DECISION_FORBIDDEN');
       if (!input.text) throw new BadRequestException('TEXT_REQUIRED');
@@ -1163,7 +1164,7 @@ export class JourneyService {
         await tx.changeNotice.update({ where: { id: notice.id }, data: { status: 'discussing' } });
         await this.event(tx, projectId, userId, 'change_discussed', targetKey, { sourceStageKey: sourceKey });
       });
-      await this.notifyChange(ctx, sourceKey, `По изменению этапа «${sourceTitle}» в проекте «${ctx.project.name}» есть вопрос от этапа «${targetTitle}»: ${input.text} ${this.stageLink(projectId, sourceKey)}`.trim(), 'source');
+      await this.notifyChange(ctx, sourceKey, tr("По изменению этапа «{0}» в проекте «{1}» есть вопрос от этапа «{2}»: {3} {4}", [sourceTitle, ctx.project.name, targetTitle, input.text, this.stageLink(projectId, sourceKey)]).trim(), 'source');
     } else {
       if (!sourceSide.allowed) throw new ForbiddenException('CHANGE_REPLY_FORBIDDEN');
       if (notice.status !== 'discussing') throw new ConflictException('CHANGE_NOT_DISCUSSED');
@@ -1173,7 +1174,7 @@ export class JourneyService {
         await this.event(tx, projectId, userId, 'change_replied', sourceKey, { targetStageKey: targetKey, resolution: input.resolution });
       });
       const what = input.resolution === 'will_revise' ? 'выпустит исправленную версию' : input.resolution === 'kept' ? 'оставляет изменение как есть' : 'просит решить владельца';
-      await this.notifyChange(ctx, targetKey, `Ответ по изменению этапа «${sourceTitle}» в проекте «${ctx.project.name}»: ${what}. ${input.text} ${this.stageLink(projectId, targetKey)}`.trim(), 'target');
+      await this.notifyChange(ctx, targetKey, tr("Ответ по изменению этапа «{0}» в проекте «{1}»: {2}. {3} {4}", [sourceTitle, ctx.project.name, what, input.text, this.stageLink(projectId, targetKey)]).trim(), 'target');
     }
     return this.changeNotices(userId, projectId, targetSide.allowed || this.canRead(ctx, targetKey) ? targetKey : sourceKey);
   }
@@ -1221,7 +1222,7 @@ export class JourneyService {
       await tx.projectStage.update({ where: { id: stage.id }, data: { status: 'in_review' } });
       await this.event(tx, projectId, userId, 'stage_submitted', key, { versionNumber: version?.versionNumber ?? null });
     });
-    await this.notifyUser(ctx.project.ownerUserId, `Этап «${definition.title}» в проекте «${ctx.project.name}» отправлен вам на приёмку. ${this.stageLink(projectId, key)}`.trim()).catch(() => undefined);
+    await this.notifyUser(ctx.project.ownerUserId, tr("Этап «{0}» в проекте «{1}» отправлен вам на приёмку. {2}", [definition.title, ctx.project.name, this.stageLink(projectId, key)]).trim()).catch(() => undefined);
     await this.worktime.recordAction(userId, projectId, key);
     return this.journey(userId, projectId);
   }
@@ -1236,7 +1237,7 @@ export class JourneyService {
     });
     const leads = await this.prisma.stageAssignment.findMany({ where: { stageId: stage.id, status: 'active', role: 'lead' }, select: { userId: true } });
     for (const lead of leads) {
-      if (lead.userId) await this.notifyUser(lead.userId, `Владелец проекта «${ctx.project.name}» просит доработать этап «${stageDefinitions[key as StageKey].title}»: ${note} ${this.stageLink(projectId, key)}`.trim()).catch(() => undefined);
+      if (lead.userId) await this.notifyUser(lead.userId, tr("Владелец проекта «{0}» просит доработать этап «{1}»: {2} {3}", [ctx.project.name, stageDefinitions[key as StageKey].title, note, this.stageLink(projectId, key)]).trim()).catch(() => undefined);
     }
     return this.journey(userId, projectId);
   }

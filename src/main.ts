@@ -4,12 +4,17 @@ import { ValidationPipe } from '@nestjs/common';
 import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
 import { ReportingExceptionFilter, initErrorReporting, reportError } from './observability/error-reporting.js';
+import { LocaleMiddleware, LocalizeInterceptor } from './i18n/locale.middleware.js';
 
 initErrorReporting('api');
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.setGlobalPrefix('api/v1');
+  // Language of the request (Accept-Language) for platform texts; project content is never translated.
+  const locale = new LocaleMiddleware();
+  app.use(locale.use.bind(locale));
+  app.useGlobalInterceptors(new LocalizeInterceptor());
   app.useGlobalFilters(new ReportingExceptionFilter(app.get(HttpAdapterHost).httpAdapter));
   // Behind the reverse proxy (Caddy) the client address comes from X-Forwarded-For.
   if (process.env.TRUST_PROXY === 'true') app.getHttpAdapter().getInstance().set('trust proxy', 1);
