@@ -3,6 +3,7 @@ import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { PublishingService } from './publishing.service.js';
 import { TelegramLinkService } from './telegram-link.service.js';
+import { MastersService } from './masters.service.js';
 
 function body(value: unknown, fields: string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('INVALID_REQUEST_BODY');
@@ -135,5 +136,59 @@ export class PublishingController {
     const accepted = await this.telegram.handleUpdate(secret, update);
     if (!accepted) throw new NotFoundException();
     return { ok: true };
+  }
+}
+
+@Controller()
+export class MastersController {
+  constructor(private readonly masters: MastersService) {}
+
+  @Get('projects/:projectId/masters')
+  @UseGuards(AuthGuard)
+  list(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.masters.list(request.user.id, projectId);
+  }
+
+  @Post('projects/:projectId/masters/:masterKey/invite')
+  @HttpCode(200)
+  @UseGuards(AuthGuard)
+  invite(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('masterKey') masterKey: string, @Body() raw: unknown) {
+    const input = body(raw, ['email']);
+    if (typeof input.email !== 'string') throw new BadRequestException('EMAIL_INVALID');
+    if (!/^[a-z0-9]{2,12}$/.test(masterKey)) throw new BadRequestException('MASTER_NOT_FOUND');
+    return this.masters.invite(request.user.id, projectId, masterKey, input.email);
+  }
+
+  @Delete('projects/:projectId/masters/access/:accessId')
+  @UseGuards(AuthGuard)
+  revoke(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('accessId') accessId: string) {
+    return this.masters.revoke(request.user.id, projectId, accessId);
+  }
+
+  @Get('master-invites/:token')
+  inviteInfo(@Param('token') token: string) {
+    return this.masters.inviteInfo(token);
+  }
+
+  @Post('master-invites/:token/accept')
+  @HttpCode(200)
+  @UseGuards(AuthGuard)
+  accept(@Req() request: AuthenticatedRequest, @Param('token') token: string) {
+    return this.masters.accept(request.user.id, request.user.email, token);
+  }
+
+  @Get('me/master-bookings')
+  @UseGuards(AuthGuard)
+  mine(@Req() request: AuthenticatedRequest) {
+    return this.masters.myBookings(request.user.id);
+  }
+
+  @Post('me/master-bookings/:bookingId/status')
+  @HttpCode(200)
+  @UseGuards(AuthGuard)
+  mark(@Req() request: AuthenticatedRequest, @Param('bookingId') bookingId: string, @Body() raw: unknown) {
+    const input = body(raw, ['status']);
+    if (input.status !== 'done' && input.status !== 'no_show') throw new BadRequestException('INVALID_STATUS');
+    return this.masters.markVisit(request.user.id, bookingId, input.status);
   }
 }
