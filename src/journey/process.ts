@@ -66,15 +66,15 @@ export function normalizeProcess(raw: unknown): BusinessProcess {
   const actors = list(raw.actors, 'actors', PROCESS_LIMITS.actors).map((item, index) => {
     if (!isRecord(item)) throw new ArtifactValidationError('FIELD_INVALID:actors');
     const kind = ACTOR_KINDS.includes(item.kind as ActorKind) ? item.kind as ActorKind : 'client';
-    return { key: keyOf(item.key, 'a', index, actorKeys), name: text(item.name, 'actors', 40), kind };
+    return { key: keyOf(item.key, 'a', index, actorKeys), name: text(item.name, 'actors', 40, false), kind };
   });
   const entityKeys = new Set<string>();
   const rawEntities = list(raw.data, 'data', PROCESS_LIMITS.entities).map((item) => { if (!isRecord(item)) throw new ArtifactValidationError('FIELD_INVALID:data'); return item; });
   const entityKeyList = rawEntities.map((item, index) => keyOf(item.key, 'e', index, entityKeys));
   const data = rawEntities.map((item, index) => ({
     key: entityKeyList[index]!,
-    name: text(item.name, 'data', 40),
-    fields: list(item.fields, 'data', PROCESS_LIMITS.fields).map((field) => text(field, 'data', 60)).filter(Boolean),
+    name: text(item.name, 'data', 40, false),
+    fields: list(item.fields, 'data', PROCESS_LIMITS.fields).map((field) => text(field, 'data', 60, false)).filter(Boolean),
     links: list(item.links, 'data', PROCESS_LIMITS.links).flatMap((link) => {
       if (!isRecord(link) || typeof link.to !== 'string' || !entityKeys.has(link.to) || link.to === entityKeyList[index]) return [];
       return [{ to: link.to, kind: link.kind === 'one' ? 'one' as const : 'many' as const, label: text(link.label, 'data', 60, false) }];
@@ -86,7 +86,7 @@ export function normalizeProcess(raw: unknown): BusinessProcess {
     const stepKeys = new Set<string>();
     return {
       key: keyOf(item.key, 's', index, scenarioKeys),
-      title: text(item.title, 'scenarios', 80),
+      title: text(item.title, 'scenarios', 80, false),
       goal: text(item.goal, 'scenarios', 200, false),
       steps: list(item.steps, 'scenarios', PROCESS_LIMITS.steps).map((step, stepIndex) => {
         if (!isRecord(step)) throw new ArtifactValidationError('FIELD_INVALID:scenarios');
@@ -94,11 +94,11 @@ export function normalizeProcess(raw: unknown): BusinessProcess {
         const actor = typeof step.actor === 'string' && actorKeys.has(step.actor) ? step.actor : actors[0]?.key;
         if (!actor) throw new ArtifactValidationError('FIELD_REQUIRED:actors');
         const capability = capabilityKeys.includes(step.capability as Capability) ? step.capability as Capability : 'other';
-        return { key: keyOf(step.key, 'p', stepIndex, stepKeys), actor, action: text(step.action, 'scenarios', 160), capability };
+        return { key: keyOf(step.key, 'p', stepIndex, stepKeys), actor, action: text(step.action, 'scenarios', 160, false), capability };
       }),
     };
   });
-  const rules = list(raw.rules, 'rules', PROCESS_LIMITS.rules).map((rule) => text(rule, 'rules', 200)).filter(Boolean);
+  const rules = list(raw.rules, 'rules', PROCESS_LIMITS.rules).map((rule) => text(rule, 'rules', 200, false)).filter(Boolean);
   return { actors, scenarios, rules, data };
 }
 
@@ -112,6 +112,10 @@ export function processIssues(process: BusinessProcess): ProcessIssue[] {
   for (const scenario of process.scenarios) {
     if (scenario.steps.length < 2) issues.push({ key: 'scenarios', message: tr('В сценарии «{0}» нужно хотя бы два шага.', [scenario.title]) });
   }
+  if (process.actors.some((actor) => !actor.name)) issues.push({ key: 'actors', message: tr('У каждого участника должно быть имя.') });
+  if (process.scenarios.some((scenario) => !scenario.title)) issues.push({ key: 'scenarios', message: tr('У каждого сценария должно быть название.') });
+  if (process.scenarios.some((scenario) => scenario.steps.some((step) => !step.action))) issues.push({ key: 'scenarios', message: tr('Опишите каждый шаг: что происходит.') });
+  if (process.data.some((entity) => !entity.name)) issues.push({ key: 'data', message: tr('У каждой записи в схеме данных должно быть название.') });
   if (!process.data.length) issues.push({ key: 'data', message: tr('Укажите, какую информацию вы храните — хотя бы одну.') });
   return issues;
 }

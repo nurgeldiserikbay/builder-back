@@ -647,4 +647,8 @@ export const en: Record<string, string> = {
   "Внешний сервис": "External service",
   "Клиент": "Client",
   "Соответствует архитектуре": "Matches the architecture",
+  "У каждого участника должно быть имя.": "Every participant needs a name.",
+  "У каждого сценария должно быть название.": "Every scenario needs a name.",
+  "Опишите каждый шаг: что происходит.": "Describe every step: what happens.",
+  "У каждой записи в схеме данных должно быть название.": "Every item in the data diagram needs a name.",
 };

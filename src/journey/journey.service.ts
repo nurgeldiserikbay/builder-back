@@ -403,7 +403,7 @@ export class JourneyService {
           configured: Boolean(ai), remainingToday: ai ? await this.remainingAiRuns(projectId) : 0,
           budget: assignment ? { limit: assignment.aiBudget, used: assignment.aiUsed } : null,
           month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null,
-          templateAvailable: !ai && (stageKey === 'content' || stageKey === 'design'),
+          templateAvailable: !ai && (stageKey === 'content' || stageKey === 'design' || stageKey === 'process'),
         },
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
