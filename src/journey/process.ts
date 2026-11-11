@@ -122,60 +122,60 @@ export function processIssues(process: BusinessProcess): ProcessIssue[] {
 
 /** A starting draft from the goal, without AI: the typical process of this kind of project. */
 export function templateProcess(projectType: string, brief: Brief | null): BusinessProcess {
-  const name = brief?.businessName || 'Вы';
-  const client: ProcessActor = { key: 'client', name: 'Клиент', kind: 'client' };
-  const owner: ProcessActor = { key: 'owner', name: name.length <= 40 ? name : 'Владелец', kind: 'business' };
-  const site: ProcessActor = { key: 'site', name: 'Сайт', kind: 'system' };
+  const name = brief?.businessName || tr("Вы");
+  const client: ProcessActor = { key: 'client', name: tr("Клиент"), kind: 'client' };
+  const owner: ProcessActor = { key: 'owner', name: name.length <= 40 ? name : tr("Владелец"), kind: 'business' };
+  const site: ProcessActor = { key: 'site', name: tr("Сайт"), kind: 'system' };
   if (projectType === 'booking') {
-    const master: ProcessActor = { key: 'master', name: 'Мастер', kind: 'staff' };
+    const master: ProcessActor = { key: 'master', name: tr("Мастер"), kind: 'staff' };
     return {
       actors: [client, site, master, owner],
       scenarios: [
-        { key: 'book', title: 'Запись', goal: 'Клиент записывается на свободное время без звонка.', steps: [
-          { key: 'p1', actor: 'client', action: 'Открывает сайт и выбирает услугу', capability: 'view_info' },
-          { key: 'p2', actor: 'client', action: 'Выбирает мастера, день и свободное время', capability: 'choose_slot' },
-          { key: 'p3', actor: 'client', action: 'Оставляет имя и телефон и подтверждает запись', capability: 'book' },
-          { key: 'p4', actor: 'site', action: 'Сообщает владельцу и мастеру о новой записи', capability: 'notify_master' },
-          { key: 'p5', actor: 'site', action: 'Напоминает клиенту о визите', capability: 'remind_client' },
-          { key: 'p6', actor: 'master', action: 'Принимает клиента и отмечает, что он пришёл', capability: 'mark_visit' },
+        { key: 'book', title: tr("Запись"), goal: tr("Клиент записывается на свободное время без звонка."), steps: [
+          { key: 'p1', actor: 'client', action: tr("Открывает сайт и выбирает услугу"), capability: 'view_info' },
+          { key: 'p2', actor: 'client', action: tr("Выбирает мастера, день и свободное время"), capability: 'choose_slot' },
+          { key: 'p3', actor: 'client', action: tr("Оставляет имя и телефон и подтверждает запись"), capability: 'book' },
+          { key: 'p4', actor: 'site', action: tr("Сообщает владельцу и мастеру о новой записи"), capability: 'notify_master' },
+          { key: 'p5', actor: 'site', action: tr("Напоминает клиенту о визите"), capability: 'remind_client' },
+          { key: 'p6', actor: 'master', action: tr("Принимает клиента и отмечает, что он пришёл"), capability: 'mark_visit' },
         ] },
-        { key: 'cancel', title: 'Отмена', goal: 'Клиент сам освобождает время, если планы изменились.', steps: [
-          { key: 'p1', actor: 'client', action: 'Открывает свою запись по ссылке и отменяет', capability: 'cancel_booking' },
-          { key: 'p2', actor: 'site', action: 'Освобождает время и сообщает владельцу', capability: 'notify_owner' },
+        { key: 'cancel', title: tr("Отмена"), goal: tr("Клиент сам освобождает время, если планы изменились."), steps: [
+          { key: 'p1', actor: 'client', action: tr("Открывает свою запись по ссылке и отменяет"), capability: 'cancel_booking' },
+          { key: 'p2', actor: 'site', action: tr("Освобождает время и сообщает владельцу"), capability: 'notify_owner' },
         ] },
-        { key: 'schedule', title: 'Изменение расписания', goal: 'Владелец меняет услуги, мастеров и часы работы.', steps: [
-          { key: 'p1', actor: 'owner', action: 'Меняет расписание и принимает новую версию', capability: 'manage_schedule' },
-          { key: 'p2', actor: 'site', action: 'Показывает клиентам новое свободное время', capability: 'view_info' },
+        { key: 'schedule', title: tr("Изменение расписания"), goal: tr("Владелец меняет услуги, мастеров и часы работы."), steps: [
+          { key: 'p1', actor: 'owner', action: tr("Меняет расписание и принимает новую версию"), capability: 'manage_schedule' },
+          { key: 'p2', actor: 'site', action: tr("Показывает клиентам новое свободное время"), capability: 'view_info' },
         ] },
       ],
-      rules: ['Одно время у мастера может занять только один клиент.', 'Клиент может отменить запись не позже чем за несколько часов до визита.'],
+      rules: [tr("Одно время у мастера может занять только один клиент."), tr("Клиент может отменить запись не позже чем за несколько часов до визита.")],
       data: [
-        { key: 'client', name: 'Клиент', fields: ['Имя', 'Телефон', 'Почта для напоминания'], links: [{ to: 'booking', kind: 'many', label: 'записывается' }] },
-        { key: 'booking', name: 'Запись', fields: ['Услуга', 'Мастер', 'Время', 'Комментарий', 'Статус'], links: [{ to: 'service', kind: 'one', label: 'на услугу' }, { to: 'master', kind: 'one', label: 'к мастеру' }] },
-        { key: 'service', name: 'Услуга', fields: ['Название', 'Длительность', 'Цена'], links: [] },
-        { key: 'master', name: 'Мастер', fields: ['Имя', 'Рабочие дни и часы'], links: [{ to: 'service', kind: 'many', label: 'делает' }] },
+        { key: 'client', name: tr("Клиент"), fields: [tr("Имя"), tr("Телефон"), tr("Почта для напоминания")], links: [{ to: 'booking', kind: 'many', label: tr("записывается") }] },
+        { key: 'booking', name: tr("Запись"), fields: [tr("Услуга"), tr("Мастер"), tr("Время"), tr("Комментарий"), tr("Статус")], links: [{ to: 'service', kind: 'one', label: tr("на услугу") }, { to: 'master', kind: 'one', label: tr("к мастеру") }] },
+        { key: 'service', name: tr("Услуга"), fields: [tr("Название"), tr("Длительность"), tr("Цена")], links: [] },
+        { key: 'master', name: tr("Мастер"), fields: [tr("Имя"), tr("Рабочие дни и часы")], links: [{ to: 'service', kind: 'many', label: tr("делает") }] },
       ],
     };
   }
   const action = brief?.mainAction ?? 'message';
   const contactStep: ProcessStep = action === 'form'
-    ? { key: 'p2', actor: 'client', action: 'Оставляет заявку через форму на сайте', capability: 'request_form' }
+    ? { key: 'p2', actor: 'client', action: tr("Оставляет заявку через форму на сайте"), capability: 'request_form' }
     : action === 'visit'
-      ? { key: 'p2', actor: 'client', action: 'Находит адрес и часы работы и приходит', capability: 'offline' }
-      : { key: 'p2', actor: 'client', action: action === 'call' ? 'Звонит по кнопке на сайте' : action === 'email' ? 'Пишет письмо по кнопке на сайте' : 'Пишет в мессенджер по кнопке на сайте', capability: 'contact' };
+      ? { key: 'p2', actor: 'client', action: tr("Находит адрес и часы работы и приходит"), capability: 'offline' }
+      : { key: 'p2', actor: 'client', action: action === 'call' ? tr("Звонит по кнопке на сайте") : action === 'email' ? tr("Пишет письмо по кнопке на сайте") : tr("Пишет в мессенджер по кнопке на сайте"), capability: 'contact' };
   const steps: ProcessStep[] = [
-    { key: 'p1', actor: 'client', action: projectType === 'company_site' ? 'Открывает сайт и смотрит услуги и цены' : 'Открывает сайт и читает, чем вы занимаетесь', capability: 'view_info' },
+    { key: 'p1', actor: 'client', action: projectType === 'company_site' ? tr("Открывает сайт и смотрит услуги и цены") : tr("Открывает сайт и читает, чем вы занимаетесь"), capability: 'view_info' },
     contactStep,
-    ...(action === 'form' ? [{ key: 'p3', actor: 'site', action: 'Передаёт заявку владельцу в Telegram или на почту', capability: 'notify_owner' as const }] : []),
-    { key: 'p4', actor: 'owner', action: 'Отвечает клиенту и договаривается о деталях', capability: 'offline' },
+    ...(action === 'form' ? [{ key: 'p3', actor: 'site', action: tr("Передаёт заявку владельцу в Telegram или на почту"), capability: 'notify_owner' as const }] : []),
+    { key: 'p4', actor: 'owner', action: tr("Отвечает клиенту и договаривается о деталях"), capability: 'offline' },
   ];
   return {
     actors: action === 'form' ? [client, site, owner] : [client, owner],
-    scenarios: [{ key: 'contact', title: 'Обращение клиента', goal: 'Посетитель понимает, чем вы полезны, и связывается с вами.', steps }],
-    rules: action === 'form' ? ['На заявку отвечаем в течение рабочего дня.'] : [],
+    scenarios: [{ key: 'contact', title: tr("Обращение клиента"), goal: tr("Посетитель понимает, чем вы полезны, и связывается с вами."), steps }],
+    rules: action === 'form' ? [tr("На заявку отвечаем в течение рабочего дня.")] : [],
     data: action === 'form'
-      ? [{ key: 'lead', name: 'Заявка', fields: ['Имя', 'Контакт', 'Сообщение', 'Когда пришла'], links: [] }]
-      : [{ key: 'contact', name: 'Контакты для связи', fields: ['Телефон или мессенджер', 'Адрес', 'Часы работы'], links: [] }],
+      ? [{ key: 'lead', name: tr("Заявка"), fields: [tr("Имя"), tr("Контакт"), tr("Сообщение"), tr("Когда пришла")], links: [] }]
+      : [{ key: 'contact', name: tr("Контакты для связи"), fields: [tr("Телефон или мессенджер"), tr("Адрес"), tr("Часы работы")], links: [] }],
   };
 }
 

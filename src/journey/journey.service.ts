@@ -1,4 +1,7 @@
-import { tr } from '../i18n/i18n.js';
+import { contentLocale, inLocale, runWithLocale, tr, type Message } from '../i18n/i18n.js';
+
+/** Templates, imports and the architecture are project content: written in the project's language. */
+const inProject = <T>(ctx: { project: { locale: string } }, work: () => T): T => runWithLocale(contentLocale(ctx.project.locale), work);
 import {
   BadGatewayException, BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus,
   Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException,
@@ -340,7 +343,7 @@ export class JourneyService {
       ? await this.techPlanFor(ctx, stageKey, (current?.content as unknown as TechPlan | undefined)?.ownerNotes ?? null) : null;
     const techPlanOutdated = Boolean(techPlanPreview && current && !sameTechPlan(techPlanPreview, current.content as unknown as TechPlan));
     const scheduleTemplate = definition.artifactType === 'schedule' && !current
-      ? templateSchedule((await this.acceptedInputs(ctx, stageKey)).offer?.content as Offer | undefined ?? null) : null;
+      ? await this.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSchedule(inputs.offer?.content as Offer | undefined ?? null))) : null;
     const owner = ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role) && editableProject(ctx.project.status);
     const writable = canEdit(stage.status) && this.canWrite(ctx, stageKey) && editableProject(ctx.project.status);
     const suggestions = await this.prisma.stageInstruction.findMany({
@@ -444,14 +447,15 @@ export class JourneyService {
     return tx.projectEvent.create({ data: { projectId, actorUserId: userId, type, stageKey, details: details as never } });
   }
 
-  private async techPlanFor(ctx: Parameters<JourneyService['acceptedInputs']>[0] & { type: { key: string } }, key: StageKey, notes: string | null): Promise<TechPlan> {
+  private async techPlanFor(ctx: Parameters<JourneyService['acceptedInputs']>[0] & { type: { key: string }; project: { locale: string } }, key: StageKey, notes: string | null): Promise<TechPlan> {
     const inputs = await this.acceptedInputs(ctx, key);
     const schedule = inputs.schedule?.content as Schedule | undefined;
     if (ctx.route.includes('schedule') && !schedule) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
-    return buildTechPlan({
+    // Built in the project's language, so every viewer gets the same plan whatever their interface language.
+    return inProject(ctx, () => buildTechPlan({
       projectType: ctx.type.key, brief: (inputs.goal?.content as Brief | undefined) ?? null, schedule: schedule ?? null,
       process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
-    }, notes);
+    }, notes));
   }
 
   async saveDraft(userId: string, projectId: string, key: string, input: { content: unknown; baseVersionId: string | null }) {
@@ -542,9 +546,9 @@ export class JourneyService {
       // Without AI the platform still offers a deterministic draft for stages that have one; instructions need AI.
       if (input.instruction || input.targetKey) throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
       let draft: unknown;
-      if (stageKey === 'content') draft = templateContent(inputs.goal?.content as Brief ?? emptyBrief(), (inputs.offer?.content as Offer | undefined) ?? null);
+      if (stageKey === 'content') draft = inProject(ctx, () => templateContent(inputs.goal?.content as Brief ?? emptyBrief(), (inputs.offer?.content as Offer | undefined) ?? null));
       else if (stageKey === 'design') draft = defaultDesign;
-      else if (stageKey === 'process') draft = templateProcess(ctx.type.key, (inputs.goal?.content as Brief | undefined) ?? null);
+      else if (stageKey === 'process') draft = inProject(ctx, () => templateProcess(ctx.type.key, (inputs.goal?.content as Brief | undefined) ?? null));
       else throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
       const merged = normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, draft, stage.lockedKeys, null));
       const version = await this.prisma.$transaction(async (tx) => {
@@ -768,7 +772,7 @@ export class JourneyService {
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     let content: unknown;
     try {
-      content = definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : importContentText(text);
+      content = inProject(ctx, () => (definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : importContentText(text)));
     } catch (error) { validationError(error); }
     const issues = completenessIssues(definition.artifactType, content);
     // Imported material counts as accepted only when it is complete, its own inputs are accepted and the person importing
@@ -916,7 +920,7 @@ export class JourneyService {
       await this.event(tx, projectId, userId, 'stage_accepted', key, { versionNumber: version.versionNumber });
       notices.push(...await this.createChangeNotices(tx, ctx, stageKey, stage.approvedVersionId, version, userId));
     });
-    for (const notice of notices) await this.notifyChange(ctx, notice.targetKey, tr("В проекте «{0}» изменился этап «{1}», на котором построен этап «{2}». Посмотрите, что изменилось, и решите: принять или обсудить. {3}", [ctx.project.name, definition.title, stageDefinitions[notice.targetKey].title, this.stageLink(projectId, notice.targetKey)]).trim(), 'target');
+    for (const notice of notices) await this.notifyChange(ctx, notice.targetKey, () => tr("В проекте «{0}» изменился этап «{1}», на котором построен этап «{2}». Посмотрите, что изменилось, и решите: принять или обсудить. {3}", [ctx.project.name, tr(definition.title), tr(stageDefinitions[notice.targetKey].title), this.stageLink(projectId, notice.targetKey)]).trim(), 'target');
     return this.journey(userId, projectId);
   }
 
@@ -967,24 +971,25 @@ export class JourneyService {
     return { allowed: owner || (lead?.userId === userId), asOwner: owner, leadUserId: lead?.userId ?? null };
   }
 
-  private async notifyChange(ctx: { project: { ownerUserId: string }; stages: StageRow[] }, key: StageKey, text: string, _side: 'target' | 'source'): Promise<void> {
+  private async notifyChange(ctx: { project: { ownerUserId: string }; stages: StageRow[] }, key: StageKey, text: Message, _side: 'target' | 'source'): Promise<void> {
     const stage = this.stageOf(ctx, key);
     const lead = await this.prisma.stageAssignment.findFirst({ where: { stageId: stage.id, role: 'lead', status: 'active' }, select: { userId: true } });
     const recipients = new Set([ctx.project.ownerUserId, ...(lead?.userId ? [lead.userId] : [])]);
     for (const recipient of recipients) {
       await this.notifyUser(recipient, text).catch(() => undefined);
-      await this.emailUser(recipient, tr("BuildPath: изменения на этапе «{0}»", [stageDefinitions[key].title]), text).catch(() => undefined);
+      await this.emailUser(recipient, () => tr("BuildPath: изменения на этапе «{0}»", [tr(stageDefinitions[key].title)]), text).catch(() => undefined);
     }
   }
 
-  /** Change notices also go by e-mail: they wait for a decision, and not everyone uses Telegram. */
-  private async emailUser(userId: string, subject: string, text: string): Promise<void> {
+  /** Change notices also go by e-mail: they wait for a decision, and not everyone uses Telegram. Written in the recipient's account language. */
+  private async emailUser(userId: string, subject: Message, text: Message): Promise<void> {
     const config = emailConfig();
     if (!config) return;
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true, deletionRequestedAt: true } });
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true, locale: true, deletionRequestedAt: true } });
     if (!user || user.deletionRequestedAt) return;
-    const html = `<div style="font:15px/1.5 system-ui,sans-serif;max-width:560px">${escapeHtml(text).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>').replace(/\n/g, '<br>')}</div>`;
-    await sendEmail(config, user.email, subject, html);
+    const body = inLocale(user.locale, text);
+    const html = `<div style="font:15px/1.5 system-ui,sans-serif;max-width:560px">${escapeHtml(body).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>').replace(/\n/g, '<br>')}</div>`;
+    await sendEmail(config, user.email, inLocale(user.locale, subject), html);
   }
 
   /** Change notices where the stage is the one that changed (outgoing) or the one built on it (incoming). */
@@ -1104,17 +1109,17 @@ export class JourneyService {
       const link = this.stageLink(notice.projectId, targetKey);
       const lead = await this.prisma.stageAssignment.findFirst({ where: { stageId: notice.targetStageId, role: 'lead', status: 'active' }, select: { userId: true } });
       if (!notice.remindedAt) {
-        const text = tr("Ждём решения: этап «{0}» в проекте «{1}» изменился, а этап «{2}» ещё не ответил — срок прошёл. Примите изменения, оставьте этап как есть или обсудите. {3}", [stageDefinitions[sourceKey].title, notice.project.name, stageDefinitions[targetKey].title, link]).trim();
+        const text = () => tr("Ждём решения: этап «{0}» в проекте «{1}» изменился, а этап «{2}» ещё не ответил — срок прошёл. Примите изменения, оставьте этап как есть или обсудите. {3}", [tr(stageDefinitions[sourceKey].title), notice.project.name, tr(stageDefinitions[targetKey].title), link]).trim();
         for (const recipient of new Set([notice.project.ownerUserId, ...(lead?.userId ? [lead.userId] : [])])) {
           await this.notifyUser(recipient, text).catch(() => undefined);
-          await this.emailUser(recipient, tr("BuildPath: ждём решения по этапу «{0}»", [stageDefinitions[targetKey].title]), text).catch(() => undefined);
+          await this.emailUser(recipient, () => tr("BuildPath: ждём решения по этапу «{0}»", [tr(stageDefinitions[targetKey].title)]), text).catch(() => undefined);
         }
         await this.prisma.changeNotice.update({ where: { id: notice.id }, data: { remindedAt: now } });
         reminded += 1;
       } else if (notice.respondBy && notice.respondBy.getTime() < now.getTime() - 2 * 86_400_000) {
-        const text = tr("Решение по изменению этапа «{0}» в проекте «{1}» задерживается{2}. Вы можете решить за этап «{3}» сами. {4}", [stageDefinitions[sourceKey].title, notice.project.name, lead?.userId ? ' — ведущий этапа не ответил' : '', stageDefinitions[targetKey].title, link]).trim();
+        const text = () => tr("Решение по изменению этапа «{0}» в проекте «{1}» задерживается{2}. Вы можете решить за этап «{3}» сами. {4}", [tr(stageDefinitions[sourceKey].title), notice.project.name, lead?.userId ? tr(' — ведущий этапа не ответил') : '', tr(stageDefinitions[targetKey].title), link]).trim();
         await this.notifyUser(notice.project.ownerUserId, text).catch(() => undefined);
-        await this.emailUser(notice.project.ownerUserId, tr("BuildPath: решите за этап «{0}»", [stageDefinitions[targetKey].title]), text).catch(() => undefined);
+        await this.emailUser(notice.project.ownerUserId, () => tr("BuildPath: решите за этап «{0}»", [tr(stageDefinitions[targetKey].title)]), text).catch(() => undefined);
         await this.prisma.$transaction([
           this.prisma.changeNotice.update({ where: { id: notice.id }, data: { escalatedAt: now } }),
           this.prisma.projectEvent.create({ data: { projectId: notice.projectId, type: 'change_notice_escalated', stageKey: targetKey, details: { noticeId: notice.id, sourceStageKey: sourceKey } } }),
@@ -1161,7 +1166,7 @@ export class JourneyService {
         }
         await this.event(tx, projectId, userId, input.action === 'accept' ? 'change_accepted' : 'change_accepted_no_change', targetKey, { sourceStageKey: sourceKey, byOwner: byOwnerOverLead });
       });
-      if (byOwnerOverLead && targetSide.leadUserId) await this.notifyUser(targetSide.leadUserId, tr("Владелец проекта «{0}» решил по изменению этапа «{1}»: {2} этап «{3}». {4}", [ctx.project.name, sourceTitle, input.action === 'accept' ? 'обновить' : 'оставить без изменений', targetTitle, this.stageLink(projectId, targetKey)]).trim()).catch(() => undefined);
+      if (byOwnerOverLead && targetSide.leadUserId) await this.notifyUser(targetSide.leadUserId, () => tr("Владелец проекта «{0}» решил по изменению этапа «{1}»: {2} этап «{3}». {4}", [ctx.project.name, tr(sourceTitle), input.action === 'accept' ? tr('обновить') : tr('оставить без изменений'), tr(targetTitle), this.stageLink(projectId, targetKey)]).trim()).catch(() => undefined);
     } else if (input.action === 'discuss') {
       if (!targetSide.allowed) throw new ForbiddenException('CHANGE_DECISION_FORBIDDEN');
       if (!input.text) throw new BadRequestException('TEXT_REQUIRED');
@@ -1170,7 +1175,7 @@ export class JourneyService {
         await tx.changeNotice.update({ where: { id: notice.id }, data: { status: 'discussing' } });
         await this.event(tx, projectId, userId, 'change_discussed', targetKey, { sourceStageKey: sourceKey });
       });
-      await this.notifyChange(ctx, sourceKey, tr("По изменению этапа «{0}» в проекте «{1}» есть вопрос от этапа «{2}»: {3} {4}", [sourceTitle, ctx.project.name, targetTitle, input.text, this.stageLink(projectId, sourceKey)]).trim(), 'source');
+      await this.notifyChange(ctx, sourceKey, () => tr("По изменению этапа «{0}» в проекте «{1}» есть вопрос от этапа «{2}»: {3} {4}", [tr(sourceTitle), ctx.project.name, tr(targetTitle), input.text, this.stageLink(projectId, sourceKey)]).trim(), 'source');
     } else {
       if (!sourceSide.allowed) throw new ForbiddenException('CHANGE_REPLY_FORBIDDEN');
       if (notice.status !== 'discussing') throw new ConflictException('CHANGE_NOT_DISCUSSED');
@@ -1179,8 +1184,8 @@ export class JourneyService {
         await tx.changeMessage.create({ data: { noticeId: notice.id, authorUserId: userId, side: 'source', resolution: input.resolution, text: input.text! } });
         await this.event(tx, projectId, userId, 'change_replied', sourceKey, { targetStageKey: targetKey, resolution: input.resolution });
       });
-      const what = input.resolution === 'will_revise' ? 'выпустит исправленную версию' : input.resolution === 'kept' ? 'оставляет изменение как есть' : 'просит решить владельца';
-      await this.notifyChange(ctx, targetKey, tr("Ответ по изменению этапа «{0}» в проекте «{1}»: {2}. {3} {4}", [sourceTitle, ctx.project.name, what, input.text, this.stageLink(projectId, targetKey)]).trim(), 'target');
+      const what = () => (input.resolution === 'will_revise' ? tr('выпустит исправленную версию') : input.resolution === 'kept' ? tr('оставляет изменение как есть') : tr('просит решить владельца'));
+      await this.notifyChange(ctx, targetKey, () => tr("Ответ по изменению этапа «{0}» в проекте «{1}»: {2}. {3} {4}", [tr(sourceTitle), ctx.project.name, what(), input.text, this.stageLink(projectId, targetKey)]).trim(), 'target');
     }
     return this.changeNotices(userId, projectId, targetSide.allowed || this.canRead(ctx, targetKey) ? targetKey : sourceKey);
   }
@@ -1197,13 +1202,14 @@ export class JourneyService {
     return this.journey(userId, projectId);
   }
 
-  /** Best-effort Telegram notice to a linked account; the workflow never depends on it. */
-  private async notifyUser(userId: string, text: string): Promise<void> {
+  /** Best-effort Telegram notice to a linked account, in that account's language; the workflow never depends on it. */
+  private async notifyUser(userId: string, text: Message): Promise<void> {
     const config = telegramConfig();
     if (!config) return;
-    const identity = await this.prisma.externalIdentity.findUnique({ where: { userId_provider: { userId, provider: 'telegram' } }, select: { chatId: true } });
-    if (identity) await sendTelegramMessage(config, identity.chatId, text);
+    const identity = await this.prisma.externalIdentity.findUnique({ where: { userId_provider: { userId, provider: 'telegram' } }, select: { chatId: true, user: { select: { locale: true } } } });
+    if (identity) await sendTelegramMessage(config, identity.chatId, inLocale(identity.user.locale, text));
   }
+
 
   private stageLink(projectId: string, key: string): string {
     return process.env.PUBLIC_APP_URL ? new URL(`/projects/${projectId}/stages/${key}`, process.env.PUBLIC_APP_URL).toString() : '';
@@ -1228,7 +1234,7 @@ export class JourneyService {
       await tx.projectStage.update({ where: { id: stage.id }, data: { status: 'in_review' } });
       await this.event(tx, projectId, userId, 'stage_submitted', key, { versionNumber: version?.versionNumber ?? null });
     });
-    await this.notifyUser(ctx.project.ownerUserId, tr("Этап «{0}» в проекте «{1}» отправлен вам на приёмку. {2}", [definition.title, ctx.project.name, this.stageLink(projectId, key)]).trim()).catch(() => undefined);
+    await this.notifyUser(ctx.project.ownerUserId, () => tr("Этап «{0}» в проекте «{1}» отправлен вам на приёмку. {2}", [tr(definition.title), ctx.project.name, this.stageLink(projectId, key)]).trim()).catch(() => undefined);
     await this.worktime.recordAction(userId, projectId, key);
     return this.journey(userId, projectId);
   }
@@ -1243,7 +1249,7 @@ export class JourneyService {
     });
     const leads = await this.prisma.stageAssignment.findMany({ where: { stageId: stage.id, status: 'active', role: 'lead' }, select: { userId: true } });
     for (const lead of leads) {
-      if (lead.userId) await this.notifyUser(lead.userId, tr("Владелец проекта «{0}» просит доработать этап «{1}»: {2} {3}", [ctx.project.name, stageDefinitions[key as StageKey].title, note, this.stageLink(projectId, key)]).trim()).catch(() => undefined);
+      if (lead.userId) await this.notifyUser(lead.userId, () => tr("Владелец проекта «{0}» просит доработать этап «{1}»: {2} {3}", [ctx.project.name, tr(stageDefinitions[key as StageKey].title), note, this.stageLink(projectId, key)]).trim()).catch(() => undefined);
     }
     return this.journey(userId, projectId);
   }
@@ -1366,8 +1372,8 @@ export class JourneyService {
     if (site) files.push({ name: 'site.html', mimeType: 'text/html', content: await this.inline(projectId, site.html) });
     const plan = get<TechPlan>('techplan');
     if (plan) {
-      files.push({ name: 'architecture.md', mimeType: 'text/markdown', content: techPlanMarkdown(plan) });
-      if (plan.api || plan.kind !== 'site') files.push({ name: plan.kind === 'site' ? 'lead-api.yaml' : 'booking-api.yaml', mimeType: 'text/yaml', content: plan.api || bookingApiContract() });
+      files.push({ name: 'architecture.md', mimeType: 'text/markdown', content: inProject(ctx, () => techPlanMarkdown(plan)) });
+      if (plan.api || plan.kind !== 'site') files.push({ name: plan.kind === 'site' ? 'lead-api.yaml' : 'booking-api.yaml', mimeType: 'text/yaml', content: plan.api || inProject(ctx, () => bookingApiContract()) });
     }
     files.push({
       name: 'project.json', mimeType: 'application/json',

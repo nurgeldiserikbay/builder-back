@@ -2,9 +2,10 @@
 // parts of the system, the data it keeps, each scenario step by step, which steps of the business process the product
 // covers, and the API contract. Derived deterministically from the accepted inputs; the owner adds only notes.
 // It is a contract stage: the build relies on it.
+import { tr } from '../i18n/i18n.js';
 import type { Brief, MainAction } from './artifacts.js';
 import { ArtifactValidationError, stableStringify } from './artifacts.js';
-import { WEEKDAYS, doable, type Schedule } from './schedule.js';
+import { doable, weekdayShort, type Schedule } from './schedule.js';
 import type { BusinessProcess, Capability } from './process.js';
 
 export const TECHPLAN_VERSION = '1.1.0';
@@ -50,8 +51,43 @@ export function techPlanNotes(raw: unknown): string | null {
   return trimmed || null;
 }
 
+/** Descriptions inside the API contracts, written in the current language (longest first so shorter ones never split a longer one). */
+const contractTexts = (): Array<[string, string]> => ([
+  ["Публичные страницы и формы записи. Одинаковы на хостинге BuildPath и в программе для своего сервера. Страницы работают без JavaScript; формы — application/x-www-form-urlencoded, только с того же адреса (заголовок Origin).", tr("Публичные страницы и формы записи. Одинаковы на хостинге BuildPath и в программе для своего сервера. Страницы работают без JavaScript; формы — application/x-www-form-urlencoded, только с того же адреса (заголовок Origin).")],
+  ["Форма заявки на опубликованном сайте BuildPath. Работает без JavaScript; только с того же адреса (заголовок Origin).", tr("Форма заявки на опубликованном сайте BuildPath. Работает без JavaScript; только с того же адреса (заголовок Origin).")],
+  ["Начало записи (UTC) — открывает подтверждение, если время свободно", tr("Начало записи (UTC) — открывает подтверждение, если время свободно")],
+  ["Шаги записи — услуга, мастер, день и время, подтверждение", tr("Шаги записи — услуга, мастер, день и время, подтверждение")],
+  ["Слишком много записей: больше 5 в час с одного адреса", tr("Слишком много записей: больше 5 в час с одного адреса")],
+  ["Ошибка в форме — страница подтверждения с пояснением", tr("Ошибка в форме — страница подтверждения с пояснением")],
+  ["10–15 цифр, можно с + пробелами скобками и дефисами", tr("10–15 цифр, можно с + пробелами скобками и дефисами")],
+  ["Запись создана: Location /book/b/{token}?new=1", tr("Запись создана: Location /book/b/{token}?new=1")],
+  ["HTML-страница формы с объяснением ошибки", tr("HTML-страница формы с объяснением ошибки")],
+  ["Страница записи клиента (личная ссылка)", tr("Страница записи клиента (личная ссылка)")],
+  ["Пропуск шага, когда выбор единственный", tr("Пропуск шага, когда выбор единственный")],
+  ["Ловушка для ботов — должна быть пустой", tr("Ловушка для ботов — должна быть пустой")],
+  ["Слишком много заявок с одного адреса", tr("Слишком много заявок с одного адреса")],
+  ["Заявка принята: страница «Спасибо»", tr("Заявка принята: страница «Спасибо»")],
+  ["День в часовом поясе расписания", tr("День в часовом поясе расписания")],
+  ["Запись и кнопка отмены до срока", tr("Запись и кнопка отмены до срока")],
+  ["Телефон, мессенджер или почта", tr("Телефон, мессенджер или почта")],
+  ["Возврат на страницу записи", tr("Возврат на страницу записи")],
+  ["Заявки с сайта (BuildPath)", tr("Заявки с сайта (BuildPath)")],
+  ["Онлайн-запись (BuildPath)", tr("Онлайн-запись (BuildPath)")],
+  ["Номер услуги в расписании", tr("Номер услуги в расписании")],
+  ["Отправка не с этого сайта", tr("Отправка не с этого сайта")],
+  ["Отменить запись клиентом", tr("Отменить запись клиентом")],
+  ["Запрос не с адреса сайта", tr("Запрос не с адреса сайта")],
+  ["HTML-страница шага", tr("HTML-страница шага")],
+  ["Время уже заняли", tr("Время уже заняли")],
+  ["Нет такой записи", tr("Нет такой записи")],
+  ["Отправить заявку", tr("Отправить заявку")],
+  ["Мастер или any", tr("Мастер или any")],
+  ["Создать запись", tr("Создать запись")],
+] as Array<[string, string]>);
+const inContractLanguage = (yaml: string): string => contractTexts().reduce((text, [ru, local]) => text.split(ru).join(local), yaml);
+
 export function bookingApiContract(): string {
-  return `openapi: 3.1.0
+  return inContractLanguage(`openapi: 3.1.0
 info:
   title: Онлайн-запись (BuildPath)
   version: ${TECHPLAN_VERSION}
@@ -133,13 +169,13 @@ components:
         clientPhone: { type: string }
         comment: { type: [string, 'null'] }
         status: { type: string, enum: [booked, cancelled_by_client, cancelled_by_owner, done, no_show] }
-`;
+`);
 }
 
-const minutes = (value: number) => (value < 60 ? `${value} мин` : `${Math.floor(value / 60)} ч${value % 60 ? ` ${value % 60} мин` : ''}`);
+const minutes = (value: number) => (value < 60 ? tr("{0} мин", [value]) : tr("{0} ч{1}", [Math.floor(value / 60), value % 60 ? tr(" {0} мин", [value % 60]) : '']));
 
 export function leadApiContract(): string {
-  return `openapi: 3.1.0
+  return inContractLanguage(`openapi: 3.1.0
 info:
   title: Заявки с сайта (BuildPath)
   version: ${TECHPLAN_VERSION}
@@ -161,7 +197,7 @@ paths:
               required: [name, contact, consent]
               properties:
                 name: { type: string, maxLength: 80 }
-                contact: { type: string, maxLength: 120, description: Телефон, мессенджер или почта }
+                contact: { type: string, maxLength: 120, description: 'Телефон, мессенджер или почта' }
                 message: { type: string, maxLength: 1000 }
                 consent: { type: string, enum: [yes] }
                 website: { type: string, description: Ловушка для ботов — должна быть пустой }
@@ -170,33 +206,33 @@ paths:
         '400': { description: HTML-страница формы с объяснением ошибки }
         '403': { description: Запрос не с адреса сайта }
         '429': { description: Слишком много заявок с одного адреса }
-`;
+`);
 }
 
 /** What the product does for each step of the owner's process. */
 export function coverageOf(kind: 'booking' | 'site', mainAction: MainAction | null, process: BusinessProcess): CoverageStep[] {
   const built = (how: string) => ({ status: 'built' as const, how });
   const notBuilt = (how: string) => ({ status: 'not_built' as const, how });
-  const bookingOnly = (how: string) => (kind === 'booking' ? built(how) : notBuilt('Это делает тип проекта «Онлайн-запись к мастеру».'));
+  const bookingOnly = (how: string) => (kind === 'booking' ? built(how) : notBuilt(tr("Это делает тип проекта «Онлайн-запись к мастеру».")));
   const verdict = (capability: Capability): { status: CoverageStep['status']; how: string } => {
     switch (capability) {
-      case 'view_info': return built('Страницы сайта.');
-      case 'contact': return built('Кнопки звонка, мессенджера и письма на сайте.');
+      case 'view_info': return built(tr("Страницы сайта."));
+      case 'contact': return built(tr("Кнопки звонка, мессенджера и письма на сайте."));
       case 'request_form': return mainAction === 'form'
-        ? built('Форма заявки на сайте, опубликованном на BuildPath.')
-        : notBuilt('Форма появится, если в «Цели сайта» выбрать главным действием «Оставить заявку на сайте».');
-      case 'notify_owner': return kind === 'booking' || mainAction === 'form' ? built('Уведомление в Telegram и на почту.') : notBuilt('Без формы или записи уведомлять не о чем: клиент связывается с вами напрямую.');
-      case 'choose_slot': return bookingOnly('Шаги записи: услуга → мастер → день и время, только свободное время.');
-      case 'book': return bookingOnly('Форма записи; одно время не займут дважды.');
-      case 'cancel_booking': return bookingOnly('Личная ссылка клиента на запись с кнопкой отмены.');
-      case 'notify_master': return bookingOnly('Мастеру с приглашением — в Telegram или на почту.');
-      case 'remind_client': return bookingOnly('Письмо клиенту перед визитом, если он оставил почту; владельцу — кнопка «Напомнить в WhatsApp».');
-      case 'mark_visit': return bookingOnly('Отметка «пришёл / не пришёл» у владельца и в кабинете мастера.');
-      case 'manage_schedule': return bookingOnly('Этап «Расписание и запись» и пересборка сайта.');
-      case 'offline': return { status: 'manual', how: 'Делается вне сайта — так и задумано.' };
-      case 'pay_online': return notBuilt('Онлайн-оплаты на сайтах BuildPath пока нет — нужен разработчик (решение «Технологии») или оплата на месте.');
-      case 'account': return notBuilt('Личных кабинетов клиентов на сайтах BuildPath пока нет — нужен разработчик (решение «Технологии»).');
-      default: return notBuilt('BuildPath не делает это автоматически — обсудите с разработчиком или делайте вручную.');
+        ? built(tr("Форма заявки на сайте, опубликованном на BuildPath."))
+        : notBuilt(tr("Форма появится, если в «Цели сайта» выбрать главным действием «Оставить заявку на сайте»."));
+      case 'notify_owner': return kind === 'booking' || mainAction === 'form' ? built(tr("Уведомление в Telegram и на почту.")) : notBuilt(tr("Без формы или записи уведомлять не о чем: клиент связывается с вами напрямую."));
+      case 'choose_slot': return bookingOnly(tr("Шаги записи: услуга → мастер → день и время, только свободное время."));
+      case 'book': return bookingOnly(tr("Форма записи; одно время не займут дважды."));
+      case 'cancel_booking': return bookingOnly(tr("Личная ссылка клиента на запись с кнопкой отмены."));
+      case 'notify_master': return bookingOnly(tr("Мастеру с приглашением — в Telegram или на почту."));
+      case 'remind_client': return bookingOnly(tr("Письмо клиенту перед визитом, если он оставил почту; владельцу — кнопка «Напомнить в WhatsApp»."));
+      case 'mark_visit': return bookingOnly(tr("Отметка «пришёл / не пришёл» у владельца и в кабинете мастера."));
+      case 'manage_schedule': return bookingOnly(tr("Этап «Расписание и запись» и пересборка сайта."));
+      case 'offline': return { status: 'manual', how: tr("Делается вне сайта — так и задумано.") };
+      case 'pay_online': return notBuilt(tr("Онлайн-оплаты на сайтах BuildPath пока нет — нужен разработчик (решение «Технологии») или оплата на месте."));
+      case 'account': return notBuilt(tr("Личных кабинетов клиентов на сайтах BuildPath пока нет — нужен разработчик (решение «Технологии»)."));
+      default: return notBuilt(tr("BuildPath не делает это автоматически — обсудите с разработчиком или делайте вручную."));
     }
   };
   const actorName = new Map(process.actors.map((actor) => [actor.key, actor.name]));
@@ -209,44 +245,44 @@ const field = (name: string, type: string) => ({ name, type });
 
 export function buildTechPlan(input: { projectType: string; brief: Brief | null; schedule: Schedule | null; process: BusinessProcess | null }, ownerNotes: string | null): TechPlan {
   const { schedule } = input;
-  const name = input.brief?.businessName || 'ваш бизнес';
+  const name = input.brief?.businessName || tr("ваш бизнес");
   const mainAction = input.brief?.mainAction ?? null;
   const kind = input.projectType === 'booking' && schedule ? 'booking' : 'site';
   const coverage = input.process ? coverageOf(kind, mainAction, input.process) : null;
   const hosting = [
-    { option: 'BuildPath', plain: kind === 'booking' ? 'Работает сразу после публикации; записи хранятся в BuildPath.' : 'Публикация одной кнопкой; заявки хранятся в BuildPath.' },
-    { option: 'Свой сервер', plain: kind === 'booking' ? 'Пакет с программой записи (Node.js, без сторонних библиотек), Caddy и инструкцией; записи — на вашем сервере.' : 'Готовая страница и настройки веб-сервера Caddy; форма заявок там не работает.' },
-    { option: 'GitHub Pages', plain: kind === 'booking' ? 'Не подходит: там нельзя принимать записи.' : 'Подходит для страницы; форма заявок там не работает.' },
+    { option: 'BuildPath', plain: kind === 'booking' ? tr("Работает сразу после публикации; записи хранятся в BuildPath.") : tr("Публикация одной кнопкой; заявки хранятся в BuildPath.") },
+    { option: tr("Свой сервер"), plain: kind === 'booking' ? tr("Пакет с программой записи (Node.js, без сторонних библиотек), Caddy и инструкцией; записи — на вашем сервере.") : tr("Готовая страница и настройки веб-сервера Caddy; форма заявок там не работает.") },
+    { option: 'GitHub Pages', plain: kind === 'booking' ? tr("Не подходит: там нельзя принимать записи.") : tr("Подходит для страницы; форма заявок там не работает.") },
   ];
   if (kind === 'site') {
     const form = mainAction === 'form';
     return {
       planVersion: TECHPLAN_VERSION, kind,
-      summary: `Сайт «${name}» — одна страница без скриптов: рассказывает о вас и ведёт к главному действию${form ? ' — заявке через форму, которая приходит вам в Telegram или на почту' : ''}.`,
+      summary: tr("Сайт «{0}» — одна страница без скриптов: рассказывает о вас и ведёт к главному действию{1}.", [name, form ? tr(" — заявке через форму, которая приходит вам в Telegram или на почту") : '']),
       components: [
-        { title: 'Страница сайта', plain: 'Готовая страница из принятых текстов и стиля. Открывается быстро даже на слабом телефоне.', technical: 'Статический HTML и CSS без JavaScript, CSP без inline-скриптов; собирается платформой детерминированно.' },
-        ...(form ? [{ title: 'Приём заявок', plain: 'Сервер BuildPath принимает заявки с формы и хранит их в проекте.', technical: 'POST /__forms/lead (urlencoded), проверка Origin, ловушка для ботов, лимит заявок с адреса.' }] : []),
-        ...(form ? [{ title: 'Уведомления', plain: 'Новая заявка приходит вам в Telegram и/или на почту.', technical: 'Бот Telegram и почта (Resend); отправка повторяется при сбое.' }] : []),
-        { title: 'Публикация', plain: 'Адрес BuildPath или свой домен, HTTPS включается сам.', technical: 'Отдельный процесс сайтов за Caddy с сертификатами по запросу.' },
+        { title: tr("Страница сайта"), plain: tr("Готовая страница из принятых текстов и стиля. Открывается быстро даже на слабом телефоне."), technical: tr("Статический HTML и CSS без JavaScript, CSP без inline-скриптов; собирается платформой детерминированно.") },
+        ...(form ? [{ title: tr("Приём заявок"), plain: tr("Сервер BuildPath принимает заявки с формы и хранит их в проекте."), technical: tr("POST /__forms/lead (urlencoded), проверка Origin, ловушка для ботов, лимит заявок с адреса.") }] : []),
+        ...(form ? [{ title: tr("Уведомления"), plain: tr("Новая заявка приходит вам в Telegram и/или на почту."), technical: tr("Бот Telegram и почта (Resend); отправка повторяется при сбое.") }] : []),
+        { title: tr("Публикация"), plain: tr("Адрес BuildPath или свой домен, HTTPS включается сам."), technical: tr("Отдельный процесс сайтов за Caddy с сертификатами по запросу.") },
       ],
-      dataModel: form ? [{ key: 'lead', name: 'Заявка', plain: 'Кто и как просит связаться.', fields: [field('Имя', 'текст до 80'), field('Контакт', 'текст до 120'), field('Сообщение', 'текст до 1000'), field('Согласие', 'время'), field('Когда пришла', 'время')], links: [] }] : [],
-      sequences: form ? [{ title: 'Заявка', participants: ['Посетитель', 'Сайт', 'Сервер BuildPath', 'Вы'], messages: [
-        { from: 0, to: 1, text: 'Заполняет форму и даёт согласие' },
-        { from: 1, to: 2, text: 'Отправляет заявку (POST /__forms/lead)' },
-        { from: 2, to: 2, text: 'Проверяет адрес отправки и сохраняет' },
-        { from: 2, to: 3, text: 'Уведомление в Telegram или на почту' },
-        { from: 2, to: 0, text: 'Страница «Спасибо, заявка отправлена»' },
-      ] }] : [{ title: 'Обращение', participants: ['Посетитель', 'Сайт', 'Вы'], messages: [
-        { from: 0, to: 1, text: 'Открывает сайт и читает' },
-        { from: 1, to: 0, text: 'Показывает главную кнопку' },
-        { from: 0, to: 2, text: mainAction === 'call' ? 'Звонит вам' : mainAction === 'visit' ? 'Приходит по адресу' : mainAction === 'email' ? 'Пишет письмо' : 'Пишет в мессенджер' },
+      dataModel: form ? [{ key: 'lead', name: tr("Заявка"), plain: tr("Кто и как просит связаться."), fields: [field(tr("Имя"), tr("текст до 80")), field(tr("Контакт"), tr("текст до 120")), field(tr("Сообщение"), tr("текст до 1000")), field(tr("Согласие"), tr("время")), field(tr("Когда пришла"), tr("время"))], links: [] }] : [],
+      sequences: form ? [{ title: tr("Заявка"), participants: [tr("Посетитель"), tr("Сайт"), tr("Сервер BuildPath"), tr("Вы")], messages: [
+        { from: 0, to: 1, text: tr("Заполняет форму и даёт согласие") },
+        { from: 1, to: 2, text: tr("Отправляет заявку (POST /__forms/lead)") },
+        { from: 2, to: 2, text: tr("Проверяет адрес отправки и сохраняет") },
+        { from: 2, to: 3, text: tr("Уведомление в Telegram или на почту") },
+        { from: 2, to: 0, text: tr("Страница «Спасибо, заявка отправлена»") },
+      ] }] : [{ title: tr("Обращение"), participants: [tr("Посетитель"), tr("Сайт"), tr("Вы")], messages: [
+        { from: 0, to: 1, text: tr("Открывает сайт и читает") },
+        { from: 1, to: 0, text: tr("Показывает главную кнопку") },
+        { from: 0, to: 2, text: mainAction === 'call' ? tr("Звонит вам") : mainAction === 'visit' ? tr("Приходит по адресу") : mainAction === 'email' ? tr("Пишет письмо") : tr("Пишет в мессенджер") },
       ] }],
       coverage,
       features: [], roles: [], data: [],
-      pages: [{ path: '/', title: 'Главная', plain: 'Ваш сайт.' }, { path: '/privacy', title: 'Данные', plain: 'Какие данные собираются, зачем и как попросить удалить.' }],
-      notifications: form ? ['Вам: новая заявка — в Telegram и/или на почту (настройки публикации).'] : ['Сайт ничего не отправляет: клиент связывается с вами напрямую.'],
+      pages: [{ path: '/', title: tr("Главная"), plain: tr("Ваш сайт.") }, { path: '/privacy', title: tr("Данные"), plain: tr("Какие данные собираются, зачем и как попросить удалить.") }],
+      notifications: form ? [tr("Вам: новая заявка — в Telegram и/или на почту (настройки публикации).")] : [tr("Сайт ничего не отправляет: клиент связывается с вами напрямую.")],
       hosting,
-      limits: ['Одна страница; разделы и блоки — из набора BuildPath.', 'Нет онлайн-оплаты и личных кабинетов клиентов.'],
+      limits: [tr("Одна страница; разделы и блоки — из набора BuildPath."), tr("Нет онлайн-оплаты и личных кабинетов клиентов.")],
       api: form ? leadApiContract() : '',
       ownerNotes,
     };
@@ -254,70 +290,70 @@ export function buildTechPlan(input: { projectType: string; brief: Brief | null;
   const sched = schedule!;
   const services = sched.services.map((service) => `${service.name} (${minutes(service.minutes)})`).join(', ');
   const masters = sched.masters.map((master) => {
-    const days = master.week.map((day, index) => (day ? `${WEEKDAYS[index]} ${day.from}–${day.to}` : null)).filter(Boolean).join(', ');
-    return `${master.name}: ${doable(sched, master).map((service) => service.name).join(', ') || 'нет услуг'}; ${days || 'нет рабочих дней'}`;
+    const days = master.week.map((day, index) => (day ? `${weekdayShort(index)} ${day.from}–${day.to}` : null)).filter(Boolean).join(', ');
+    return `${master.name}: ${doable(sched, master).map((service) => service.name).join(', ') || tr("нет услуг")}; ${days || tr("нет рабочих дней")}`;
   });
   const rules = sched.rules;
   return {
     planVersion: TECHPLAN_VERSION, kind,
-    summary: `Сайт «${name}» с онлайн-записью: клиент выбирает услугу, мастера и свободное время, оставляет имя и телефон и получает личную ссылку на запись. Вы и мастер получаете уведомление и видите записи в BuildPath.`,
+    summary: tr("Сайт «{0}» с онлайн-записью: клиент выбирает услугу, мастера и свободное время, оставляет имя и телефон и получает личную ссылку на запись. Вы и мастер получаете уведомление и видите записи в BuildPath.", [name]),
     components: [
-      { title: 'Сайт и шаги записи', plain: 'Страницы без скриптов: услуга → мастер → день и время → контакты.', technical: 'Статический HTML/CSS + серверные страницы /book; формы urlencoded, проверка Origin.' },
-      { title: 'Сервер записи', plain: 'Считает свободное время и не даёт занять одно время дважды.', technical: 'BuildPath: PostgreSQL, advisory-lock на сайт и пересчёт слотов в транзакции. Свой сервер: один процесс Node.js и JSON-хранилище с очередью записи.' },
-      { title: 'Записи для владельца и мастеров', plain: 'Владелец видит все записи, мастер — только свои; отмечают, пришёл ли клиент.', technical: 'BuildPath: страницы записей и кабинет мастера по приглашению. Свой сервер: /admin под паролем.' },
-      { title: 'Уведомления и напоминания', plain: 'Новые записи и отмены — вам и мастеру; клиенту — письмо перед визитом, если он оставил почту.', technical: 'Telegram-бот и почта (Resend); напоминания отправляет процесс сайтов раз в 5 минут, каждая запись захватывается перед отправкой.' },
+      { title: tr("Сайт и шаги записи"), plain: tr("Страницы без скриптов: услуга → мастер → день и время → контакты."), technical: tr("Статический HTML/CSS + серверные страницы /book; формы urlencoded, проверка Origin.") },
+      { title: tr("Сервер записи"), plain: tr("Считает свободное время и не даёт занять одно время дважды."), technical: tr("BuildPath: PostgreSQL, advisory-lock на сайт и пересчёт слотов в транзакции. Свой сервер: один процесс Node.js и JSON-хранилище с очередью записи.") },
+      { title: tr("Записи для владельца и мастеров"), plain: tr("Владелец видит все записи, мастер — только свои; отмечают, пришёл ли клиент."), technical: tr("BuildPath: страницы записей и кабинет мастера по приглашению. Свой сервер: /admin под паролем.") },
+      { title: tr("Уведомления и напоминания"), plain: tr("Новые записи и отмены — вам и мастеру; клиенту — письмо перед визитом, если он оставил почту."), technical: tr("Telegram-бот и почта (Resend); напоминания отправляет процесс сайтов раз в 5 минут, каждая запись захватывается перед отправкой.") },
     ],
     dataModel: [
-      { key: 'booking', name: 'Запись', plain: 'Кто, к кому и когда записался.', fields: [field('Услуга', 'из расписания'), field('Мастер', 'из расписания'), field('Начало и конец', 'время, UTC'), field('Имя', 'текст до 80'), field('Телефон', 'текст'), field('Комментарий', 'текст до 300'), field('Почта для напоминания', 'удаляется после напоминания'), field('Статус', 'записан · отменена · пришёл · не пришёл')], links: [{ to: 'service', kind: 'one', label: 'услуга' }, { to: 'master', kind: 'one', label: 'мастер' }] },
-      { key: 'service', name: 'Услуга', plain: `Из расписания: ${services}.`, fields: [field('Название', 'текст'), field('Длительность', 'минуты'), field('Цена', 'текст')], links: [] },
-      { key: 'master', name: 'Мастер', plain: masters.join('. '), fields: [field('Имя', 'текст'), field('Рабочие дни и часы', 'по дням недели'), field('Услуги', 'список')], links: [{ to: 'service', kind: 'many', label: 'делает' }] },
-      { key: 'access', name: 'Доступ мастера', plain: 'Приглашение мастеру видеть свои записи.', fields: [field('Почта', 'текст'), field('Статус', 'приглашён · подключён · закрыт')], links: [{ to: 'master', kind: 'one', label: 'для мастера' }] },
+      { key: 'booking', name: tr("Запись"), plain: tr("Кто, к кому и когда записался."), fields: [field(tr("Услуга"), tr("из расписания")), field(tr("Мастер"), tr("из расписания")), field(tr("Начало и конец"), tr("время, UTC")), field(tr("Имя"), tr("текст до 80")), field(tr("Телефон"), tr("текст")), field(tr("Комментарий"), tr("текст до 300")), field(tr("Почта для напоминания"), tr("удаляется после напоминания")), field(tr("Статус"), tr("записан · отменена · пришёл · не пришёл"))], links: [{ to: 'service', kind: 'one', label: tr("услуга") }, { to: 'master', kind: 'one', label: tr("мастер") }] },
+      { key: 'service', name: tr("Услуга"), plain: tr("Из расписания: {0}.", [services]), fields: [field(tr("Название"), tr("текст")), field(tr("Длительность"), tr("минуты")), field(tr("Цена"), tr("текст"))], links: [] },
+      { key: 'master', name: tr("Мастер"), plain: masters.join('. '), fields: [field(tr("Имя"), tr("текст")), field(tr("Рабочие дни и часы"), tr("по дням недели")), field(tr("Услуги"), tr("список"))], links: [{ to: 'service', kind: 'many', label: tr("делает") }] },
+      { key: 'access', name: tr("Доступ мастера"), plain: tr("Приглашение мастеру видеть свои записи."), fields: [field(tr("Почта"), tr("текст")), field(tr("Статус"), tr("приглашён · подключён · закрыт"))], links: [{ to: 'master', kind: 'one', label: tr("для мастера") }] },
     ],
     sequences: [
-      { title: 'Запись', participants: ['Клиент', 'Сайт', 'Сервер BuildPath', 'Мастер и вы'], messages: [
-        { from: 0, to: 1, text: 'Выбирает услугу и мастера' },
-        { from: 1, to: 2, text: 'Запрашивает свободное время (GET /book)' },
-        { from: 2, to: 1, text: `Свободные варианты, шаг ${rules.slotStep} мин` },
-        { from: 0, to: 1, text: 'Выбирает время, оставляет имя и телефон' },
-        { from: 1, to: 2, text: 'Создаёт запись (POST /__forms/booking)' },
-        { from: 2, to: 2, text: 'Проверяет, что время всё ещё свободно' },
-        { from: 2, to: 3, text: 'Уведомление о новой записи' },
-        { from: 2, to: 0, text: 'Личная ссылка на запись' },
-        { from: 2, to: 0, text: 'Напоминание на почту перед визитом' },
+      { title: tr("Запись"), participants: [tr("Клиент"), tr("Сайт"), tr("Сервер BuildPath"), tr("Мастер и вы")], messages: [
+        { from: 0, to: 1, text: tr("Выбирает услугу и мастера") },
+        { from: 1, to: 2, text: tr("Запрашивает свободное время (GET /book)") },
+        { from: 2, to: 1, text: tr("Свободные варианты, шаг {0} мин", [rules.slotStep]) },
+        { from: 0, to: 1, text: tr("Выбирает время, оставляет имя и телефон") },
+        { from: 1, to: 2, text: tr("Создаёт запись (POST /__forms/booking)") },
+        { from: 2, to: 2, text: tr("Проверяет, что время всё ещё свободно") },
+        { from: 2, to: 3, text: tr("Уведомление о новой записи") },
+        { from: 2, to: 0, text: tr("Личная ссылка на запись") },
+        { from: 2, to: 0, text: tr("Напоминание на почту перед визитом") },
       ] },
-      { title: 'Отмена', participants: ['Клиент', 'Сайт', 'Сервер BuildPath', 'Мастер и вы'], messages: [
-        { from: 0, to: 1, text: `Открывает свою ссылку не позже чем за ${rules.cancelHours} ч` },
-        { from: 1, to: 2, text: 'Отменяет запись (POST /__forms/booking-cancel)' },
-        { from: 2, to: 2, text: 'Освобождает время' },
-        { from: 2, to: 3, text: 'Уведомление об отмене' },
+      { title: tr("Отмена"), participants: [tr("Клиент"), tr("Сайт"), tr("Сервер BuildPath"), tr("Мастер и вы")], messages: [
+        { from: 0, to: 1, text: tr("Открывает свою ссылку не позже чем за {0} ч", [rules.cancelHours]) },
+        { from: 1, to: 2, text: tr("Отменяет запись (POST /__forms/booking-cancel)") },
+        { from: 2, to: 2, text: tr("Освобождает время") },
+        { from: 2, to: 3, text: tr("Уведомление об отмене") },
       ] },
     ],
     coverage,
     features: [
-      { title: 'Свободное время', plain: `Клиент видит только то время, когда мастер работает и свободен на всю длительность услуги. Варианты начала — каждые ${rules.slotStep} мин, не раньше чем через ${rules.minNoticeHours} ч и не дальше ${rules.horizonDays} дн.`,
-        technical: `Слоты считаются на сервере из расписания (часовой пояс ${sched.timezone}) и активных записей; пересечения по мастеру исключаются.` },
-      { title: 'Запись без двойного бронирования', plain: 'Если два человека выбрали одно время, запишется только первый, второму предложим другое.',
-        technical: 'BuildPath: advisory-lock на сайт в транзакции PostgreSQL с пересчётом слотов. Свой сервер: одна очередь записи в одном процессе.' },
-      { title: '«Любой свободный мастер»', plain: 'Клиент может не выбирать мастера — запишем к тому, у кого в этот день меньше записей.', technical: 'Выбор мастера с наименьшим числом активных записей за день среди свободных.' },
-      { title: 'Отмена клиентом', plain: `По личной ссылке клиент может отменить запись не позже чем за ${rules.cancelHours} ч.`, technical: 'В ссылке случайный токен 192 бит; хранится только его SHA-256.' },
+      { title: tr("Свободное время"), plain: tr("Клиент видит только то время, когда мастер работает и свободен на всю длительность услуги. Варианты начала — каждые {0} мин, не раньше чем через {1} ч и не дальше {2} дн.", [rules.slotStep, rules.minNoticeHours, rules.horizonDays]),
+        technical: tr("Слоты считаются на сервере из расписания (часовой пояс {0}) и активных записей; пересечения по мастеру исключаются.", [sched.timezone]) },
+      { title: tr("Запись без двойного бронирования"), plain: tr("Если два человека выбрали одно время, запишется только первый, второму предложим другое."),
+        technical: tr("BuildPath: advisory-lock на сайт в транзакции PostgreSQL с пересчётом слотов. Свой сервер: одна очередь записи в одном процессе.") },
+      { title: tr("«Любой свободный мастер»"), plain: tr("Клиент может не выбирать мастера — запишем к тому, у кого в этот день меньше записей."), technical: tr("Выбор мастера с наименьшим числом активных записей за день среди свободных.") },
+      { title: tr("Отмена клиентом"), plain: tr("По личной ссылке клиент может отменить запись не позже чем за {0} ч.", [rules.cancelHours]), technical: tr("В ссылке случайный токен 192 бит; хранится только его SHA-256.") },
     ],
     roles: [
-      { title: 'Клиент', plain: 'Записывается и отменяет свою запись. Аккаунт не нужен.', technical: 'Без входа; согласие на обработку данных обязательно; лимит 5 записей в час с одного адреса.' },
-      { title: 'Вы (владелец)', plain: 'Меняете расписание, видите все записи и приглашаете мастеров.', technical: 'Владелец и менеджеры проекта; на своём сервере — пароль ADMIN_PASSWORD.' },
-      { title: 'Мастера', plain: `Видят только свои записи и отмечают визиты. Мастера: ${sched.masters.map((master) => master.name).join(', ')}.`, technical: 'Приглашение по почте на 7 дней, только для этого адреса; не участники проекта.' },
+      { title: tr("Клиент"), plain: tr("Записывается и отменяет свою запись. Аккаунт не нужен."), technical: tr("Без входа; согласие на обработку данных обязательно; лимит 5 записей в час с одного адреса.") },
+      { title: tr("Вы (владелец)"), plain: tr("Меняете расписание, видите все записи и приглашаете мастеров."), technical: tr("Владелец и менеджеры проекта; на своём сервере — пароль ADMIN_PASSWORD.") },
+      { title: tr("Мастера"), plain: tr("Видят только свои записи и отмечают визиты. Мастера: {0}.", [sched.masters.map((master) => master.name).join(', ')]), technical: tr("Приглашение по почте на 7 дней, только для этого адреса; не участники проекта.") },
     ],
     data: [
-      { title: 'Хранение', plain: 'Записи удаляются автоматически через 12 месяцев после визита; почта клиента — сразу после напоминания.', technical: 'Срок LEAD_RETENTION_DAYS (по умолчанию 365); IP хранится только как солёный хэш.' },
+      { title: tr("Хранение"), plain: tr("Записи удаляются автоматически через 12 месяцев после визита; почта клиента — сразу после напоминания."), technical: tr("Срок LEAD_RETENTION_DAYS (по умолчанию 365); IP хранится только как солёный хэш.") },
     ],
     pages: [
-      { path: '/', title: 'Главная', plain: 'Ваш сайт с разделом «Онлайн-запись» и кнопками записи.' },
-      { path: '/book', title: 'Запись', plain: 'Шаги: услуга → мастер → день и время → контакты.' },
-      { path: '/book/b/…', title: 'Моя запись', plain: 'Личная страница клиента с отменой.' },
-      { path: '/privacy', title: 'Данные', plain: 'Какие данные собираются, зачем и как попросить удалить.' },
+      { path: '/', title: tr("Главная"), plain: tr("Ваш сайт с разделом «Онлайн-запись» и кнопками записи.") },
+      { path: '/book', title: tr("Запись"), plain: tr("Шаги: услуга → мастер → день и время → контакты.") },
+      { path: '/book/b/…', title: tr("Моя запись"), plain: tr("Личная страница клиента с отменой.") },
+      { path: '/privacy', title: tr("Данные"), plain: tr("Какие данные собираются, зачем и как попросить удалить.") },
     ],
-    notifications: ['Вам и мастеру: новая запись и отмена — в Telegram или на почту.', 'Клиенту: подтверждение на экране, личная ссылка и письмо-напоминание, если он оставил почту. SMS не отправляются.'],
+    notifications: [tr("Вам и мастеру: новая запись и отмена — в Telegram или на почту."), tr("Клиенту: подтверждение на экране, личная ссылка и письмо-напоминание, если он оставил почту. SMS не отправляются.")],
     hosting,
-    limits: ['Рабочие часы задаются по дням недели: перерывов и выходных на конкретные даты пока нет.', 'Нет предоплаты и онлайн-оплаты.', 'На своём сервере нет напоминаний и кабинетов мастеров.'],
+    limits: [tr("Рабочие часы задаются по дням недели: перерывов и выходных на конкретные даты пока нет."), tr("Нет предоплаты и онлайн-оплаты."), tr("На своём сервере нет напоминаний и кабинетов мастеров.")],
     api: bookingApiContract(),
     ownerNotes,
   };
@@ -334,22 +370,22 @@ export function normalizeTechPlan(raw: unknown): TechPlan {
 }
 
 export function techPlanMarkdown(plan: TechPlan): string {
-  const items = (list: TechPlanItem[]) => list.flatMap((item) => [`- **${item.title}.** ${item.plain}`, `  - Технически: ${item.technical}`]);
+  const items = (list: TechPlanItem[]) => list.flatMap((item) => [`- **${item.title}.** ${item.plain}`, tr("  - Технически: {0}", [item.technical])]);
   return [
-    '# Архитектура', '', plan.summary, '',
-    ...(plan.components?.length ? ['## Из чего состоит', '', ...items(plan.components), ''] : []),
-    ...(plan.dataModel?.length ? ['## Данные', '', ...plan.dataModel.flatMap((entity) => [`- **${entity.name}.** ${entity.plain}`, ...entity.fields.map((item) => `  - ${item.name}: ${item.type}`)]), ''] : []),
-    ...(plan.sequences ?? []).flatMap((sequence) => [`## Сценарий: ${sequence.title}`, '', ...sequence.messages.map((message, index) => `${index + 1}. ${sequence.participants[message.from]} → ${sequence.participants[message.to]}: ${message.text}`), '']),
-    ...(plan.coverage?.length ? ['## Что из процесса делает сайт', '', ...plan.coverage.map((step) => `- ${step.status === 'built' ? '✓' : step.status === 'manual' ? '·' : '✗'} ${step.scenario} — ${step.actor}: ${step.action}. ${step.how}`), ''] : []),
-    ...(plan.features.length ? ['## Что умеет', '', ...items(plan.features), ''] : []),
-    ...(plan.roles.length ? ['## Кто пользуется', '', ...items(plan.roles), ''] : []),
-    ...(plan.data.length ? ['## Хранение', '', ...items(plan.data), ''] : []),
-    '## Страницы', '', ...plan.pages.map((item) => `- \`${item.path}\` — ${item.title}: ${item.plain}`), '',
-    '## Уведомления', '', ...plan.notifications.map((item) => `- ${item}`), '',
-    '## Где работает', '', ...plan.hosting.map((item) => `- ${item.option}: ${item.plain}`), '',
-    '## Ограничения этой версии', '', ...plan.limits.map((item) => `- ${item}`), '',
-    ...(plan.ownerNotes ? ['## Заметки владельца', '', plan.ownerNotes, ''] : []),
-    plan.api ? `Контракт API — в файле ${plan.kind === 'site' ? 'lead-api.yaml' : 'booking-api.yaml'}. Версия: ${plan.planVersion}.` : `Версия: ${plan.planVersion}.`, '',
+    tr("# Архитектура"), '', plan.summary, '',
+    ...(plan.components?.length ? [tr("## Из чего состоит"), '', ...items(plan.components), ''] : []),
+    ...(plan.dataModel?.length ? [tr("## Данные"), '', ...plan.dataModel.flatMap((entity) => [`- **${entity.name}.** ${entity.plain}`, ...entity.fields.map((item) => `  - ${item.name}: ${item.type}`)]), ''] : []),
+    ...(plan.sequences ?? []).flatMap((sequence) => [tr("## Сценарий: {0}", [sequence.title]), '', ...sequence.messages.map((message, index) => `${index + 1}. ${sequence.participants[message.from]} → ${sequence.participants[message.to]}: ${message.text}`), '']),
+    ...(plan.coverage?.length ? [tr("## Что из процесса делает сайт"), '', ...plan.coverage.map((step) => `- ${step.status === 'built' ? '✓' : step.status === 'manual' ? '·' : '✗'} ${step.scenario} — ${step.actor}: ${step.action}. ${step.how}`), ''] : []),
+    ...(plan.features.length ? [tr("## Что умеет"), '', ...items(plan.features), ''] : []),
+    ...(plan.roles.length ? [tr("## Кто пользуется"), '', ...items(plan.roles), ''] : []),
+    ...(plan.data.length ? [tr("## Хранение"), '', ...items(plan.data), ''] : []),
+    tr("## Страницы"), '', ...plan.pages.map((item) => `- \`${item.path}\` — ${item.title}: ${item.plain}`), '',
+    tr("## Уведомления"), '', ...plan.notifications.map((item) => `- ${item}`), '',
+    tr("## Где работает"), '', ...plan.hosting.map((item) => `- ${item.option}: ${item.plain}`), '',
+    tr("## Ограничения этой версии"), '', ...plan.limits.map((item) => `- ${item}`), '',
+    ...(plan.ownerNotes ? [tr("## Заметки владельца"), '', plan.ownerNotes, ''] : []),
+    plan.api ? tr("Контракт API — в файле {0}. Версия: {1}.", [plan.kind === 'site' ? 'lead-api.yaml' : 'booking-api.yaml', plan.planVersion]) : tr("Версия: {0}.", [plan.planVersion]), '',
   ].join('\n');
 }
 

@@ -1,5 +1,5 @@
 // «Расписание и запись»: typed artifact, validation, template and deterministic availability (online booking route).
-import { tr } from '../i18n/i18n.js';
+import { currentLocale, tr } from '../i18n/i18n.js';
 import { ArtifactValidationError, type Offer } from './artifacts.js';
 
 export const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'] as const;
@@ -111,7 +111,7 @@ export function templateSchedule(offer: Offer | null): Schedule {
   return {
     timezone: 'Asia/Almaty',
     services: (offer?.services ?? []).slice(0, 12).map((service) => ({ name: service.name, minutes: 60 })),
-    masters: [{ key: 'm1', name: 'Мастер', services: [], week: [workday, workday, workday, workday, workday, { ...workday }, null] }],
+    masters: [{ key: 'm1', name: tr("Мастер"), services: [], week: [workday, workday, workday, workday, workday, { ...workday }, null] }],
     rules: { ...defaultRules },
   };
 }
@@ -194,8 +194,15 @@ export function openDays(schedule: Schedule, serviceName: string, masterKey: str
   return days;
 }
 
+const WEEKDAYS_EN = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
+/** Short weekday name (0 = Monday) in the current language. */
+export const weekdayShort = (index: number): string => (currentLocale() === 'en' ? WEEKDAYS_EN : WEEKDAYS)[index] ?? '';
+const MONTHS_EN = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** «Ср, 11 ноября» or «Wed, 11 November» — in the language of the current page or message. */
 export function dayLabel(day: string): string {
   const [, month, date] = day.split('-').map(Number) as [number, number, number];
+  if (currentLocale() === 'en') return `${weekdayShort(weekdayOf(day))}, ${date} ${MONTHS_EN[month - 1]}`;
   const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
   return `${WEEKDAYS[weekdayOf(day)]}, ${date} ${months[month - 1]}`;
 }

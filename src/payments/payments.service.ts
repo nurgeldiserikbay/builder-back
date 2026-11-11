@@ -1,3 +1,4 @@
+import { inLocale, money, tr, type Message } from '../i18n/i18n.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { JourneyService } from '../journey/journey.service.js';
@@ -227,9 +228,9 @@ export class PaymentsService {
       await tx.adminAuditEvent.create({ data: { staffId, eventType: decision === 'refund' ? 'refund.made' : 'refund.rejected', targetType: 'project_top_up', targetId: topUp.id, details: { amount: tenge(amountTiyn), reference, note } } });
       await tx.projectEvent.create({ data: { projectId: topUp.projectId, type: decision === 'refund' ? 'refund_made' : 'refund_rejected', details: { topUpId: topUp.id, amount: tenge(amountTiyn) } } });
     });
-    await this.notify(topUp.userId, decision === 'refund'
-      ? `BuildPath вернул ${tenge(amountTiyn).toLocaleString('ru-RU')} ₸ с баланса проекта. Деньги придут на карту, с которой вы платили; обычно это занимает несколько рабочих дней.`
-      : `Возврат ${tenge(amountTiyn).toLocaleString('ru-RU')} ₸ отклонён: ${note}. Деньги снова доступны на балансе проекта.`);
+    await this.notify(topUp.userId, () => (decision === 'refund'
+      ? tr('BuildPath вернул {0} ₸ с баланса проекта. Деньги придут на карту, с которой вы платили; обычно это занимает несколько рабочих дней.', [money(amountTiyn)])
+      : tr('Возврат {0} ₸ отклонён: {1}. Деньги снова доступны на балансе проекта.', [money(amountTiyn), note])));
     return this.refundQueue();
   }
 
@@ -249,7 +250,7 @@ export class PaymentsService {
       this.prisma.adminAuditEvent.create({ data: { staffId, eventType: 'refund.stage_payment', targetType: 'stage_payment', targetId: paymentId, details: { amount: tenge(payment.amountTiyn), reference, note } } }),
       this.prisma.projectEvent.create({ data: { projectId: payment.projectId, type: 'specialist_payment_refunded', stageKey: payment.assignment.stage.stageKey, details: { paymentId, amount: tenge(payment.amountTiyn) } } }),
     ]);
-    await this.notify(payment.assignment.userId, `Оплата ${tenge(payment.amountTiyn).toLocaleString('ru-RU')} ₸ за этап «${stageDefinitions[payment.assignment.stage.stageKey as StageKey]?.title ?? ''}» возвращена владельцу проекта: ${note}.`);
+    await this.notify(payment.assignment.userId, () => tr('Оплата {0} ₸ за этап «{1}» возвращена владельцу проекта: {2}.', [money(payment.amountTiyn), tr(stageDefinitions[payment.assignment.stage.stageKey as StageKey]?.title ?? ''), note]));
     return this.payoutQueue();
   }
 
@@ -293,12 +294,13 @@ export class PaymentsService {
 
   // --- Specialists paid through BuildPath ---
 
-  private async notify(userId: string | null, text: string) {
+  private async notify(userId: string | null, text: Message) {
     const config = telegramConfig();
     if (!config || !userId) return;
-    const identity = await this.prisma.externalIdentity.findUnique({ where: { userId_provider: { userId, provider: 'telegram' } }, select: { chatId: true } });
-    if (identity) await sendTelegramMessage(config, identity.chatId, text).catch(() => undefined);
+    const identity = await this.prisma.externalIdentity.findUnique({ where: { userId_provider: { userId, provider: 'telegram' } }, select: { chatId: true, user: { select: { locale: true } } } });
+    if (identity) await sendTelegramMessage(config, identity.chatId, inLocale(identity.user.locale, text)).catch(() => undefined);
   }
+
 
   /** The specialist's own payout account: only the holder name and the last digits are ever shown back. */
   async payoutDetails(userId: string) {
@@ -370,7 +372,7 @@ export class PaymentsService {
     if (updated.count) {
       await this.prisma.projectEvent.create({ data: { projectId: payment.projectId, type: 'specialist_payment_held', stageKey: payment.assignment.stage.stageKey, details: { paymentId: id, amount: tenge(payment.amountTiyn) } } });
       const details = payment.assignment.userId ? await this.prisma.payoutDetails.findUnique({ where: { userId: payment.assignment.userId }, select: { id: true } }) : null;
-      await this.notify(payment.assignment.userId, `Владелец оплатил вашу работу через BuildPath: ${tenge(payment.payoutTiyn ?? payment.amountTiyn).toLocaleString('ru-RU')} ₸ к выплате.${details ? ' Переведём на ваш счёт после проверки.' : ' Укажите счёт для выплаты на странице этапа — без него перевести не сможем.'}`);
+      await this.notify(payment.assignment.userId, () => `${tr('Владелец оплатил вашу работу через BuildPath: {0} ₸ к выплате.', [money(payment.payoutTiyn ?? payment.amountTiyn)])} ${details ? tr('Переведём на ваш счёт после проверки.') : tr('Укажите счёт для выплаты на странице этапа — без него перевести не сможем.')}`);
     }
     return 'ok';
   }
@@ -423,7 +425,7 @@ export class PaymentsService {
       this.prisma.adminAuditEvent.create({ data: { staffId, eventType: 'payout.paid_out', targetType: 'stage_payment', targetId: paymentId, details: { amount: tenge(payment.payoutTiyn ?? payment.amountTiyn), reference: clean } } }),
       this.prisma.projectEvent.create({ data: { projectId: payment.projectId, type: 'specialist_paid_out', stageKey: payment.assignment.stage.stageKey, details: { paymentId, amount: tenge(payment.payoutTiyn ?? payment.amountTiyn) } } }),
     ]);
-    await this.notify(payment.assignment.userId, `BuildPath перевёл вам ${tenge(payment.payoutTiyn ?? payment.amountTiyn).toLocaleString('ru-RU')} ₸ за этап «${stageDefinitions[payment.assignment.stage.stageKey as StageKey]?.title ?? ''}». Номер перевода: ${clean}.`);
+    await this.notify(payment.assignment.userId, () => tr('BuildPath перевёл вам {0} ₸ за этап «{1}». Номер перевода: {2}.', [money(payment.payoutTiyn ?? payment.amountTiyn), tr(stageDefinitions[payment.assignment.stage.stageKey as StageKey]?.title ?? ''), clean]));
     return this.payoutQueue();
   }
 

@@ -2,6 +2,7 @@
 import type { SiteMeta } from '../journey/artifacts.js';
 import { escapeHtml } from '../journey/site-renderer.js';
 import { dayLabel, doable, localClock, localDay, type BookingConfig, type Slot } from '../journey/schedule.js';
+import { currentLocale, tr } from '../i18n/i18n.js';
 import { page } from './site-pages.js';
 
 export const BOOKING_FORM_PATH = '/__forms/booking';
@@ -24,14 +25,15 @@ function shell(meta: SiteMeta, title: string, body: string): string {
 
 function minutesText(minutes: number): string {
   const hours = Math.floor(minutes / 60);
-  return [hours ? `${hours} ч` : '', minutes % 60 ? `${minutes % 60} мин` : ''].filter(Boolean).join(' ');
+  return [hours ? tr('{0} ч', [hours]) : '', minutes % 60 ? tr('{0} мин', [minutes % 60]) : ''].filter(Boolean).join(' ');
 }
 
+const shortMonthsEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const shortMonths = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 /** «Ср, 11 ноя» — fits three in a row on a phone. */
 function shortDay(day: string): string {
   const [, month, date] = day.split('-').map(Number) as [number, number, number];
-  return `${dayLabel(day).split(',')[0]}, ${date} ${shortMonths[month - 1]}`;
+  return `${dayLabel(day).split(',')[0]}, ${date} ${(currentLocale() === 'en' ? shortMonthsEn : shortMonths)[month - 1]}`;
 }
 
 export interface BookingQuery { service: number | null; master: string | null; day: string | null; start: Date | null }
@@ -55,48 +57,48 @@ export function mastersFor(config: BookingConfig, serviceIndex: number) {
 
 export function servicesPage(meta: SiteMeta, config: BookingConfig): string {
   const items = config.schedule.services.map((service, index) => ({ service, index })).filter(({ index }) => mastersFor(config, index).length > 0);
-  return shell(meta, 'Онлайн-запись', `<p class="steps">Шаг 1 из 3</p><h1>Выберите услугу</h1><ul class="choices">${items.map(({ service, index }) =>
-    `<li><a href="${link({ s: index })}">${escapeHtml(service.name)}<small>${escapeHtml(minutesText(service.minutes))}${config.prices[service.name] ? ` · ${escapeHtml(config.prices[service.name]!)}` : ''}</small></a></li>`).join('')}</ul><a class="back" href="/">← На сайт</a>`);
+  return shell(meta, tr('Онлайн-запись'), `<p class="steps">${tr('Шаг {0} из 3', [1])}</p><h1>${tr('Выберите услугу')}</h1><ul class="choices">${items.map(({ service, index }) =>
+    `<li><a href="${link({ s: index })}">${escapeHtml(service.name)}<small>${escapeHtml(minutesText(service.minutes))}${config.prices[service.name] ? ` · ${escapeHtml(config.prices[service.name]!)}` : ''}</small></a></li>`).join('')}</ul><a class="back" href="/">← ${tr('На сайт')}</a>`);
 }
 
 export function mastersPage(meta: SiteMeta, config: BookingConfig, serviceIndex: number): string {
   const service = config.schedule.services[serviceIndex]!;
   const masters = mastersFor(config, serviceIndex);
-  return shell(meta, 'Выберите мастера', `<p class="steps">Шаг 2 из 3 · ${escapeHtml(service.name)}</p><h1>К кому записаться?</h1><ul class="choices">
-<li><a href="${link({ s: serviceIndex, m: 'any' })}">Любой свободный мастер<small>больше свободного времени</small></a></li>
-${masters.map((master) => `<li><a href="${link({ s: serviceIndex, m: master.key })}">${escapeHtml(master.name)}</a></li>`).join('')}</ul><a class="back" href="/book">← Другая услуга</a>`);
+  return shell(meta, tr('Выберите мастера'), `<p class="steps">${tr('Шаг {0} из 3', [2])} · ${escapeHtml(service.name)}</p><h1>${tr('К кому записаться?')}</h1><ul class="choices">
+<li><a href="${link({ s: serviceIndex, m: 'any' })}">${tr('Любой свободный мастер')}<small>${tr('больше свободного времени')}</small></a></li>
+${masters.map((master) => `<li><a href="${link({ s: serviceIndex, m: master.key })}">${escapeHtml(master.name)}</a></li>`).join('')}</ul><a class="back" href="/book">← ${tr('Другая услуга')}</a>`);
 }
 
 export function timesPage(meta: SiteMeta, config: BookingConfig, query: { service: number; master: string }, days: Array<{ day: string; free: number }>, selected: string | null, slots: Slot[]): string {
   const service = config.schedule.services[query.service]!;
-  const masterName = query.master === 'any' ? 'любой мастер' : config.schedule.masters.find((master) => master.key === query.master)?.name ?? '';
+  const masterName = query.master === 'any' ? tr('любой мастер') : config.schedule.masters.find((master) => master.key === query.master)?.name ?? '';
   const many = mastersFor(config, query.service).length > 1;
   const back = many ? link({ s: query.service }) : '/book';
   if (days.length === 0) {
-    return shell(meta, 'Нет свободного времени', `<p class="steps">${escapeHtml(service.name)} · ${escapeHtml(masterName)}</p><h1>Свободного времени пока нет</h1><p>В ближайшие ${config.schedule.rules.horizonDays} дн. всё занято. Попробуйте другого мастера или свяжитесь с нами по контактам на сайте.</p><a class="back" href="${back}">← Назад</a>`);
+    return shell(meta, tr('Нет свободного времени'), `<p class="steps">${escapeHtml(service.name)} · ${escapeHtml(masterName)}</p><h1>${tr('Свободного времени пока нет')}</h1><p>${tr('В ближайшие {0} дн. всё занято. Попробуйте другого мастера или свяжитесь с нами по контактам на сайте.', [config.schedule.rules.horizonDays])}</p><a class="back" href="${back}">← ${tr('Назад')}</a>`);
   }
   const day = selected && days.some((item) => item.day === selected) ? selected : days[0]!.day;
   const timeLinks = slots.map((slot) => `<li><a href="${link({ s: query.service, m: query.master, t: slot.startsAt.toISOString() })}">${localClock(slot.startsAt, config.schedule.timezone)}</a></li>`).join('');
-  return shell(meta, 'Выберите время', `<p class="steps">Шаг 3 из 3 · ${escapeHtml(service.name)} · ${escapeHtml(masterName)}</p><h1>Когда вам удобно?</h1>
-<ul class="days">${days.slice(0, 21).map((item) => `<li><a href="${link({ s: query.service, m: query.master, d: item.day })}#times"${item.day === day ? ' aria-current="true"' : ''}>${escapeHtml(shortDay(item.day))}<small>${item.free} своб.</small></a></li>`).join('')}</ul>
-<h2 id="times">${escapeHtml(dayLabel(day))}</h2><ul class="times">${timeLinks}</ul><a class="back" href="${back}">← Назад</a>`);
+  return shell(meta, tr('Выберите время'), `<p class="steps">${tr('Шаг {0} из 3', [3])} · ${escapeHtml(service.name)} · ${escapeHtml(masterName)}</p><h1>${tr('Когда вам удобно?')}</h1>
+<ul class="days">${days.slice(0, 21).map((item) => `<li><a href="${link({ s: query.service, m: query.master, d: item.day })}#times"${item.day === day ? ' aria-current="true"' : ''}>${escapeHtml(shortDay(item.day))}<small>${tr('{0} своб.', [item.free])}</small></a></li>`).join('')}</ul>
+<h2 id="times">${escapeHtml(dayLabel(day))}</h2><ul class="times">${timeLinks}</ul><a class="back" href="${back}">← ${tr('Назад')}</a>`);
 }
 
 export function confirmPage(meta: SiteMeta, config: BookingConfig, query: { service: number; master: string; start: Date }, error: string | null = null, values: Partial<Record<'name' | 'phone' | 'comment' | 'email', string>> = {}, askEmail = false): string {
   const service = config.schedule.services[query.service]!;
-  const masterName = query.master === 'any' ? 'любой свободный мастер' : config.schedule.masters.find((master) => master.key === query.master)?.name ?? '';
+  const masterName = query.master === 'any' ? tr('любой свободный мастер') : config.schedule.masters.find((master) => master.key === query.master)?.name ?? '';
   const tz = config.schedule.timezone;
-  return shell(meta, 'Подтвердите запись', `<h1>Почти готово</h1><div class="summary"><p><strong>${escapeHtml(service.name)}</strong></p>
-<p>${escapeHtml(dayLabel(localDay(query.start, tz)))}, ${localClock(query.start, tz)} · ${escapeHtml(minutesText(service.minutes))}</p><p>Мастер: ${escapeHtml(masterName)}</p>${config.prices[service.name] ? `<p>Цена: ${escapeHtml(config.prices[service.name]!)}</p>` : ''}</div>
+  return shell(meta, tr('Подтвердите запись'), `<h1>${tr('Почти готово')}</h1><div class="summary"><p><strong>${escapeHtml(service.name)}</strong></p>
+<p>${escapeHtml(dayLabel(localDay(query.start, tz)))}, ${localClock(query.start, tz)} · ${escapeHtml(minutesText(service.minutes))}</p><p>${tr('Мастер: {0}', [escapeHtml(masterName)])}</p>${config.prices[service.name] ? `<p>${tr('Цена: {0}', [escapeHtml(config.prices[service.name]!)])}</p>` : ''}</div>
 ${error ? `<p role="alert"><strong>${escapeHtml(error)}</strong></p>` : ''}
 <form method="post" action="${BOOKING_FORM_PATH}"><input type="hidden" name="s" value="${query.service}"><input type="hidden" name="m" value="${escapeHtml(query.master)}"><input type="hidden" name="t" value="${query.start.toISOString()}">
-<label>Ваше имя<input name="name" required maxlength="80" autocomplete="name" value="${escapeHtml(values.name ?? '')}"></label>
-<label>Телефон<input name="phone" required maxlength="30" inputmode="tel" autocomplete="tel" placeholder="+7 700 000 00 00" value="${escapeHtml(values.phone ?? '')}"></label>
-${askEmail ? `<label>Почта для напоминания (необязательно)<input name="email" type="email" maxlength="254" autocomplete="email" inputmode="email" value="${escapeHtml(values.email ?? '')}"><small>Пришлём одно письмо перед визитом и удалим адрес.</small></label>` : ''}
-<label>Комментарий (необязательно)<textarea name="comment" maxlength="300">${escapeHtml(values.comment ?? '')}</textarea></label>
-<div class="hp" aria-hidden="true"><label>Сайт<input name="website" tabindex="-1" autocomplete="off"></label></div>
-<label class="consent"><input type="checkbox" name="consent" value="yes" required><span>Согласен(на) на обработку моих данных для записи. <a href="/privacy">Как используются данные</a></span></label>
-<button type="submit">Записаться</button></form><a class="back" href="${link({ s: query.service, m: query.master, d: localDay(query.start, tz) })}">← Другое время</a>`);
+<label>${tr('Ваше имя')}<input name="name" required maxlength="80" autocomplete="name" value="${escapeHtml(values.name ?? '')}"></label>
+<label>${tr('Телефон')}<input name="phone" required maxlength="30" inputmode="tel" autocomplete="tel" placeholder="+7 700 000 00 00" value="${escapeHtml(values.phone ?? '')}"></label>
+${askEmail ? `<label>${tr('Почта для напоминания (необязательно)')}<input name="email" type="email" maxlength="254" autocomplete="email" inputmode="email" value="${escapeHtml(values.email ?? '')}"><small>${tr('Пришлём одно письмо перед визитом и удалим адрес.')}</small></label>` : ''}
+<label>${tr('Комментарий (необязательно)')}<textarea name="comment" maxlength="300">${escapeHtml(values.comment ?? '')}</textarea></label>
+<div class="hp" aria-hidden="true"><label>${tr('Сайт')}<input name="website" tabindex="-1" autocomplete="off"></label></div>
+<label class="consent"><input type="checkbox" name="consent" value="yes" required><span>${tr('Согласен(на) на обработку моих данных для записи.')} <a href="/privacy">${tr('Как используются данные')}</a></span></label>
+<button type="submit">${tr('Записаться')}</button></form><a class="back" href="${link({ s: query.service, m: query.master, d: localDay(query.start, tz) })}">← ${tr('Другое время')}</a>`);
 }
 
 export interface BookingView { serviceName: string; masterName: string; startsAt: Date; minutes: number; price: string | null; timezone: string; status: string; clientName: string }
@@ -104,13 +106,13 @@ export interface BookingView { serviceName: string; masterName: string; startsAt
 export function bookingPage(meta: SiteMeta, booking: BookingView, token: string, canCancel: boolean, cancelHours: number, justCreated: boolean): string {
   const tz = booking.timezone;
   const when = `${dayLabel(localDay(booking.startsAt, tz))}, ${localClock(booking.startsAt, tz)}`;
-  const status = booking.status === 'booked' ? '' : booking.status.startsWith('cancelled') ? '<p role="status"><strong>Запись отменена.</strong></p>' : '<p role="status"><strong>Визит прошёл.</strong></p>';
-  const contacts = meta.ownerContacts.map((contact) => `<p>${escapeHtml(contact.label)}: ${escapeHtml(contact.value)}</p>`).join('');
+  const status = booking.status === 'booked' ? '' : booking.status.startsWith('cancelled') ? `<p role="status"><strong>${tr('Запись отменена.')}</strong></p>` : `<p role="status"><strong>${tr('Визит прошёл.')}</strong></p>`;
+  const contacts = meta.ownerContacts.map((contact) => `<p>${escapeHtml(tr(contact.label))}: ${escapeHtml(contact.value)}</p>`).join('');
   const cancel = booking.status !== 'booked' ? ''
-    : canCancel ? `<form method="post" action="${BOOKING_CANCEL_PATH}"><input type="hidden" name="token" value="${escapeHtml(token)}"><button type="submit">Отменить запись</button></form><p>Отменить можно не позже чем за ${cancelHours} ч до начала.</p>`
-      : `<p>Отменить онлайн уже нельзя — до начала меньше ${cancelHours} ч. Свяжитесь с нами:</p>${contacts}`;
-  return shell(meta, 'Ваша запись', `<h1>${justCreated ? 'Вы записаны!' : 'Ваша запись'}</h1>${status}<div class="summary"><p><strong>${escapeHtml(booking.serviceName)}</strong></p><p>${escapeHtml(when)} · ${escapeHtml(minutesText(booking.minutes))}</p><p>Мастер: ${escapeHtml(booking.masterName)}</p>${booking.price ? `<p>Цена: ${escapeHtml(booking.price)}</p>` : ''}</div>
-${justCreated && booking.status === 'booked' ? '<p><strong>Сохраните эту страницу в закладки</strong> — по ней можно посмотреть или отменить запись.</p>' : ''}${cancel}<a class="back" href="/">← На сайт</a>`);
+    : canCancel ? `<form method="post" action="${BOOKING_CANCEL_PATH}"><input type="hidden" name="token" value="${escapeHtml(token)}"><button type="submit">${tr('Отменить запись')}</button></form><p>${tr('Отменить можно не позже чем за {0} ч до начала.', [cancelHours])}</p>`
+      : `<p>${tr('Отменить онлайн уже нельзя — до начала меньше {0} ч. Свяжитесь с нами:', [cancelHours])}</p>${contacts}`;
+  return shell(meta, tr('Ваша запись'), `<h1>${justCreated ? tr('Вы записаны!') : tr('Ваша запись')}</h1>${status}<div class="summary"><p><strong>${escapeHtml(booking.serviceName)}</strong></p><p>${escapeHtml(when)} · ${escapeHtml(minutesText(booking.minutes))}</p><p>${tr('Мастер: {0}', [escapeHtml(booking.masterName)])}</p>${booking.price ? `<p>${tr('Цена: {0}', [escapeHtml(booking.price)])}</p>` : ''}</div>
+${justCreated && booking.status === 'booked' ? `<p><strong>${tr('Сохраните эту страницу в закладки')}</strong> — ${tr('по ней можно посмотреть или отменить запись.')}</p>` : ''}${cancel}<a class="back" href="/">← ${tr('На сайт')}</a>`);
 }
 
 export interface BookingForm { service: number; master: string; start: Date; name: string; phone: string; comment: string | null; email: string | null }
@@ -123,13 +125,13 @@ export function parseBookingForm(raw: string): { ok: true; form: BookingForm } |
   const values = { name: clean(form.get('name')), phone: clean(form.get('phone')), comment: clean(form.get('comment')), email: clean(form.get('email')) };
   const fail = (error: string) => ({ ok: false as const, spam: false, error, values, query });
   if (clean(form.get('website'))) return { ok: false, spam: true, error: '', values, query };
-  if (query.service === null || !query.master || !query.start) return fail('Выберите услугу и время заново.');
-  if (form.get('consent') !== 'yes') return fail('Чтобы записаться, отметьте согласие на обработку данных.');
-  if (!values.name || values.name.length > 80) return fail('Укажите имя (до 80 символов).');
+  if (query.service === null || !query.master || !query.start) return fail(tr('Выберите услугу и время заново.'));
+  if (form.get('consent') !== 'yes') return fail(tr('Чтобы записаться, отметьте согласие на обработку данных.'));
+  if (!values.name || values.name.length > 80) return fail(tr('Укажите имя (до 80 символов).'));
   const digits = values.phone.replace(/[\s()-]/g, '');
-  if (!/^\+?\d{10,15}$/.test(digits)) return fail('Укажите телефон полностью, например +7 700 000 00 00.');
-  if (values.comment.length > 300) return fail('Комментарий слишком длинный — до 300 символов.');
+  if (!/^\+?\d{10,15}$/.test(digits)) return fail(tr('Укажите телефон полностью, например +7 700 000 00 00.'));
+  if (values.comment.length > 300) return fail(tr('Комментарий слишком длинный — до 300 символов.'));
   const email = values.email.toLowerCase();
-  if (email && (email.length > 254 || !/^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/.test(email))) return fail('Проверьте почту — например, name@mail.kz. Или оставьте поле пустым.');
+  if (email && (email.length > 254 || !/^[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/.test(email))) return fail(tr('Проверьте почту — например, name@mail.kz. Или оставьте поле пустым.'));
   return { ok: true, form: { service: query.service, master: query.master, start: query.start, name: values.name, phone: values.phone, comment: values.comment || null, email: email || null } };
 }

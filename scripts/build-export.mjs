@@ -6,7 +6,7 @@ export const EXPORT_BUNDLE = 'dist/export/booking-server.mjs';
 await build({
   entryPoints: ['src/export/booking-entry.ts'],
   outfile: EXPORT_BUNDLE,
-  bundle: true, platform: 'node', format: 'esm', target: 'node22', legalComments: 'none',
+  bundle: true, platform: 'node', format: 'esm', target: 'node22', legalComments: 'none', charset: 'utf8',
   banner: { js: '// Сайт с онлайн-записью, собранный BuildPath. Запуск: node server.mjs (Node.js 22+). Подробности — в README.md.' },
 });
 console.log(`Built ${EXPORT_BUNDLE}`);
