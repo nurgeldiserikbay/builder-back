@@ -244,6 +244,7 @@ export class JourneyService {
       }
     }
     const canAccept = ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role);
+    const technology = (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'technologies' } }, select: { optionKey: true } }))?.optionKey ?? null;
     const discussing = ctx.openNotices.filter((notice) => notice.status === 'discussing').map((notice) => notice.id);
     const lastSides = discussing.length ? await this.prisma.changeMessage.findMany({ where: { noticeId: { in: discussing } }, orderBy: { createdAt: 'desc' }, distinct: ['noticeId'], select: { noticeId: true, side: true } }) : [];
     const actsFor = (key: StageKey) => {
@@ -273,7 +274,7 @@ export class JourneyService {
         project: {
           id: ctx.project.id, name: ctx.project.name, status: ctx.project.status, locale: ctx.project.locale, role: ctx.role,
           projectType: ctx.type.key, typeTitle: ctx.type.title, resultExplanation: ctx.type.resultExplanation, startStageKey: ctx.project.startStageKey,
-          routeVersion: ctx.project.routeVersion, changeResponseDays: ctx.project.changeResponseDays,
+          routeVersion: ctx.project.routeVersion, changeResponseDays: ctx.project.changeResponseDays, technology,
         },
         viewer: this.viewerInfo(ctx),
         progress: { accepted: approved, total: ctx.route.length, percent: Math.round((approved / ctx.route.length) * 100) },
@@ -1301,7 +1302,7 @@ export class JourneyService {
   /** Project membership for other modules: role, whether the viewer may decide for the project, name and status. */
   async projectAccess(userId: string, projectId: string) {
     const ctx = await this.load(userId, projectId, 'members');
-    return { role: ctx.role, canDecide: acceptRoles.has(ctx.role), name: ctx.project.name, status: ctx.project.status, hasSpecialists: (await this.prisma.stageAssignment.count({ where: { projectId, status: { in: ['invited', 'active', 'completed'] } } })) > 0 };
+    return { role: ctx.role, canDecide: acceptRoles.has(ctx.role), name: ctx.project.name, status: ctx.project.status, projectType: ctx.type.key as string | null, hasSpecialists: (await this.prisma.stageAssignment.count({ where: { projectId, status: { in: ['invited', 'active', 'completed'] } } })) > 0 };
   }
 
   async result(userId: string, projectId: string) {
@@ -1317,7 +1318,11 @@ export class JourneyService {
     const content = get<ContentArtifact>('content');
     const site = get<SiteArtifact>('build');
     const openItems = stages.filter((stage) => !stage.accepted).map((stage) => `Этап «${stage.title}» не принят (${stage.statusLabel.toLowerCase()}).`);
-    const lines: string[] = [`# ${ctx.project.name}`, '', `Тип проекта: ${ctx.type.title}`, `Сформировано: ${new Date().toISOString()}`, ''];
+    const technology = (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'technologies' } }, select: { optionKey: true, reason: true } }));
+    const technologyLabel: Record<string, string> = { buildpath: 'технологии BuildPath', developer: 'свой стек у разработчика', constructor: 'конструктор сайтов' };
+    const lines: string[] = [`# ${ctx.project.name}`, '', `Тип проекта: ${ctx.type.title}`, `Сформировано: ${new Date().toISOString()}`];
+    if (technology) lines.push(`Технологии: ${technologyLabel[technology.optionKey] ?? technology.optionKey}${technology.reason ? ` — ${technology.reason}` : ''}`);
+    lines.push('');
     for (const stage of stages) lines.push(`- ${stage.title}: ${stage.accepted ? `принят, версия ${stage.accepted.versionNumber}` : stage.statusLabel.toLowerCase()}`);
     if (brief) {
       lines.push('', '## Паспорт проекта', '', `- Название: ${brief.businessName}`, `- Чем занимаемся: ${brief.whatYouDo}`, `- Клиенты: ${brief.audience}`);
