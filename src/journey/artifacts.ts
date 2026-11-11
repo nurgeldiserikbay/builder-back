@@ -7,6 +7,7 @@ import { normalizeSchedule, scheduleIssues, type BookingConfig, type Schedule } 
 import { normalizeTechPlan } from './techplan.js';
 import { normalizeProcess, processIssues, type BusinessProcess } from './process.js';
 import { normalizeSitemap, sitemapIssues, type Sitemap } from './sitemap.js';
+import { catalogIssues, normalizeCatalog, templateCatalog, type Catalog } from './products.js';
 
 export type MainAction = 'call' | 'message' | 'visit' | 'email' | 'form';
 export type Tone = 'friendly' | 'formal' | 'bold';
@@ -32,6 +33,8 @@ export interface SiteMeta {
   ownerContacts: Array<{ label: string; value: string }>;
   /** Online booking route: the accepted schedule this build was made from. */
   booking?: BookingConfig;
+  /** Store route: the accepted catalogue the cart and orders use. */
+  store?: Catalog;
 }
 export interface SiteArtifact {
   html: string;
@@ -191,6 +194,7 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown): unknown {
     case 'techplan': return normalizeTechPlan(raw);
     case 'process': return normalizeProcess(raw);
     case 'sitemap': return normalizeSitemap(raw);
+    case 'catalog': return normalizeCatalog(raw);
     default: throw new ArtifactValidationError('ARTIFACT_NOT_EDITABLE');
   }
 }
@@ -205,6 +209,7 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'techplan') return ['ownerNotes'];
   if (type === 'process') return ['actors', 'scenarios', 'rules', 'data'];
   if (type === 'sitemap') return ['pages'];
+  if (type === 'catalog') return ['products', 'delivery', 'payment', 'minOrder'];
   return [];
 }
 
@@ -291,6 +296,7 @@ export function completenessIssues(type: ArtifactType, content: unknown, context
   if (type === 'schedule') issues.push(...scheduleIssues(content as Schedule));
   if (type === 'process') issues.push(...processIssues(content as BusinessProcess));
   if (type === 'sitemap') issues.push(...sitemapIssues(content as Sitemap));
+  if (type === 'catalog') issues.push(...catalogIssues(content as Catalog));
   if (type === 'offer' && (content as Offer).services.length === 0) issues.push({ key: 'services', message: 'Добавьте хотя бы одну услугу.' });
   if (type === 'content') {
     const artifact = content as ContentArtifact;
@@ -429,6 +435,12 @@ export function importOfferText(text: string): Offer {
     }),
     hours: null,
   });
+}
+
+/** Import a product list: one product per line, «name — price». Delivery and payment start from the usual options. */
+export function importCatalogText(text: string): Catalog {
+  const offer = importOfferText(text);
+  return normalizeCatalog({ ...templateCatalog(null), products: offer.services.map((service, index) => ({ key: `p${index + 1}`, name: service.name, description: '', price: service.price ?? 0, available: true })) });
 }
 
 /** Import brief text: keeps the full description; structured fields are filled by the owner or AI. */

@@ -1,6 +1,7 @@
 // Deterministic, plain-language description of what changed between two accepted versions of a stage.
 import { processChanges, type BusinessProcess } from './process.js';
 import { sitemapChanges, type Sitemap } from './sitemap.js';
+import { catalogChanges, type Catalog } from './products.js';
 import { tr } from '../i18n/i18n.js';
 import { stageDefinitions, type StageKey } from './catalog.js';
 
@@ -98,6 +99,7 @@ export function describeChanges(key: StageKey, beforeRaw: unknown, afterRaw: unk
         : type === 'schedule' ? scheduleChanges(before, after)
           : type === 'process' ? processChanges(beforeRaw as BusinessProcess, afterRaw as BusinessProcess)
           : type === 'sitemap' ? sitemapChanges(beforeRaw as Sitemap, afterRaw as Sitemap)
+          : type === 'catalog' ? catalogChanges(beforeRaw as Catalog, afterRaw as Catalog)
           : type === 'techplan' ? [
             ...(JSON.stringify({ ...before, ownerNotes: null }) !== JSON.stringify({ ...after, ownerNotes: null }) ? ['План обновлён по новым данным'] : []),
             ...(before.ownerNotes !== after.ownerNotes ? ['Изменены заметки владельца'] : []),

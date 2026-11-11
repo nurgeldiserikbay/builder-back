@@ -21,6 +21,10 @@ export const CAPABILITIES = {
   remind_client: 'Напомнить клиенту',
   mark_visit: 'Отметить, пришёл ли клиент',
   manage_schedule: 'Изменить расписание',
+  choose_products: 'Выбрать товары в корзину',
+  order: 'Оформить заказ',
+  cancel_order: 'Отменить заказ',
+  manage_orders: 'Подтвердить или выполнить заказ',
   pay_online: 'Оплатить онлайн',
   account: 'Личный кабинет клиента',
   offline: 'Делается вне сайта, вручную',
@@ -126,6 +130,31 @@ export function templateProcess(projectType: string, brief: Brief | null): Busin
   const client: ProcessActor = { key: 'client', name: tr("Клиент"), kind: 'client' };
   const owner: ProcessActor = { key: 'owner', name: name.length <= 40 ? name : tr("Владелец"), kind: 'business' };
   const site: ProcessActor = { key: 'site', name: tr("Сайт"), kind: 'system' };
+  if (projectType === 'store') {
+    return {
+      actors: [client, site, owner],
+      scenarios: [
+        { key: 'order', title: tr('Заказ'), goal: tr('Клиент выбирает товары и оформляет заказ без звонка и регистрации.'), steps: [
+          { key: 'p1', actor: 'client', action: tr('Смотрит каталог и кладёт товары в корзину'), capability: 'choose_products' },
+          { key: 'p2', actor: 'client', action: tr('Выбирает способ получения и оплаты, оставляет имя и телефон'), capability: 'order' },
+          { key: 'p3', actor: 'site', action: tr('Сообщает владельцу о новом заказе'), capability: 'notify_owner' },
+          { key: 'p4', actor: 'owner', action: tr('Звонит клиенту и подтверждает заказ'), capability: 'manage_orders' },
+          { key: 'p5', actor: 'owner', action: tr('Собирает и передаёт заказ, получает оплату'), capability: 'offline' },
+          { key: 'p6', actor: 'owner', action: tr('Отмечает заказ выполненным'), capability: 'manage_orders' },
+        ] },
+        { key: 'cancel', title: tr('Отмена'), goal: tr('Клиент отменяет заказ, пока его не подтвердили.'), steps: [
+          { key: 'p1', actor: 'client', action: tr('Открывает свой заказ по ссылке и отменяет'), capability: 'cancel_order' },
+          { key: 'p2', actor: 'site', action: tr('Сообщает владельцу об отмене'), capability: 'notify_owner' },
+        ] },
+      ],
+      rules: [tr('Цены и наличие — по принятому каталогу.'), tr('Заказ можно отменить по ссылке, пока магазин его не подтвердил.')],
+      data: [
+        { key: 'client', name: tr('Клиент'), fields: [tr('Имя'), tr('Телефон'), tr('Адрес доставки')], links: [{ to: 'order', kind: 'many', label: tr('делает заказы') }] },
+        { key: 'order', name: tr('Заказ'), fields: [tr('Номер'), tr('Товары и количество'), tr('Способ получения'), tr('Оплата'), tr('Статус')], links: [{ to: 'product', kind: 'many', label: tr('товары') }] },
+        { key: 'product', name: tr('Товар'), fields: [tr('Название'), tr('Цена'), tr('В наличии')], links: [] },
+      ],
+    };
+  }
   if (projectType === 'booking') {
     const master: ProcessActor = { key: 'master', name: tr("Мастер"), kind: 'staff' };
     return {

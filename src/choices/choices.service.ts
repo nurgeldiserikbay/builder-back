@@ -424,6 +424,8 @@ export class ChoicesService {
     if (!site) throw new ConflictException('SITE_NOT_ACCEPTED');
     const build = await this.prisma.projectStage.findFirst({ where: { projectId, stageKey: 'build' }, select: { approvedVersionId: true } });
     const artifact = build?.approvedVersionId ? (await this.prisma.stageArtifactVersion.findUnique({ where: { id: build.approvedVersionId }, select: { content: true } }))?.content as unknown as SiteArtifact | undefined : undefined;
+    // Orders need the BuildPath sites server; a static copy of the store would show a cart that cannot take orders.
+    if (artifact?.meta?.store) throw new ConflictException('STORE_NEEDS_BUILDPATH');
     if (artifact?.meta?.booking) {
       // Online booking needs a program on the server, not just a page: ship the bundled booking app with the accepted schedule.
       let bundle: string;
