@@ -1,10 +1,10 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.3.0';
+export const ROUTE_CATALOG_VERSION = '1.4.0';
 
-export type StageKey = 'goal' | 'offer' | 'schedule' | 'techplan' | 'content' | 'design' | 'build';
-export type ArtifactType = 'brief' | 'offer' | 'schedule' | 'techplan' | 'content' | 'design' | 'site';
+export type StageKey = 'goal' | 'process' | 'offer' | 'schedule' | 'techplan' | 'content' | 'design' | 'build';
+export type ArtifactType = 'brief' | 'process' | 'offer' | 'schedule' | 'techplan' | 'content' | 'design' | 'site';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'booking';
 
@@ -109,6 +109,35 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
       ],
     },
   },
+  process: {
+    key: 'process',
+    version: '1.0.0',
+    title: 'Бизнес-процесс',
+    purpose: 'Опишем, как работает ваше дело: кто участвует, как клиент проходит путь от первого взгляда до результата, какие правила действуют и какую информацию вы храните. Схемы покажут это наглядно — по ним видно, что будет делать сайт, а что останется за вами.',
+    outcome: 'Участники, сценарии по шагам со схемой по ролям, правила и схема данных.',
+    artifactType: 'process',
+    inputs: ['goal'],
+    ai: {
+      level: 'ai_full',
+      whatItDoes: 'ИИ опишет процесс по паспорту проекта: участников, сценарии, правила и данные. Проверьте схему — поправьте шаги, которые у вас идут иначе.',
+      instructionExamples: ['Добавь сценарий переноса записи', 'Клиенты сначала пишут в WhatsApp, а потом приходят', 'Предоплата 30% перед визитом'],
+    },
+    acceptance: ['Участники и сценарии такие, как на самом деле', 'Правила записаны так, как вы их применяете', 'Понятно, какую информацию вы храните'],
+    acceptExplanation: 'Процесс станет основой архитектуры: она покажет, какие шаги сделает сайт, а какие нужно делать вручную или заказывать отдельно.',
+    importHint: null,
+    contract: { explanation: 'Бизнес-процесс — договорённость о том, как работает дело. Архитектура строится по нему; если процесс изменится, архитектура получит уведомление и покажет, что поменялось.' },
+    playbook: {
+      version: '1.0.0',
+      instructions: [
+        'Describe the real process of this business from the brief, in plain words, in the project language.',
+        'Actors: the client, the business (owner), staff if any, the site as «system», external services only if mentioned. At most 6.',
+        'Scenarios: 1–4 main ones (the client journey first), each 2–8 short steps in order; each step is one action by one actor.',
+        'Tag every step with the closest capability; use «offline» for things people do outside the site and «other» if nothing fits. Never mark pay_online or account unless the user asked for them.',
+        'Rules: business rules the user stated or that follow directly from the brief (cancellation, prepayment, working hours). Do not invent numbers.',
+        'Data: the information the business keeps (client, booking, request, service…) with 2–6 simple fields in plain words and links between them.',
+      ],
+    },
+  },
   offer: {
     key: 'offer',
     version: '1.0.0',
@@ -164,20 +193,20 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
   techplan: {
     key: 'techplan',
     version: '1.0.0',
-    title: 'Технический план',
-    purpose: 'Покажем простыми словами, что именно будет сделано: какие страницы, кто чем пользуется, какие данные хранятся и где всё будет работать. Для разработчиков здесь же — точное описание (контракт API).',
-    outcome: 'План приложения записи и контракт API: на него опирается сборка, его можно передать разработчику.',
+    title: 'Архитектура',
+    purpose: 'Покажем, как будет устроено то, что мы соберём: из чего состоит система, какие данные хранятся, как идёт каждый сценарий по шагам и какие шаги вашего процесса сделает сайт. Для разработчиков здесь же — точное описание (контракт API).',
+    outcome: 'Схема данных, сценарии по шагам, что покрывает сайт из вашего процесса, страницы, ограничения и контракт API.',
     artifactType: 'techplan',
-    inputs: ['goal', 'schedule'],
+    inputs: ['goal', 'process', 'schedule'],
     ai: {
       level: 'none',
-      whatItDoes: 'План составляет платформа по принятым этапам, без ИИ: так он всегда совпадает с тем, что будет собрано. Вы можете добавить заметки для разработчиков.',
+      whatItDoes: 'Архитектуру составляет платформа по принятым этапам, без ИИ: так она всегда совпадает с тем, что будет собрано. Вы можете добавить заметки для разработчиков.',
       instructionExamples: [],
     },
-    acceptance: ['Понятно, что будет на сайте и как работает запись', 'Ограничения этой версии вас устраивают или записаны в заметках'],
-    acceptExplanation: 'План станет договорённостью для сборки. Если позже изменить расписание, план попросит обновиться.',
+    acceptance: ['Понятно, что будет на сайте и как идут сценарии', 'Шаги, которые сайт не делает, вас устраивают или записаны в заметках', 'Ограничения этой версии вас устраивают'],
+    acceptExplanation: 'Архитектура станет договорённостью для сборки. Если позже изменить процесс или расписание, она попросит обновиться.',
     importHint: null,
-    contract: { explanation: 'Технический план — договорённость о том, что собирается. Сборка проверяет, что программа записи соответствует версии плана. Когда меняется расписание, план получает уведомление и обновляется по новым данным.' },
+    contract: { explanation: 'Архитектура — договорённость о том, что собирается. Сборка проверяет, что она соответствует версии плана. Когда меняется процесс или расписание, архитектура получает уведомление и обновляется по новым данным.' },
     playbook: { version: '1.0.0', instructions: [] },
   },
   content: {
@@ -257,7 +286,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Одна страница, которая рассказывает о вас и ведёт к одному действию: позвонить, написать или прийти.',
     goodFor: 'Мастерам, небольшим услугам, мероприятиям, запуску продукта.',
     examples: ['Мастер маникюра', 'Торты на заказ', 'Репетитор', 'Мероприятие'],
-    stages: ['goal', 'content', 'design', 'build'],
+    stages: ['goal', 'process', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница сайта в виде файла и все тексты проекта.',
   },
   company_site: {
@@ -266,7 +295,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Подробная страница компании: услуги и цены, о вас, как работаете, контакты и часы работы.',
     goodFor: 'Небольшим компаниям, салонам, студиям, сервисам.',
     examples: ['Автосервис', 'Стоматология', 'Юридическая консультация', 'Студия йоги'],
-    stages: ['goal', 'offer', 'content', 'design', 'build'],
+    stages: ['goal', 'process', 'offer', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница компании в виде файла, список услуг и все тексты проекта.',
   },
   booking: {
@@ -275,7 +304,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Сайт с записью: клиент выбирает услугу, мастера и свободное время, а вы получаете запись в Telegram и видите все записи в проекте.',
     goodFor: 'Салонам красоты, барбершопам, массажу, тренерам, репетиторам — всем, кто работает по времени.',
     examples: ['Барбершоп', 'Маникюр', 'Массаж', 'Автомойка'],
-    stages: ['goal', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'process', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт с онлайн-записью, список услуг, расписание и все тексты проекта. Запись работает, когда сайт опубликован на BuildPath.',
   },
 };

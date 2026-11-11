@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { projectTypes, routeAncestors, routeDependents, routeInputs } from './catalog.js';
+import { projectTypes, routeAncestors, routeDependents, routeInputs, type StageKey } from './catalog.js';
 import {
   ArtifactValidationError, changedKeys, completenessIssues, importContentText, importOfferText, mergeProposal, normalizeBrief,
   normalizeContent, templateContent, type Brief, type ContentArtifact,
@@ -23,13 +23,22 @@ describe('routes', () => {
     assert.deepEqual(routeInputs(projectTypes.landing.stages, 'content'), ['goal']);
   });
   it('computes dependents and ancestors transitively', () => {
-    assert.deepEqual(routeDependents(projectTypes.landing.stages, 'goal'), ['content', 'design', 'build']);
-    assert.deepEqual(routeAncestors(projectTypes.company_site.stages, 'build'), ['goal', 'offer', 'content', 'design']);
+    assert.deepEqual(routeDependents(projectTypes.landing.stages, 'goal'), ['process', 'techplan', 'content', 'design', 'build']);
+    assert.deepEqual(routeAncestors(projectTypes.company_site.stages, 'build'), ['goal', 'process', 'offer', 'techplan', 'content', 'design']);
+  });
+  it('the business process comes right after the goal, and the architecture builds on it', () => {
+    for (const type of Object.values(projectTypes)) {
+      assert.deepEqual(type.stages.slice(0, 2), ['goal', 'process'], type.key);
+      assert.ok(routeInputs(type.stages, 'techplan').includes('process'), type.key);
+      assert.ok(routeInputs(type.stages, 'build').includes('techplan'), type.key);
+    }
+    assert.deepEqual(routeInputs(projectTypes.booking.stages, 'techplan'), ['goal', 'process', 'schedule']);
   });
 });
 
 describe('stage state', () => {
-  const route = projectTypes.landing.stages;
+  // The rules do not depend on the route; a short four-stage route keeps the expectations readable.
+  const route: StageKey[] = ['goal', 'content', 'design', 'build'];
   it('opens only the first stage by default', () => {
     assert.deepEqual(initialStatuses(route, null), { goal: 'ready', content: 'locked', design: 'locked', build: 'locked' });
   });
@@ -37,7 +46,7 @@ describe('stage state', () => {
     assert.deepEqual(initialStatuses(route, 'content'), { goal: 'ready', content: 'ready', design: 'locked', build: 'locked' });
   });
   it('unlocks dependents only when every input is accepted', () => {
-    const route2 = projectTypes.company_site.stages;
+    const route2: StageKey[] = ['goal', 'offer', 'content', 'design', 'build'];
     const afterGoal = unlockDependents(route2, { goal: 'approved', offer: 'locked', content: 'locked', design: 'locked', build: 'locked' });
     assert.equal(afterGoal.offer, 'ready');
     assert.equal(afterGoal.content, 'locked');
