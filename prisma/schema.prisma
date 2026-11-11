@@ -1270,7 +1270,7 @@ model StagePayment {
   basis          String          @db.VarChar(10)
   minutes        Int?
   amountTiyn     Int             @map("amount_tiyn")
-  /// due → (owner pays through BuildPath) checkout → held → paid_out; or paid_direct; cancelled
+  /// due → (owner pays through BuildPath) checkout → held → paid_out; or paid_direct; cancelled; held → refunded (returned to the owner by staff)
   status         String          @default("due") @db.VarChar(12)
   stageVersion   Int?            @map("stage_version")
   paidAt         DateTime?       @map("paid_at") @db.Timestamptz(3)
@@ -1283,6 +1283,9 @@ model StagePayment {
   heldAt         DateTime?       @map("held_at") @db.Timestamptz(3)
   paidOutAt      DateTime?       @map("paid_out_at") @db.Timestamptz(3)
   payoutReference String?        @map("payout_reference") @db.VarChar(100)
+  refundedAt     DateTime?       @map("refunded_at") @db.Timestamptz(3)
+  refundReference String?        @map("refund_reference") @db.VarChar(100)
+  refundNote     String?         @map("refund_note") @db.VarChar(300)
   paidOutByStaffId String?       @map("paid_out_by_staff_id") @db.Uuid
   createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   assignment     StageAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
@@ -1376,10 +1379,22 @@ model ProjectTopUp {
   status            String    @default("created") @db.VarChar(10)
   providerPaymentId String?   @map("provider_payment_id") @db.VarChar(64)
   paidAt            DateTime? @map("paid_at") @db.Timestamptz(3)
+  /// Returned to the payer so far; the unspent part of a top-up can be returned on request.
+  refundedTiyn      Int       @default(0) @map("refunded_tiyn")
+  /// requested | refunded | rejected — the latest refund request; a requested amount is not available for AI requests.
+  refundStatus      String?   @map("refund_status") @db.VarChar(10)
+  refundRequestedTiyn Int?    @map("refund_requested_tiyn")
+  refundReason      String?   @map("refund_reason") @db.VarChar(300)
+  refundRequestedAt DateTime? @map("refund_requested_at") @db.Timestamptz(3)
+  refundDecidedAt   DateTime? @map("refund_decided_at") @db.Timestamptz(3)
+  refundDecidedByStaffId String? @map("refund_decided_by_staff_id") @db.Uuid
+  refundReference   String?   @map("refund_reference") @db.VarChar(100)
+  refundNote        String?   @map("refund_note") @db.VarChar(300)
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([projectId, status], map: "project_top_ups_project_status_idx")
+  @@index([refundStatus], map: "project_top_ups_refund_status_idx")
   @@map("project_top_ups")
 }
 

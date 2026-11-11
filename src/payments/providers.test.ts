@@ -53,3 +53,11 @@ describe('Freedom Pay adapter', () => {
     assert.equal(activeProvider({ FREEDOMPAY_MERCHANT_ID: '1', FREEDOMPAY_SECRET_KEY: 's' }), 'freedompay');
   });
 });
+
+describe('Refunds', () => {
+  it('are automatic only with the test provider', async () => {
+    const { automaticRefund } = await import('./providers.js');
+    assert.match(automaticRefund('mock')!('mock-12345678', 300_000).reference, /^mock-refund-12345678-300000$/);
+    assert.equal(automaticRefund('freedompay'), null);
+  });
+});
