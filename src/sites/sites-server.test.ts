@@ -8,7 +8,14 @@ import { createSitesServer } from './sites-server.js';
 let databaseUp = true;
 const fakePrisma = {
   sitePublication: {
-    findUnique: async ({ where }: { where: { slug: string } }) => (where.slug === 'tort' ? { id: 'p1', projectId: 'pr1', status: 'live', buildVersionId: 'v1' } : where.slug === 'old' ? { id: 'p2', projectId: 'pr2', status: 'unpublished', buildVersionId: 'v2' } : null),
+    findUnique: async ({ where }: { where: { slug?: string; customDomain?: string } }) => {
+      const rows = [
+        { id: 'p1', projectId: 'pr1', status: 'live', buildVersionId: 'v1', slug: 'tort', customDomain: 'tort-almaty.com', domainStatus: 'active' },
+        { id: 'p2', projectId: 'pr2', status: 'unpublished', buildVersionId: 'v2', slug: 'old', customDomain: 'old-site.com', domainStatus: 'active' },
+        { id: 'p3', projectId: 'pr3', status: 'live', buildVersionId: 'v3', slug: 'wait', customDomain: 'www.wait.com', domainStatus: 'pending' },
+      ];
+      return rows.find((row) => (where.slug ? row.slug === where.slug : row.customDomain === where.customDomain)) ?? null;
+    },
   },
   stageArtifactVersion: { findUnique: async () => ({ content: { html: '<!doctype html><title>Торт</title>', meta: null } }) },
   $queryRaw: async () => { if (!databaseUp) throw new Error('down'); return [{ '?column?': 1 }]; },
@@ -31,6 +38,26 @@ describe('sites server service endpoints', () => {
     assert.equal(await ask('evil.example.com'), 404);
     assert.equal(await ask('a.tort.sites.example.kz'), 404);
     assert.equal(await ask(''), 404);
+  });
+  it('allows certificates for own domains only after the DNS check passed', async () => {
+    const ask = (domain: string) => fetch(`${base}/__caddy/ask?domain=${encodeURIComponent(domain)}`).then((response) => response.status);
+    assert.equal(await ask('tort-almaty.com'), 200);
+    assert.equal(await ask('TORT-ALMATY.COM'), 200);
+    assert.equal(await ask('www.wait.com'), 404, 'pending domain');
+    assert.equal(await ask('old-site.com'), 404, 'unpublished site');
+    assert.equal(await ask('1.2.3.4'), 404);
+  });
+  it('serves the site on its own domain with canonical links there', async () => {
+    const get = (host: string, path: string) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+      http.get(`${base}${path}`, { headers: { host } }, (response) => {
+        let body = '';
+        response.setEncoding('utf8').on('data', (chunk: string) => { body += chunk; }).on('end', () => resolve({ status: response.statusCode ?? 0, body }));
+      }).on('error', reject);
+    });
+    assert.equal((await get('tort-almaty.com', '/')).status, 200);
+    assert.match((await get('tort-almaty.com', '/sitemap.xml')).body, /<loc>https:\/\/tort-almaty\.com\/<\/loc>/);
+    assert.match((await get('tort.sites.example.kz', '/robots.txt')).body, /Sitemap: https:\/\/tort-almaty\.com\/sitemap\.xml/);
+    assert.equal((await get('www.wait.com', '/')).status, 404);
   });
   it('reports database health', async () => {
     assert.equal((await fetch(`${base}/__health`)).status, 200);

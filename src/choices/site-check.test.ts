@@ -38,3 +38,13 @@ describe('deployment card', () => {
     for (const option of choiceCards.deployment.options) assert.ok(option.steps.some((step) => step.kind === 'verify'), option.key);
   });
 });
+
+describe('Domain card', () => {
+  it('starts with the free address and connects an own domain only for sites on BuildPath', () => {
+    assert.equal(recommend('domain', { hasSpecialists: true }).optionKey, 'buildpath_address');
+    const own = choiceCards.domain.options.find((option) => option.key === 'own_domain')!;
+    assert.deepEqual([own.requires?.card, own.requires?.option], ['deployment', 'buildpath']);
+    assert.ok(own.steps.some((step) => step.kind === 'domain'));
+    assert.ok(own.limits.some((line) => line.includes('.kz')), 'explains the Kazakhstan hosting rule');
+  });
+});

@@ -5,8 +5,23 @@ import { emailConfig } from '../notifications/email.js';
 import { telegramConfig } from '../notifications/telegram.js';
 import { sitesConfig, slugProblem, suggestSlug } from './slug.js';
 import { BillingService } from '../billing/billing.service.js';
+import { Resolver } from 'node:dns/promises';
+import { domainToUnicode } from 'node:url';
+import { domainProblem, domainTarget, isApex, isKzZone, normalizeDomain, pointsHere, recordsFor } from './domain.js';
+
+/** Resolvers for the DNS check; SITES_DNS_SERVERS lets operators use public resolvers instead of the host's cache. */
+function dnsResolver() {
+  const resolver = new Resolver({ timeout: 4000, tries: 2 });
+  const servers = (process.env.SITES_DNS_SERVERS ?? '').split(',').map((item) => item.trim()).filter(Boolean);
+  if (servers.length) resolver.setServers(servers);
+  return resolver;
+}
 
 const manageRoles = new Set(['owner', 'manager']);
+
+function domainToUnicodeSafe(name: string): string {
+  try { return domainToUnicode(name) || name; } catch { return name; }
+}
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -57,7 +72,9 @@ export class PublishingService {
           slug: publication.slug, url: config.urlFor(publication.slug), status: publication.status, publishedAt: publication.publishedAt,
           unpublishedAt: publication.unpublishedAt, publishedVersionNumber: publishedVersion?.versionNumber ?? null,
           notifyTelegram: publication.notifyTelegram, notifyEmail: publication.notifyEmail,
+          domain: this.domainView(publication),
         } : null,
+        domainsAvailable: Boolean(domainTarget()),
         acceptedBuild: build ? { versionId: build.versionId, versionNumber: build.versionNumber, hasForm: build.hasForm } : null,
         outdated: Boolean(publication && publication.status === 'live' && build && build.versionId !== publication.buildVersionId),
         canManage: manageRoles.has(role) && project.status !== 'archived',
@@ -117,6 +134,73 @@ export class PublishingService {
       await tx.sitePublication.update({ where: { projectId }, data: { status: 'unpublished', unpublishedAt: new Date() } });
       if (project.status === 'live') await tx.project.update({ where: { id: projectId }, data: { status: 'active' } });
       await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'site_unpublished', details: { slug: project.publication!.slug } } });
+    });
+    return this.status(userId, projectId);
+  }
+
+  private domainView(publication: { customDomain: string | null; domainStatus: string | null; domainCheckedAt: Date | null; domainError: string | null }) {
+    const target = domainTarget();
+    if (!publication.customDomain) return null;
+    const name = publication.customDomain;
+    return {
+      name, display: domainToUnicodeSafe(name), status: publication.domainStatus, checkedAt: publication.domainCheckedAt, error: publication.domainError,
+      apex: isApex(name), url: publication.domainStatus === 'active' ? `https://${name}` : null,
+      records: target ? recordsFor(name, target) : [],
+    };
+  }
+
+  /** Saves the owner's domain as pending and returns the DNS record to create; nothing is served on it until the check passes. */
+  async setDomain(userId: string, projectId: string, raw: string) {
+    const { project } = await this.load(userId, projectId, true);
+    if (!project.publication) throw new ConflictException('SITE_NOT_PUBLISHED');
+    const target = domainTarget();
+    if (!target) throw new ConflictException('DOMAINS_NOT_CONFIGURED');
+    const domain = normalizeDomain(raw);
+    const problem = domainProblem(domain, sitesConfig().baseDomain, target);
+    if (problem) throw new BadRequestException(problem);
+    if (isApex(domain!) && !target.ipv4.length) throw new BadRequestException('DOMAIN_APEX_UNSUPPORTED');
+    if (project.publication.customDomain === domain) return this.status(userId, projectId);
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.sitePublication.update({ where: { projectId }, data: { customDomain: domain, domainStatus: 'pending', domainCheckedAt: null, domainError: null } });
+        await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'domain_set', details: { domain, previous: project.publication!.customDomain } } });
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === 'P2002') throw new ConflictException('DOMAIN_TAKEN');
+      throw error;
+    }
+    return this.status(userId, projectId);
+  }
+
+  /** Looks the domain up in DNS; it becomes active only when it points at BuildPath. */
+  async checkDomain(userId: string, projectId: string, resolver = dnsResolver()) {
+    const { project } = await this.load(userId, projectId, true);
+    const publication = project.publication;
+    if (!publication?.customDomain) throw new ConflictException('DOMAIN_NOT_SET');
+    const target = domainTarget();
+    if (!target) throw new ConflictException('DOMAINS_NOT_CONFIGURED');
+    if (isKzZone(publication.customDomain) && !target.hostedInKz) throw new BadRequestException('DOMAIN_KZ_NEEDS_KZ_HOSTING');
+    if (publication.domainCheckedAt && Date.now() - publication.domainCheckedAt.getTime() < 10_000) throw new ConflictException('DOMAIN_CHECK_TOO_SOON');
+    const result = await pointsHere(publication.customDomain, target, resolver);
+    const status = result.ok ? 'active' : (publication.domainStatus === 'active' ? 'failed' : 'pending');
+    const error = result.ok ? null : result.found.length ? 'DNS_POINTS_ELSEWHERE' : 'DNS_RECORD_NOT_FOUND';
+    await this.prisma.$transaction(async (tx) => {
+      await tx.sitePublication.update({ where: { projectId }, data: { domainStatus: status, domainCheckedAt: new Date(), domainError: error } });
+      if (status !== publication.domainStatus) {
+        await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'domain_checked', details: { domain: publication.customDomain, status, error } } });
+      }
+    });
+    const view = await this.status(userId, projectId);
+    return { data: { ...view.data, domainCheck: { ok: result.ok, found: result.found.slice(0, 5) } } };
+  }
+
+  async removeDomain(userId: string, projectId: string) {
+    const { project } = await this.load(userId, projectId, true);
+    const publication = project.publication;
+    if (!publication?.customDomain) throw new ConflictException('DOMAIN_NOT_SET');
+    await this.prisma.$transaction(async (tx) => {
+      await tx.sitePublication.update({ where: { projectId }, data: { customDomain: null, domainStatus: null, domainCheckedAt: null, domainError: null } });
+      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'domain_removed', details: { domain: publication.customDomain } } });
     });
     return this.status(userId, projectId);
   }

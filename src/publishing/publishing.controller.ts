@@ -56,6 +56,28 @@ export class PublishingController {
     return this.publishing.settings(request.user.id, projectId, { notifyTelegram: input.notifyTelegram, notifyEmail: input.notifyEmail });
   }
 
+  @Post('projects/:projectId/publication/domain')
+  @HttpCode(200)
+  @UseGuards(AuthGuard)
+  setDomain(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw, ['domain']);
+    if (typeof input.domain !== 'string' || input.domain.length > 300) throw new BadRequestException('DOMAIN_INVALID');
+    return this.publishing.setDomain(request.user.id, projectId, input.domain);
+  }
+
+  @Post('projects/:projectId/publication/domain/check')
+  @HttpCode(200)
+  @UseGuards(AuthGuard)
+  checkDomain(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.publishing.checkDomain(request.user.id, projectId);
+  }
+
+  @Delete('projects/:projectId/publication/domain')
+  @UseGuards(AuthGuard)
+  removeDomain(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.publishing.removeDomain(request.user.id, projectId);
+  }
+
   @Get('projects/:projectId/leads')
   @UseGuards(AuthGuard)
   leads(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Query('cursor') cursor?: string, @Query('limit') rawLimit?: string) {
