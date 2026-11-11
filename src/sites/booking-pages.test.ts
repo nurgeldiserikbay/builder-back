@@ -15,7 +15,7 @@ describe('Booking pages', () => {
   it('validates the booking form and keeps what the client typed on errors', () => {
     const ok = parseBookingForm(form({ comment: '  ' }));
     assert.equal(ok.ok, true);
-    if (ok.ok) assert.deepEqual({ ...ok.form, start: ok.form.start.toISOString() }, { service: 1, master: 'any', start: '2026-11-11T05:00:00.000Z', name: 'Ержан', phone: '+7 (701) 111-22-33', comment: null });
+    if (ok.ok) assert.deepEqual({ ...ok.form, start: ok.form.start.toISOString() }, { service: 1, master: 'any', start: '2026-11-11T05:00:00.000Z', name: 'Ержан', phone: '+7 (701) 111-22-33', comment: null, email: null });
     const noConsent = parseBookingForm(form({ consent: '' }));
     assert.equal(noConsent.ok, false);
     if (!noConsent.ok) { assert.match(noConsent.error, /согласие/); assert.equal(noConsent.values.name, 'Ержан'); }

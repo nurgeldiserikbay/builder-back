@@ -8,6 +8,8 @@ import { LEAD_FORM_PATH, pageCsp } from '../journey/site-renderer.js';
 import { notifyLead } from '../notifications/lead-notifier.js';
 import { sitesConfig, slugFromHost } from '../publishing/slug.js';
 import { normalizeDomain } from '../publishing/domain.js';
+import { emailConfig } from '../notifications/email.js';
+import { sendDueReminders } from '../notifications/booking-reminders.js';
 import { reportError } from '../observability/error-reporting.js';
 import { messagePage, parseLeadForm, privacyPage, thanksPage } from './site-pages.js';
 import { BOOKING_CANCEL_PATH, BOOKING_FORM_PATH, bookingPage, confirmPage, mastersFor, mastersPage, parseBookingForm, parseQuery, servicesPage, timesPage } from './booking-pages.js';
@@ -21,6 +23,8 @@ export interface SitesServerOptions {
   trustProxy: boolean;
   ipSalt: string;
   retentionDays: number;
+  /** Mail is configured, so the booking form offers an e-mail reminder. */
+  remindersByEmail: boolean;
   https: boolean;
   perIpPerHour: number;
   perSitePerDay: number;
@@ -35,6 +39,7 @@ export function sitesOptionsFromEnv(prisma: PrismaClient, env: NodeJS.ProcessEnv
     baseDomain: config.baseDomain, urlFor: config.urlFor, trustProxy: env.SITES_TRUST_PROXY === 'true',
     ipSalt: env.SITES_IP_HASH_SALT || randomBytes(16).toString('hex'),
     retentionDays: Number.isInteger(retention) && retention > 0 ? retention : 365,
+    remindersByEmail: Boolean(emailConfig(env)) && env.BOOKING_EMAIL_REMINDERS !== 'off',
     https: config.urlTemplate.startsWith('https://'), perIpPerHour: 5, perSitePerDay: 200,
     notify: (leadId) => notifyLead(prisma, leadId),
     notifyBooking: (bookingId, kind) => notifyBooking(prisma, bookingId, kind),
@@ -184,7 +189,7 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     const masterKey = master === 'any' ? null : master;
     if (query.start) {
       const free = slotsFor(config.schedule, service.name, masterKey, localDayOf(query.start, config.schedule.timezone), busy, now).some((slot) => slot.startsAt.getTime() === query.start!.getTime());
-      if (free) return html(confirmPage(meta, config, { service: query.service!, master, start: query.start }));
+      if (free) return html(confirmPage(meta, config, { service: query.service!, master, start: query.start }, null, {}, options.remindersByEmail));
     }
     const days = openDays(config.schedule, service.name, masterKey, busy, now);
     const day = query.day && days.some((item) => item.day === query.day) ? query.day : days[0]?.day ?? null;
@@ -204,7 +209,7 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     if (!parsed.ok) {
       const { query } = parsed;
       if (query.service === null || !query.master || !query.start || !config.schedule.services[query.service]) return send(response, 303, '', 'text/plain', false, { Location: '/book' });
-      return send(response, 400, confirmPage(meta, config, { service: query.service, master: query.master, start: query.start }, parsed.error, parsed.values), 'text/html', true);
+      return send(response, 400, confirmPage(meta, config, { service: query.service, master: query.master, start: query.start }, parsed.error, parsed.values, options.remindersByEmail), 'text/html', true);
     }
     const ipHash = createHash('sha256').update(`${options.ipSalt}:${clientIp(request)}`).digest('hex');
     const [perIp, perSite] = await Promise.all([
@@ -214,7 +219,7 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     if (perIp >= options.perIpPerHour || perSite >= options.perSitePerDay) {
       return send(response, 429, messagePage(meta, 'Слишком много записей', 'С этого устройства уже было несколько записей. Попробуйте позже или свяжитесь по контактам на сайте.'), 'text/html', false, { 'Retry-After': '3600' });
     }
-    const result = await createBooking(prisma, site, config, parsed.form, ipHash);
+    const result = await createBooking(prisma, site, config, options.remindersByEmail ? parsed.form : { ...parsed.form, email: null }, ipHash);
     if (!result.ok) {
       const location = `/book?s=${parsed.form.service}&m=${encodeURIComponent(parsed.form.master)}&d=${localDayOf(parsed.form.start, config.schedule.timezone)}`;
       return send(response, 409, messagePage(meta, 'Это время уже заняли', 'Пока вы заполняли форму, это время забронировали. Выберите другое — откроем свободное время на этот день.', false)
@@ -248,6 +253,7 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     if (!booking) return send(response, 404, messagePage(site.meta, 'Запись не найдена', 'Ссылка неверная или запись уже удалена.'), 'text/html');
     if (!canClientCancel(booking, site.meta!.booking!.schedule.rules.cancelHours)) return send(response, 303, '', 'text/plain', false, { Location: `/book/b/${token}` });
     const updated = await prisma.booking.updateMany({ where: { id: booking.id, status: 'booked' }, data: { status: 'cancelled_by_client', cancelledAt: new Date() } });
+    await prisma.booking.updateMany({ where: { id: booking.id, reminderStatus: 'pending' }, data: { reminderStatus: 'skipped', clientEmail: null, cancelLinkSealed: null } });
     send(response, 303, '', 'text/plain', false, { Location: `/book/b/${token}` });
     if (updated.count) void options.notifyBooking(booking.id, 'cancelled_by_client').catch(() => undefined);
   }
@@ -293,7 +299,7 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     if (booking && manage) return handleBookingView(url, response, site, manage[1]!);
     switch (path) {
       case '/': return send(response, 200, site.html, 'text/html', site.hasForm, cacheHeaders);
-      case '/privacy': return send(response, 200, privacyPage(site.meta, options.retentionDays), 'text/html', false, cacheHeaders);
+      case '/privacy': return send(response, 200, privacyPage(site.meta, options.retentionDays, options.remindersByEmail), 'text/html', false, cacheHeaders);
       case '/thanks': return send(response, 200, thanksPage(site.meta), 'text/html', false, { 'Cache-Control': 'no-store' });
       case '/robots.txt': return send(response, 200, `User-agent: *\nAllow: /\nDisallow: /thanks\nDisallow: /book\nSitemap: ${site.canonical}/sitemap.xml\n`, 'text/plain', false, cacheHeaders);
       case '/sitemap.xml': return send(response, 200, `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${site.canonical}/</loc></url></urlset>\n`, 'application/xml', false, cacheHeaders);
@@ -317,5 +323,11 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     return result.count + bookings.count;
   }
 
-  return { server, cleanup, invalidate: (slug: string) => { cache.delete(`s:${slug}`); for (const key of cache.keys()) if (key.startsWith('d:')) cache.delete(key); } };
+  /** Sends client reminders that are due; the link points at the site's own domain when it is connected. */
+  function reminders(now = new Date()) {
+    return sendDueReminders(prisma, (publication) => (publication.domainStatus === 'active' && publication.customDomain
+      ? `${options.https ? 'https' : 'http'}://${publication.customDomain}` : options.urlFor(publication.slug)), now);
+  }
+
+  return { server, cleanup, reminders, invalidate: (slug: string) => { cache.delete(`s:${slug}`); for (const key of cache.keys()) if (key.startsWith('d:')) cache.delete(key); } };
 }

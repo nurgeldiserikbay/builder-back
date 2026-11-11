@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { slotsFor, localDay, type BookingConfig, type Busy } from '../journey/schedule.js';
 import type { BookingForm } from './booking-pages.js';
+import { reminderFields } from '../notifications/booking-reminders.js';
 
 export const ACTIVE_STATUSES = ['booked', 'done', 'no_show'];
 export const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
@@ -40,6 +41,7 @@ export async function createBooking(prisma: PrismaClient, site: { publicationId:
         projectId: site.projectId, publicationId: site.publicationId, serviceName: service.name, minutes: service.minutes, price: config.prices[service.name] ?? null,
         masterKey, masterName: master.name, startsAt: slot.startsAt, endsAt: slot.endsAt, timezone: config.schedule.timezone,
         clientName: form.name, clientPhone: form.phone, comment: form.comment, tokenHash: tokenHash(token), consentAt: now, ipHash,
+        ...reminderFields(form.email, token, slot.startsAt, now),
       },
       select: { id: true },
     });

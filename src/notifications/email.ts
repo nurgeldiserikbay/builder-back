@@ -6,7 +6,7 @@ export function emailConfig(env: NodeJS.ProcessEnv = process.env): { apiKey: str
 
 export async function sendEmail(config: { apiKey: string; from: string }, to: string, subject: string, html: string, fetchImpl: typeof fetch = fetch): Promise<boolean> {
   try {
-    const response = await fetchImpl('https://api.resend.com/emails', {
+    const response = await fetchImpl(`${(process.env.RESEND_API_URL ?? 'https://api.resend.com').replace(/\/$/, '')}/emails`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ from: config.from, to: [to], subject: subject.slice(0, 200), html }),
