@@ -1,6 +1,8 @@
 // Deterministic renderer: typed brief/content/design -> one self-contained, script-free HTML page.
 import type { Brief, ContentArtifact, DesignArtifact, Offer, SiteMeta } from './artifacts.js';
 import { PLACEHOLDER } from './placeholder.js';
+import { pageIssues } from './artifacts.js';
+import type { Sitemap, SitemapPage } from './sitemap.js';
 import { doable, scheduleIssues, type BookingConfig } from './schedule.js';
 import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 
@@ -91,6 +93,8 @@ export interface RenderInput {
   /** Technical plan version the build relies on, and the version this platform implements (contract stage). */
   contractVersion?: string | null;
   expectedContractVersion?: string | null;
+  /** Multi-page site: the accepted «Карта сайта». Each page is rendered separately with a menu. */
+  sitemap?: Sitemap | null;
 }
 
 function photo(id: string | null, images: Record<string, ImageInfo> | undefined, eager: boolean): string {
@@ -100,17 +104,47 @@ function photo(id: string | null, images: Record<string, ImageInfo> | undefined,
 }
 
 /** Page of the site; fixed texts (contacts, form, booking) are in the project's language. */
-export function renderSite(input: RenderInput): string {
-  return runWithLocale(contentLocale(input.locale), () => renderSiteIn(input));
+export function renderSite(input: RenderInput, pageKey: string | null = null): string {
+  const page = input.sitemap ? input.sitemap.pages.find((item) => item.key === pageKey) ?? input.sitemap.pages[0]! : null;
+  return runWithLocale(contentLocale(input.locale), () => renderSiteIn(input, page));
 }
 
-function renderSiteIn(input: RenderInput): string {
-  const { brief, offer, content, design } = input;
+export interface RenderedPage { path: string; title: string; html: string }
+
+/** Every page of the site: one per «Карта сайта» entry, or just «/» for a single-page site. */
+export function renderPages(input: RenderInput): RenderedPage[] {
+  if (!input.sitemap) return [{ path: '/', title: '', html: renderSite(input) }];
+  return input.sitemap.pages.map((page) => ({ path: page.path, title: page.title, html: renderSite(input, page.key) }));
+}
+
+/** Where a «#contacts» or «#request» link points on a multi-page site: the page that holds the contacts block. */
+function contactsPath(input: RenderInput, page: SitemapPage | null): string {
+  if (!input.sitemap || !page) return '';
+  const holder = input.sitemap.pages.find((item) => input.content.sections.some((section) => section.type === 'contacts' && (section.page ?? 'home') === item.key));
+  return holder && holder.key !== page.key ? holder.path : '';
+}
+
+function menu(input: RenderInput, page: SitemapPage): string {
+  const links = input.sitemap!.pages.map((item) => {
+    const current = item.key === page.key ? ' aria-current="page"' : '';
+    // The preview is one page in a sandboxed frame: menu items are shown but do not navigate.
+    return input.draft ? `<li><span${current}>${escapeHtml(item.title)}</span></li>` : `<li><a href="${escapeHtml(item.path)}"${current}>${escapeHtml(item.title)}</a></li>`;
+  }).join('');
+  const brand = input.draft ? `<span class="logo">${escapeHtml(input.brief.businessName)}</span>` : `<a class="logo" href="/">${escapeHtml(input.brief.businessName)}</a>`;
+  return `<nav class="menu" aria-label="${escapeHtml(tr('Меню сайта'))}"><div class="wrap">${brand}<ul>${links}</ul></div></nav>`;
+}
+
+function renderSiteIn(input: RenderInput, page: SitemapPage | null): string {
+  const { brief, offer, design } = input;
+  const content = page ? { ...input.content, sections: input.content.sections.filter((section) => (section.page ?? 'home') === page.key) } : input.content;
+  const home = !page || page.path === '/';
+  const seo = home ? input.content.seo : input.content.pageSeo?.find((item) => item.page === page.key) ?? { title: `${page.title} — ${brief.businessName}`.slice(0, 70), description: page.purpose };
   const palette = palettes.find((item) => item.id === design.palette) ?? palettes[0];
   const font = fonts.find((item) => item.id === design.font) ?? fonts[0];
   const radius = design.corners === 'sharp' ? '2px' : '16px';
   const align = design.heroLayout === 'left' ? 'left' : 'center';
-  const actionHref = input.booking ? BOOKING_PATH : primaryActionHref(brief);
+  const directHref = input.booking ? BOOKING_PATH : primaryActionHref(brief);
+  const actionHref = directHref?.startsWith('#') ? `${contactsPath(input, page)}${directHref}` : directHref;
   const links = contactLinks(brief);
 
   const sectionHtml = content.sections.map((section) => {
@@ -134,7 +168,9 @@ function renderSiteIn(input: RenderInput): string {
     }
     return `<section class="section ${escapeHtml(section.type)}" id="${escapeHtml(section.key)}"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${photo(section.imageId, input.images, false)}${paragraphs(section.text)}${items}${button}</div></section>`;
   }).join('\n');
-  const bookingHtml = input.booking ? bookingSection(input.booking, input.draft) : '';
+  const bookingHtml = input.booking && home ? bookingSection(input.booking, input.draft) : '';
+  // A page without a first screen still gets a heading with its name.
+  const pageHead = page && content.sections[0]?.type !== 'hero' ? `<header class="hero page-head"><div class="wrap"><p class="brand">${escapeHtml(brief.businessName)}</p><h1>${escapeHtml(page.title)}</h1>${page.purpose ? `<p>${escapeHtml(page.purpose)}</p>` : ''}</div></header>\n` : '';
 
   const css = `:root{--bg:${palette.background};--surface:${palette.surface};--text:${palette.text};--muted:${palette.muted};--accent:${palette.accent};--accent-text:${palette.accentText};--radius:${radius}}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0;background:var(--bg);color:var(--text);font-family:${font.stack};font-size:17px;line-height:1.6}
@@ -152,6 +188,7 @@ p{margin:0 0 12px;color:var(--muted)}.hero{padding:64px 0 56px;text-align:${alig
 .photo{display:block;width:100%;height:auto;border-radius:var(--radius);margin:18px 0 6px;background:var(--surface)}.hero .photo{margin-top:28px}
 .booking-list{list-style:none;padding:0;margin:16px 0;display:grid;gap:10px}.booking-list li{display:flex;justify-content:space-between;gap:12px;background:var(--surface);border:1px solid rgba(0,0,0,.08);border-radius:var(--radius);padding:14px 16px}.booking-list span{color:var(--muted);white-space:nowrap}.booking-note{font-size:14px}
 footer{padding:28px 0;color:var(--muted);font-size:14px;text-align:center}.draft{background:#fff3cd;color:#5c4400;text-align:center;font-size:14px;padding:8px}
+.menu{background:var(--surface);border-bottom:1px solid rgba(0,0,0,.08)}.menu .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;padding-top:10px;padding-bottom:10px}.menu .logo{font-weight:800;color:var(--text);text-decoration:none;margin-right:auto}.menu ul{list-style:none;margin:0;padding:0;display:flex;gap:4px;overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}.menu li a,.menu li span{display:block;padding:10px 12px;border-radius:var(--radius);color:var(--text);text-decoration:none;font-size:15px;white-space:nowrap;min-height:44px}.menu [aria-current="page"]{background:var(--accent);color:var(--accent-text)}.page-head{padding:40px 0 28px}
 @media(min-width:720px){.items{grid-template-columns:repeat(2,1fr)}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}`;
 
   const lang = ['ru', 'kk', 'en'].includes(input.locale) ? input.locale : 'ru';
@@ -161,13 +198,13 @@ footer{padding:28px 0;color:var(--muted);font-size:14px;text-align:center}.draft
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="${pageCsp(input.brief.mainAction === 'form' || Boolean(input.booking))}">
-<title>${escapeHtml(content.seo.title)}</title>
-<meta name="description" content="${escapeHtml(content.seo.description)}">
+<title>${escapeHtml(seo.title)}</title>
+<meta name="description" content="${escapeHtml(seo.description)}">
 <style>${css}</style>
 </head>
 <body>
-${input.draft ? `<div class="draft">${tr('Черновик — не опубликован')}</div>\n` : ''}<main>
-${placeBooking(sectionHtml, bookingHtml)}
+${input.draft ? `<div class="draft">${tr('Черновик — не опубликован')}</div>\n` : ''}${page ? `${menu(input, page)}\n` : ''}<main>
+${pageHead}${placeBooking(sectionHtml, bookingHtml)}
 </main>
 <footer>© ${escapeHtml(brief.businessName)}</footer>
 </body>
@@ -243,6 +280,10 @@ export function checkSite(input: RenderInput): SiteCheck[] {
     checks.push({ id, required, title, status: ok ? 'passed' : warnOnly ? 'warning' : 'failed', details: ok ? passText : failText });
   };
   const hero = content.sections.find((section) => section.type === 'hero');
+  if (input.sitemap) {
+    const issues = pageIssues(content, input.sitemap);
+    add('pages', true, issues.length === 0, tr('Страницы по карте сайта'), tr('У каждой страницы из карты есть блоки и описание для поисковиков; главная начинается с первого экрана.'), `${issues.map((issue) => issue.message).join(' ')} ${tr('Исправьте на этапе «Структура и тексты».')}`);
+  }
   add('hero', true, Boolean(hero?.title), 'Первый экран', 'Есть заголовок первого экрана.', 'Нет первого экрана с заголовком. Добавьте блок «Первый экран» на этапе текстов.');
   const href = input.booking ? BOOKING_PATH : primaryActionHref(brief);
   if (input.booking) {

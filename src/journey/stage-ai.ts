@@ -23,10 +23,12 @@ export class StageAiError extends Error {
 const nullableString = { type: ['string', 'null'] };
 const itemSchema = { type: 'object', additionalProperties: false, required: ['title', 'text'], properties: { title: { type: 'string' }, text: { type: 'string' } } };
 const sectionSchema = {
-  type: 'object', additionalProperties: false, required: ['key', 'type', 'title', 'text', 'items', 'buttonLabel'],
+  type: 'object', additionalProperties: false, required: ['key', 'type', 'title', 'text', 'items', 'buttonLabel', 'page'],
   properties: {
     key: { type: 'string' }, type: { type: 'string', enum: [...sectionTypes] }, title: { type: 'string' }, text: { type: 'string' },
     items: { type: 'array', items: itemSchema }, buttonLabel: nullableString,
+    // Multi-page sites: key of the «Карта сайта» page; null on a single-page site.
+    page: nullableString,
   },
 };
 
@@ -54,10 +56,21 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
     case 'content':
       if (targeted) return { type: 'object', additionalProperties: false, required: ['section'], properties: { section: sectionSchema } };
       return {
-        type: 'object', additionalProperties: false, required: ['sections', 'seo'],
+        type: 'object', additionalProperties: false, required: ['sections', 'seo', 'pageSeo'],
         properties: {
           sections: { type: 'array', items: sectionSchema },
           seo: { type: 'object', additionalProperties: false, required: ['title', 'description'], properties: { title: { type: 'string' }, description: { type: 'string' } } },
+          // Search title and description of every page except the home page (multi-page sites); empty otherwise.
+          pageSeo: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['page', 'title', 'description'], properties: { page: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' } } } },
+        },
+      };
+    case 'sitemap':
+      return {
+        type: 'object', additionalProperties: false, required: ['pages'],
+        properties: {
+          pages: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'path', 'title', 'purpose', 'sections'], properties: {
+            key: { type: 'string' }, path: { type: 'string' }, title: { type: 'string' }, purpose: { type: 'string' }, sections: { type: 'array', items: { type: 'string', enum: [...sectionTypes] } },
+          } } },
         },
       };
     case 'design':

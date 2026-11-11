@@ -9,7 +9,7 @@ export const DEFAULT_TOKENS = { input: 4000, output: 1500 };
 
 /** How many AI requests a stage usually takes: a first draft plus a few revisions. */
 export const EXPECTED_REQUESTS: Record<StageKey, [min: number, max: number]> = {
-  goal: [2, 5], process: [1, 4], offer: [1, 4], schedule: [0, 0], techplan: [0, 0], content: [3, 10], design: [1, 3], build: [0, 0],
+  goal: [2, 5], process: [1, 4], offer: [1, 4], sitemap: [1, 3], schedule: [0, 0], techplan: [0, 0], content: [3, 10], design: [1, 3], build: [0, 0],
 };
 
 export function costOf(usage: Usage, pricing: Pricing | null): number | null {

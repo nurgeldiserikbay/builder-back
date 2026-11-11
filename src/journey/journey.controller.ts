@@ -277,8 +277,8 @@ export class JourneyController {
   }
 
   @Get('projects/:projectId/preview')
-  preview(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Query('versionId') versionId?: string) {
-    return this.journey.preview(request.user.id, projectId, versionId ?? null);
+  preview(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Query('versionId') versionId?: string, @Query('page') page?: string) {
+    return this.journey.preview(request.user.id, projectId, versionId ?? null, typeof page === 'string' && /^\/[a-z0-9-]{0,30}$/.test(page) ? page : null);
   }
 
   @Get('projects/:projectId/result')

@@ -301,6 +301,7 @@ export class ChoicesService {
     const files: GitFile[] = [];
     const site = pick('site.html');
     if (site) files.push({ path: 'index.html', content: site });
+    for (const file of result.files) if (file.name.startsWith('pages/')) files.push({ path: file.name.slice('pages/'.length), content: file.content });
     const md = pick('project.md'); if (md) files.push({ path: 'project.md', content: md });
     const json = pick('project.json'); if (json) files.push({ path: 'project.json', content: json });
     files.push({ path: 'README.md', content: [
@@ -439,7 +440,7 @@ export class ChoicesService {
       '3. Подключитесь к серверу: `ssh root@IP-СЕРВЕРА` и выполните:', '',
       '```', 'curl -fsSL https://get.docker.com | sh', 'cd /opt/buildpath-site', 'docker compose up -d', '```', '',
       '4. Через минуту откройте свой домен в браузере. Вернитесь в BuildPath и нажмите «Проверить адрес».', '',
-      'Обновить сайт: замените `site/index.html` новой версией из BuildPath — перезапускать ничего не нужно.', '',
+      'Обновить сайт: замените файлы в папке `site` новыми из BuildPath — перезапускать ничего не нужно.', '',
       'Форма заявок BuildPath на своём сервере не работает: на сайте останутся кнопки звонка и мессенджера.', '',
     ].join('\n');
     return {
@@ -447,6 +448,7 @@ export class ChoicesService {
         folder: 'buildpath-site', kind: 'static',
         files: [
           { name: 'site/index.html', mimeType: 'text/html', content: site },
+          ...result.files.filter((file) => file.name.startsWith('pages/')).map((file) => ({ name: `site/${file.name.slice('pages/'.length)}`, mimeType: 'text/html', content: file.content })),
           { name: 'Caddyfile', mimeType: 'text/plain', content: caddy },
           { name: 'compose.yaml', mimeType: 'text/yaml', content: compose },
           { name: 'README.md', mimeType: 'text/markdown', content: readme },

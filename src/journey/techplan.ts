@@ -6,6 +6,7 @@ import { tr } from '../i18n/i18n.js';
 import type { Brief, MainAction } from './artifacts.js';
 import { ArtifactValidationError, stableStringify } from './artifacts.js';
 import { doable, weekdayShort, type Schedule } from './schedule.js';
+import type { Sitemap } from './sitemap.js';
 import type { BusinessProcess, Capability } from './process.js';
 
 export const TECHPLAN_VERSION = '1.1.0';
@@ -243,7 +244,7 @@ export function coverageOf(kind: 'booking' | 'site', mainAction: MainAction | nu
 
 const field = (name: string, type: string) => ({ name, type });
 
-export function buildTechPlan(input: { projectType: string; brief: Brief | null; schedule: Schedule | null; process: BusinessProcess | null }, ownerNotes: string | null): TechPlan {
+export function buildTechPlan(input: { projectType: string; brief: Brief | null; schedule: Schedule | null; process: BusinessProcess | null; sitemap?: Sitemap | null }, ownerNotes: string | null): TechPlan {
   const { schedule } = input;
   const name = input.brief?.businessName || tr("ваш бизнес");
   const mainAction = input.brief?.mainAction ?? null;
@@ -256,11 +257,17 @@ export function buildTechPlan(input: { projectType: string; brief: Brief | null;
   ];
   if (kind === 'site') {
     const form = mainAction === 'form';
+    const map = input.sitemap ?? null;
+    const formTail = form ? tr(" — заявке через форму, которая приходит вам в Telegram или на почту") : '';
     return {
       planVersion: TECHPLAN_VERSION, kind,
-      summary: tr("Сайт «{0}» — одна страница без скриптов: рассказывает о вас и ведёт к главному действию{1}.", [name, form ? tr(" — заявке через форму, которая приходит вам в Telegram или на почту") : '']),
+      summary: map
+        ? tr("Сайт «{0}» из {1} страниц с общим меню, без скриптов: рассказывает о вас и ведёт к главному действию{2}.", [name, map.pages.length, formTail])
+        : tr("Сайт «{0}» — одна страница без скриптов: рассказывает о вас и ведёт к главному действию{1}.", [name, formTail]),
       components: [
-        { title: tr("Страница сайта"), plain: tr("Готовая страница из принятых текстов и стиля. Открывается быстро даже на слабом телефоне."), technical: tr("Статический HTML и CSS без JavaScript, CSP без inline-скриптов; собирается платформой детерминированно.") },
+        map
+          ? { title: tr("Страницы и меню"), plain: tr("Страница на каждую строку карты сайта и одинаковое меню на всех страницах. Открываются быстро даже на слабом телефоне."), technical: tr("Статические HTML и CSS без JavaScript, по файлу на страницу; адреса из карты сайта; CSP без inline-скриптов; собирается платформой детерминированно.") }
+          : { title: tr("Страница сайта"), plain: tr("Готовая страница из принятых текстов и стиля. Открывается быстро даже на слабом телефоне."), technical: tr("Статический HTML и CSS без JavaScript, CSP без inline-скриптов; собирается платформой детерминированно.") },
         ...(form ? [{ title: tr("Приём заявок"), plain: tr("Сервер BuildPath принимает заявки с формы и хранит их в проекте."), technical: tr("POST /__forms/lead (urlencoded), проверка Origin, ловушка для ботов, лимит заявок с адреса.") }] : []),
         ...(form ? [{ title: tr("Уведомления"), plain: tr("Новая заявка приходит вам в Telegram и/или на почту."), technical: tr("Бот Telegram и почта (Resend); отправка повторяется при сбое.") }] : []),
         { title: tr("Публикация"), plain: tr("Адрес BuildPath или свой домен, HTTPS включается сам."), technical: tr("Отдельный процесс сайтов за Caddy с сертификатами по запросу.") },
@@ -279,10 +286,14 @@ export function buildTechPlan(input: { projectType: string; brief: Brief | null;
       ] }],
       coverage,
       features: [], roles: [], data: [],
-      pages: [{ path: '/', title: tr("Главная"), plain: tr("Ваш сайт.") }, { path: '/privacy', title: tr("Данные"), plain: tr("Какие данные собираются, зачем и как попросить удалить.") }],
+      pages: [
+        ...(map ? map.pages.map((page) => ({ path: page.path, title: page.title, plain: page.purpose || tr("Страница сайта.") })) : [{ path: '/', title: tr("Главная"), plain: tr("Ваш сайт.") }]),
+        { path: '/privacy', title: tr("Данные"), plain: tr("Какие данные собираются, зачем и как попросить удалить.") },
+        ...(map ? [{ path: '/sitemap.xml', title: tr("Карта для поисковиков"), plain: tr("Список всех страниц, чтобы поисковики нашли каждую.") }] : []),
+      ],
       notifications: form ? [tr("Вам: новая заявка — в Telegram и/или на почту (настройки публикации).")] : [tr("Сайт ничего не отправляет: клиент связывается с вами напрямую.")],
       hosting,
-      limits: [tr("Одна страница; разделы и блоки — из набора BuildPath."), tr("Нет онлайн-оплаты и личных кабинетов клиентов.")],
+      limits: [map ? tr("До 7 страниц; разделы и блоки — из набора BuildPath; блога и каталога товаров нет.") : tr("Одна страница; разделы и блоки — из набора BuildPath."), tr("Нет онлайн-оплаты и личных кабинетов клиентов.")],
       api: form ? leadApiContract() : '',
       ownerNotes,
     };

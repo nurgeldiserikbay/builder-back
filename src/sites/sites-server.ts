@@ -48,7 +48,8 @@ export function sitesOptionsFromEnv(prisma: PrismaClient, env: NodeJS.ProcessEnv
 }
 
 /** `hosts` are the addresses this site answers on: its BuildPath subdomain and, once DNS was checked, the owner's own domain. */
-type Site = { publicationId: string; projectId: string; html: string; meta: SiteMeta | null; hasForm: boolean; canonical: string; hosts: string[] };
+/** pages: other pages of a multi-page site by path («/services»); the home page is html. */
+type Site = { publicationId: string; projectId: string; html: string; pages: Map<string, string>; meta: SiteMeta | null; hasForm: boolean; canonical: string; hosts: string[] };
 
 export function createSitesServer(prisma: PrismaClient, options: SitesServerOptions) {
   const cache = new Map<string, { site: Site | null; expires: number }>();
@@ -69,7 +70,8 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
         const platformUrl = options.urlFor(publication.slug);
         const canonical = ownDomain ? `${options.https ? 'https' : 'http'}://${ownDomain}` : platformUrl;
         site = {
-          publicationId: publication.id, projectId: publication.projectId, html: artifact.html, meta: artifact.meta ?? null, hasForm: Boolean(artifact.meta?.hasForm),
+          publicationId: publication.id, projectId: publication.projectId, html: artifact.html,
+          pages: new Map((artifact.pages ?? []).filter((page) => page.path !== '/').map((page) => [page.path, page.html])), meta: artifact.meta ?? null, hasForm: Boolean(artifact.meta?.hasForm),
           canonical, hosts: [new URL(platformUrl).host, ...(ownDomain ? [ownDomain] : [])],
         };
       }
@@ -311,8 +313,13 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
       case '/privacy': return send(response, 200, privacyPage(site.meta, options.retentionDays, options.remindersByEmail), 'text/html', false, cacheHeaders);
       case '/thanks': return send(response, 200, thanksPage(site.meta), 'text/html', false, { 'Cache-Control': 'no-store' });
       case '/robots.txt': return send(response, 200, `User-agent: *\nAllow: /\nDisallow: /thanks\nDisallow: /book\nSitemap: ${site.canonical}/sitemap.xml\n`, 'text/plain', false, cacheHeaders);
-      case '/sitemap.xml': return send(response, 200, `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${site.canonical}/</loc></url></urlset>\n`, 'application/xml', false, cacheHeaders);
-      default: return send(response, 404, messagePage(site.meta, 'Страница не найдена', 'Такой страницы на сайте нет.'), 'text/html');
+      case '/sitemap.xml': return send(response, 200, `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${['/', ...site.pages.keys()].map((page) => `<url><loc>${site.canonical}${page}</loc></url>`).join('')}</urlset>\n`, 'application/xml', false, cacheHeaders);
+      default: {
+        // Other pages of a multi-page site; «/services/» also works, as on static hosts.
+        const page = site.pages.get(path.length > 1 ? path.replace(/\/$/, '') : path);
+        if (page) return send(response, 200, page, 'text/html', site.hasForm, cacheHeaders);
+        return send(response, 404, messagePage(site.meta, 'Страница не найдена', 'Такой страницы на сайте нет.'), 'text/html');
+      }
     }
   }
 
