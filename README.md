@@ -174,6 +174,12 @@ npm run start:dev
 
 The API listens on port 4000 by default. `/health` reports process status; `/health/ready` reports whether PostgreSQL is reachable. The Compose stack starts PostgreSQL, a private MinIO bucket, and ClamAV for local design uploads. `minio-init` creates the bucket and applies local frontend CORS rules. To run capture jobs, install Chromium, set `CAPTURE_CHROMIUM_EXECUTABLE_PATH` to its executable, and run the worker as a non-root account with restricted network egress. The worker blocks non-same-origin web resources, so pages that depend on third-party assets may look incomplete. Copy `.env.example` to `.env` to use the local endpoints. For a deployed API, configure a private S3-compatible bucket and reachable ClamAV daemon with `DESIGN_ASSETS_*` and `CLAMAV_*`; allow POST and GET from the frontend origin. The example MinIO credentials are development-only. AI review is optional and can incur provider usage charges for each newly analyzed capture; the saved result is reused on subsequent requests.
 
+### Interface language
+
+- Platform texts are written in Russian; `src/i18n/en.ts` maps them to English. Every request runs with the language of its `Accept-Language` header (the front sends the chosen one): `tr()` translates texts with values, and a global interceptor translates platform texts in JSON responses. **Project content is never translated** — anything under `content`, `preview`, `html` or `template` (stage results, previews, site pages) stays in the language it was written in.
+- `PUT /me/locale` saves the account language for e-mails and Telegram (used by the next slice).
+- Not translated yet: e-mails and Telegram messages, published site pages and AI-generated content in the project's language, legal documents.
+
 ### Project balance and payments
 
 - Staff choose the billing mode (`/admin/billing-mode`, super_admin): **off** (default — AI requests are counted in the project estimate) or **prepaid** (switch-on time is stored as `prepaidSince`). In prepaid mode an AI request needs a project balance of at least one typical request; otherwise it is refused with `402 PROJECT_BALANCE_LOW`. Balance = paid top-ups − recorded cost of AI requests since `prepaidSince` (`src/payments/wallet.ts`).

@@ -1,3 +1,4 @@
+import { tr } from '../i18n/i18n.js';
 import { BadRequestException, ConflictException, ForbiddenException, GoneException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
@@ -70,13 +71,13 @@ const money = (value: number) => `${value.toLocaleString('ru-RU')} ₸`;
 /** One plain sentence for the invite page, the e-mail and the list of specialists. */
 export function termsText(terms: SpecialistTerms): string {
   if (terms.payKind === 'fixed') {
-    return `Фиксированная цена за этап: ${money(terms.fixedAmount ?? 0)}. Оплата после того, как владелец примет результат${terms.revisionsIncluded !== null ? `; в цену входит правок: ${terms.revisionsIncluded}` : ''}.`;
+    return tr("Фиксированная цена за этап: {0}. Оплата после того, как владелец примет результат{1}.", [money(terms.fixedAmount ?? 0), terms.revisionsIncluded !== null ? tr("; в цену входит правок: {0}", [terms.revisionsIncluded]) : '']);
   }
   if (terms.payKind === 'hourly') {
-    const parts = [`Почасовая ставка: ${money(terms.hourlyRate ?? 0)} в час, не больше ${terms.hourLimit} ч на этап`];
-    if (terms.weeklyHourLimit) parts.push(`до ${terms.weeklyHourLimit} ч в неделю`);
+    const parts = [tr("Почасовая ставка: {0} в час, не больше {1} ч на этап", [money(terms.hourlyRate ?? 0), terms.hourLimit])];
+    if (terms.weeklyHourLimit) parts.push(tr("до {0} ч в неделю", [terms.weeklyHourLimit]));
     parts.push(terms.onlyResultTime ? 'оплачивается только время, в которое были действия на этапе' : 'оплачивается подтверждённое время');
-    return `${parts.join(', ')}. Платформа считает время, пока вы работаете на этапе; оплата после того, как владелец примет результат.`;
+    return tr("{0}. Платформа считает время, пока вы работаете на этапе; оплата после того, как владелец примет результат.", [parts.join(', ')]);
   }
   return 'Без оплаты через платформу: условия вы обсуждаете с владельцем сами.';
 }
@@ -154,8 +155,8 @@ export class SpecialistsService {
     const mail = emailConfig();
     const stageTitle = stageDefinitions[stageKey as StageKey].title;
     const inviter = project.owner.name ?? project.owner.email;
-    const emailSent = mail ? await sendEmail(mail, email, `Приглашение в проект «${project.name}»`,
-      `<p>${escapeHtml(inviter)} приглашает вас в проект «${escapeHtml(project.name)}» на этап «${escapeHtml(stageTitle)}» как ${escapeHtml(roleAccess[input.role].title.toLowerCase())}.</p><p>${escapeHtml(termsText(input.terms))}</p><p><a href="${escapeHtml(inviteUrl)}">Открыть приглашение</a></p><p>Ссылка действует 7 дней.</p>`) : false;
+    const emailSent = mail ? await sendEmail(mail, email, tr("Приглашение в проект «{0}»", [project.name]),
+      tr("<p>{0} приглашает вас в проект «{1}» на этап «{2}» как {3}.</p><p>{4}</p><p><a href=\"{5}\">Открыть приглашение</a></p><p>Ссылка действует 7 дней.</p>", [escapeHtml(inviter), escapeHtml(project.name), escapeHtml(stageTitle), escapeHtml(roleAccess[input.role].title.toLowerCase()), escapeHtml(termsText(input.terms)), escapeHtml(inviteUrl)])) : false;
     return { data: { assignment, inviteUrl, emailSent } };
   }
 

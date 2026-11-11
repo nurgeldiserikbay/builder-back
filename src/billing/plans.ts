@@ -54,7 +54,7 @@ export const MAX_PRICE_KZT = 10_000_000;
 export function priceOf(plan: PlanDefinition, monthlyKzt: number | null | undefined): string | null {
   if (!plan.paid) return 'Бесплатно';
   if (monthlyKzt === null || monthlyKzt === undefined) return null;
-  return `${String(monthlyKzt).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} ₸ в месяц`;
+  return tr("{0} ₸ в месяц", [String(monthlyKzt).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')]);
 }
 
 /** Upgrade contact must be a link the client can open safely: https (with a real host) or mailto. */
@@ -66,4 +66,5 @@ export function validContactUrl(value: string | null | undefined): string | null
     const url = new URL(text);
     return url.protocol === 'https:' && url.hostname.includes('.') && !url.username && !url.password ? url.toString() : null;
   } catch { return null; }
-}
+}import { tr } from '../i18n/i18n.js';
+

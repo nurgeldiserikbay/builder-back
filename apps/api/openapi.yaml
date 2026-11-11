@@ -1739,6 +1739,22 @@ paths:
         '200': { description: The master's bookings }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /me/locale:
+    put:
+      tags: [Auth]
+      operationId: setMyLocale
+      summary: Interface language for e-mails and Telegram messages
+      description: "The web interface keeps its choice in a cookie and sends it as Accept-Language; API responses translate platform texts (not project content) for Accept-Language: en."
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [locale], properties: { locale: { type: string, enum: [en, ru, kk] } } }
+      responses:
+        '204': { description: Saved }
+        '400': { $ref: '#/components/responses/Problem' }
   /me/payout-details:
     get:
       tags: [Billing]

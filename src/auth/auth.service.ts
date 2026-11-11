@@ -241,6 +241,10 @@ export class AuthService {
     return Boolean(user && (await this.verifyPassword(password, user.passwordHash)));
   }
 
+  async setLocale(userId: string, locale: 'en' | 'ru' | 'kk'): Promise<void> {
+    await this.prisma.user.update({ where: { id: userId }, data: { locale } });
+  }
+
   private toSafeUser(user: { id: string; email: string; name: string | null; locale: string; emailVerifiedAt: Date | null; consents: ConsentRow[] }): SafeUser {
     return { id: user.id, email: user.email, name: user.name, locale: user.locale, emailVerified: Boolean(user.emailVerifiedAt), consentRequired: !consentIsCurrent(user.consents[0]) };
   }

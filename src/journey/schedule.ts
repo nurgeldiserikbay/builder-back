@@ -1,4 +1,5 @@
 // «Расписание и запись»: typed artifact, validation, template and deterministic availability (online booking route).
+import { tr } from '../i18n/i18n.js';
 import { ArtifactValidationError, type Offer } from './artifacts.js';
 
 export const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'] as const;
@@ -88,13 +89,13 @@ export function scheduleIssues(schedule: Schedule): Array<{ key: string; message
   if (schedule.services.length === 0) issues.push({ key: 'services', message: 'Укажите хотя бы одну услугу для записи и её длительность.' });
   if (schedule.masters.length === 0) issues.push({ key: 'masters', message: 'Добавьте хотя бы одного мастера.' });
   for (const master of schedule.masters) {
-    if (master.week.every((day) => day === null)) issues.push({ key: 'masters', message: `У мастера «${master.name}» нет рабочих дней.` });
+    if (master.week.every((day) => day === null)) issues.push({ key: 'masters', message: tr("У мастера «{0}» нет рабочих дней.", [master.name]) });
     const longest = Math.max(0, ...doable(schedule, master).map((service) => service.minutes));
     const longestDay = Math.max(0, ...master.week.map((day) => (day ? minutesOfDay(day.to) - minutesOfDay(day.from) : 0)));
-    if (longest > longestDay && longestDay > 0) issues.push({ key: 'masters', message: `У мастера «${master.name}» рабочий день короче самой длинной услуги — на неё нельзя будет записаться.` });
+    if (longest > longestDay && longestDay > 0) issues.push({ key: 'masters', message: tr("У мастера «{0}» рабочий день короче самой длинной услуги — на неё нельзя будет записаться.", [master.name]) });
   }
   for (const service of schedule.services) {
-    if (!schedule.masters.some((master) => doable(schedule, master).includes(service))) issues.push({ key: 'services', message: `Услугу «${service.name}» не делает ни один мастер.` });
+    if (!schedule.masters.some((master) => doable(schedule, master).includes(service))) issues.push({ key: 'services', message: tr("Услугу «{0}» не делает ни один мастер.", [service.name]) });
   }
   return issues;
 }
