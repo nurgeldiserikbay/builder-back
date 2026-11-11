@@ -8,6 +8,7 @@ import {
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 import { telegramConfig, verifyWebAppInitData } from '../notifications/telegram.js';
+import { emailConfig, sendEmail, type EmailConfig } from '../notifications/email.js';
 import { LEGAL_VERSIONS } from '../legal/documents.js';
 
 const scrypt = (password: string, salt: Buffer, length: number, options: { N: number; r: number; p: number; maxmem: number }): Promise<Buffer> =>
@@ -83,18 +84,13 @@ export class AuthService {
     const verifyUrl = new URL('/verify-email', mail.appUrl);
     verifyUrl.searchParams.set('token', rawToken);
     try {
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${mail.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: mail.from,
-          to: [input.email.trim()],
-          subject: 'Verify your BuildPath account',
-          html: `<p>Confirm your email to finish creating your BuildPath account.</p><p><a href="${verifyUrl.toString()}">Verify email</a></p><p>This link expires in 24 hours.</p>`,
-        }),
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!response.ok) throw new Error('EMAIL_PROVIDER_REJECTED');
+      const sent = await sendEmail(
+        mail.email,
+        input.email.trim(),
+        'Verify your BuildPath account',
+        `<p>Confirm your email to finish creating your BuildPath account.</p><p><a href="${verifyUrl.toString()}">Verify email</a></p><p>This link expires in 24 hours.</p>`,
+      );
+      if (!sent) throw new Error('EMAIL_PROVIDER_REJECTED');
     } catch {
       const failedUser = await this.prisma.user.findUnique({ where: { emailNormalized: normalized }, select: { id: true } });
       if (failedUser) {
@@ -208,11 +204,10 @@ export class AuthService {
     return createHash('sha256').update(value).digest('hex');
   }
 
-  private mailConfig(): { apiKey: string; from: string; appUrl: URL } {
-    const apiKey = process.env.RESEND_API_KEY;
-    const from = process.env.EMAIL_FROM;
+  private mailConfig(): { email: EmailConfig; appUrl: URL } {
+    const email = emailConfig();
     const appBaseUrl = process.env.PUBLIC_APP_URL;
-    if (!apiKey || !from || !appBaseUrl) throw new ServiceUnavailableException('EMAIL_DELIVERY_NOT_CONFIGURED');
+    if (!email || !appBaseUrl) throw new ServiceUnavailableException('EMAIL_DELIVERY_NOT_CONFIGURED');
     let appUrl: URL;
     try {
       appUrl = new URL(appBaseUrl);
@@ -220,7 +215,7 @@ export class AuthService {
     } catch {
       throw new ServiceUnavailableException('PUBLIC_APP_URL_INVALID');
     }
-    return { apiKey, from, appUrl };
+    return { email, appUrl };
   }
 
   private isUniqueViolation(error: unknown): boolean {

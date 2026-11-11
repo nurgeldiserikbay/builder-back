@@ -147,7 +147,7 @@ Create a Figma OAuth app with the `file_content:read` scope and register the exa
 
 ## Persistence foundation
 
-The Prisma schema and PostgreSQL migrations define users, hashed sessions and email-verification tokens, encrypted per-user Figma OAuth connections and short-lived OAuth states, workspaces, memberships, projects, review runs, pages, design sources, captures, jobs, findings, and report versions. Review records have foreign keys to projects and users. Registration requires `RESEND_API_KEY`, `EMAIL_FROM`, and `PUBLIC_APP_URL`.
+The Prisma schema and PostgreSQL migrations define users, hashed sessions and email-verification tokens, encrypted per-user Figma OAuth connections and short-lived OAuth states, workspaces, memberships, projects, review runs, pages, design sources, captures, jobs, findings, and report versions. Review records have foreign keys to projects and users. Registration requires `EMAIL_FROM`, `PUBLIC_APP_URL` and a mail key: `RESEND_API_KEY`, or `BREVO_API_KEY` (Brevo, used instead of Resend when set; it sends from one verified address such as a Gmail address, so it works without an own domain — meant for tests, as such mail is more likely to land in spam).
 
 The local Compose services use development-only credentials. ClamAV downloads its signature database on first startup, so scanning can take a little while to become ready.
 
