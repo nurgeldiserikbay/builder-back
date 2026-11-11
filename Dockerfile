@@ -7,6 +7,8 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 COPY . .
+# prisma.config.ts requires DATABASE_URL, but generate and the tests never connect: a placeholder is enough to build.
+ARG DATABASE_URL=postgresql://build:build@localhost:5432/build
 RUN npm run build && npm test
 
 FROM node:22-bookworm-slim AS app
