@@ -2255,13 +2255,13 @@ paths:
       parameters:
         - { name: status, in: query, required: false, schema: { type: string, enum: [open, closed] } }
       responses:
-        '200': { description: 'id, status, kind, outcome, openedBySide, claimAmount, createdAt, messages, project, stage, specialist' }
+        '200': { description: 'id, status, kind, outcome, openedBySide, claimAmount, createdAt, messages, waiting (side that has not written since the dispute opened, days, reminded) or null, project, stage, specialist' }
   /admin/disputes/{disputeId}:
     get:
       tags: [Disputes]
       operationId: staffDispute
       summary: Staff — dispute with evidence (super_admin, operations_auditor; each view audited)
-      description: Thread, terms, assignment dates, payments, time by status, number of stage versions, last 60 stage and dispute events.
+      description: Thread, waiting (silent side, days, reminded), terms, assignment dates, payments, time by status, number of stage versions, last 60 stage and dispute events. The silent side is reminded once after 3 days (Telegram and e-mail; DISPUTE_REMINDERS_DISABLED=true switches it off).
       x-implementation-status: implemented
       security: [{ adminSessionCookie: [] }]
       parameters:

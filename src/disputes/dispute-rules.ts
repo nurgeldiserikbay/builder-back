@@ -63,3 +63,18 @@ export function checkResolution(input: { outcome: unknown; note: unknown; paySpe
   }
   return { ok: true, outcome: input.outcome as Outcome, note, payTiyn: pay === null ? null : (pay as number) * 100 };
 }
+
+/** The other side gets one reminder after this many days without an answer. */
+export const ANSWER_DAYS = 3;
+
+/**
+ * Whose answer the dispute waits for: the side that did not open it, until it writes once. Staff see how long it has
+ * been silent; the platform reminds it once after ANSWER_DAYS.
+ */
+export function waitingFor(dispute: { status: string; openedBySide: string; createdAt: Date; remindedAt: Date | null; messages: Array<{ side: string }> }, now = new Date()) {
+  if (dispute.status !== 'open') return { side: null, days: 0, remind: false } as const;
+  const other: Side = dispute.openedBySide === 'owner' ? 'specialist' : 'owner';
+  if (dispute.messages.some((message) => message.side === other)) return { side: null, days: 0, remind: false } as const;
+  const days = Math.floor((now.getTime() - dispute.createdAt.getTime()) / 86_400_000);
+  return { side: other, days, remind: days >= ANSWER_DAYS && !dispute.remindedAt } as const;
+}

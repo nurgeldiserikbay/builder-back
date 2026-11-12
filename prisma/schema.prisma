@@ -1539,6 +1539,8 @@ model Dispute {
   resultPaymentId   String?          @map("result_payment_id") @db.Uuid
   resolvedByStaffId String?          @map("resolved_by_staff_id") @db.Uuid
   resolvedAt        DateTime?        @map("resolved_at") @db.Timestamptz(3)
+  /// The other side was reminded once that it has not answered.
+  remindedAt        DateTime?        @map("reminded_at") @db.Timestamptz(3)
   createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
   assignment        StageAssignment  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)

@@ -1472,4 +1472,5 @@ export const en: Record<string, string> = {
   "Поддержка BuildPath проверила отзыв о вашей работе на этапе «{0}» и оставила его: {1}": "BuildPath support checked the review of your work on the “{0}” stage and kept it: {1}",
   "BuildPath: решение по отзыву": "BuildPath: decision on a review",
   "Поддержка BuildPath скрыла ваш отзыв о специалисте на этапе «{0}»: {1}": "BuildPath support hid your review of the specialist on the “{0}” stage: {1}",
+  "Вы ещё не ответили в споре по этапу «{0}» проекта «{1}». Опишите свою сторону — иначе поддержка BuildPath решит спор по тому, что есть.": "You have not answered in the dispute about the “{0}” stage of project “{1}” yet. Describe your side — otherwise BuildPath support will decide based on what it has.",
 };

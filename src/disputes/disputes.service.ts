@@ -3,7 +3,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { tr, type Message } from '../i18n/i18n.js';
 import { notifyUser } from '../notifications/user-notifier.js';
 import { stageDefinitions, type StageKey } from '../journey/catalog.js';
-import { REVOKED_WINDOW_DAYS, canOpen, checkClaim, checkMessage, checkResolution, kindsBySide, sideOf, type Side } from './dispute-rules.js';
+import { ANSWER_DAYS, REVOKED_WINDOW_DAYS, canOpen, checkClaim, checkMessage, checkResolution, kindsBySide, sideOf, waitingFor, type Side } from './dispute-rules.js';
 
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const tenge = (tiyn: number | null) => (tiyn === null ? null : tiyn / 100);
@@ -152,17 +152,38 @@ export class DisputesService {
     };
   }
 
+  /** Reminds, once, the side that has not answered an open dispute for ANSWER_DAYS. Called by DisputeRemindersService. */
+  async processReminders(now = new Date()): Promise<number> {
+    const due = await this.prisma.dispute.findMany({
+      where: { status: 'open', remindedAt: null, createdAt: { lte: new Date(now.getTime() - ANSWER_DAYS * 86_400_000) } }, take: 200,
+      select: { id: true, status: true, openedBySide: true, createdAt: true, remindedAt: true, messages: { select: { side: true } }, assignment: { select: { userId: true, project: { select: { ownerUserId: true, name: true } }, stage: { select: { stageKey: true } } } } },
+    });
+    let sent = 0;
+    for (const dispute of due) {
+      const waiting = waitingFor(dispute, now);
+      if (!waiting.remind || !waiting.side) continue;
+      // Claim the reminder first, so a second instance or a retry never sends it twice.
+      const claimed = await this.prisma.dispute.updateMany({ where: { id: dispute.id, remindedAt: null, status: 'open' }, data: { remindedAt: now } });
+      if (!claimed.count) continue;
+      const recipient = waiting.side === 'owner' ? dispute.assignment.project.ownerUserId : dispute.assignment.userId;
+      await this.notify(recipient, () => tr('Вы ещё не ответили в споре по этапу «{0}» проекта «{1}». Опишите свою сторону — иначе поддержка BuildPath решит спор по тому, что есть.', [tr(stageTitle(dispute.assignment.stage.stageKey)), dispute.assignment.project.name]));
+      sent += 1;
+    }
+    return sent;
+  }
+
   // --- Staff ---
 
   async staffQueue(status: string) {
     const filter = status === 'closed' ? { status: { in: ['resolved', 'withdrawn'] } } : { status: 'open' };
     const rows = await this.prisma.dispute.findMany({
       where: filter, orderBy: { createdAt: status === 'closed' ? 'desc' : 'asc' }, take: 100,
-      select: { id: true, status: true, kind: true, outcome: true, openedBySide: true, claimAmountTiyn: true, createdAt: true, _count: { select: { messages: true } }, assignment: { select: { email: true, user: { select: { name: true } }, project: { select: { name: true } }, stage: { select: { stageKey: true } } } } },
+      select: { id: true, status: true, kind: true, outcome: true, openedBySide: true, claimAmountTiyn: true, createdAt: true, remindedAt: true, messages: { select: { side: true } }, _count: { select: { messages: true } }, assignment: { select: { email: true, user: { select: { name: true } }, project: { select: { name: true } }, stage: { select: { stageKey: true } } } } },
     });
     return {
       data: rows.map((row) => ({
         id: row.id, status: row.status, kind: row.kind, outcome: row.outcome, openedBySide: row.openedBySide, claimAmount: tenge(row.claimAmountTiyn), createdAt: row.createdAt, messages: row._count.messages,
+        waiting: (({ side, days }) => (side ? { side, days, reminded: Boolean(row.remindedAt) } : null))(waitingFor(row)),
         project: row.assignment.project.name, stage: stageTitle(row.assignment.stage.stageKey), specialist: row.assignment.user?.name || row.assignment.email,
       })),
     };
@@ -171,7 +192,7 @@ export class DisputesService {
   /** Everything staff need to decide: the thread, the terms, money and the stage history around the assignment. */
   async staffDetail(staffId: string, disputeId: string) {
     if (!isUuid(disputeId)) throw new NotFoundException('DISPUTE_NOT_FOUND');
-    const dispute = await this.prisma.dispute.findUnique({ where: { id: disputeId }, select: { ...disputeSelect, assignment: { select: { ...assignmentSelect, stageId: true, project: { select: { name: true, ownerUserId: true, owner: { select: { name: true, email: true } } } } } } } });
+    const dispute = await this.prisma.dispute.findUnique({ where: { id: disputeId }, select: { ...disputeSelect, remindedAt: true, assignment: { select: { ...assignmentSelect, stageId: true, project: { select: { name: true, ownerUserId: true, owner: { select: { name: true, email: true } } } } } } } });
     if (!dispute) throw new NotFoundException('DISPUTE_NOT_FOUND');
     const a = dispute.assignment;
     const [payments, time, versions, events] = await Promise.all([
@@ -187,6 +208,7 @@ export class DisputesService {
     return {
       data: {
         ...this.view(dispute, 'staff'),
+        waiting: (({ side, days }) => (side ? { side, days, reminded: Boolean(dispute.remindedAt) } : null))(waitingFor(dispute)),
         project: a.project.name, owner: a.project.owner.name || a.project.owner.email, specialist: a.user?.name || a.email, stage: stageTitle(a.stage.stageKey), role: a.role,
         assignment: { status: a.status, acceptedAt: a.acceptedAt, completedAt: a.completedAt, revokedAt: a.revokedAt, payKind: a.payKind, fixedAmount: tenge(a.fixedAmountTiyn), hourlyRate: tenge(a.hourlyRateTiyn), hourLimit: a.hourLimit },
         payments: payments.map((payment) => ({ id: payment.id, basis: payment.basis, amount: tenge(payment.amountTiyn), status: payment.status, createdAt: payment.createdAt, heldAt: payment.heldAt, paidOutAt: payment.paidOutAt })),
