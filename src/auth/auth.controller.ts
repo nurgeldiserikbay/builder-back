@@ -15,6 +15,8 @@ import { AllowWithoutConsent, AuthGuard } from './auth.guard.js';
 import { AuthService, SafeUser } from './auth.service.js';
 
 type HttpResponse = { setHeader(name: string, value: string): void };
+type ClientRequest = { ip?: string };
+const ipOf = (request: ClientRequest) => request.ip ?? '';
 const locales = ['en', 'ru', 'kk'] as const;
 
 function objectBody(body: unknown): Record<string, unknown> {
@@ -44,7 +46,7 @@ export class AuthController {
 
   @Post('auth/register')
   @HttpCode(202)
-  async register(@Body() raw: unknown) {
+  async register(@Body() raw: unknown, @Req() request: ClientRequest) {
     const body = objectBody(raw);
     rejectUnknown(body, ['email', 'password', 'name', 'locale', 'acceptLegal']);
     const email = emailField(textField(body, 'email', 3, 254));
@@ -52,24 +54,50 @@ export class AuthController {
     const name = body.name === undefined ? undefined : textField(body, 'name', 1, 120);
     const locale = body.locale === undefined ? 'en' : body.locale;
     if (!locales.includes(locale as (typeof locales)[number])) throw new BadRequestException('INVALID_LOCALE');
-    return { data: await this.auth.register({ email, password, name, locale: locale as 'en' | 'ru' | 'kk', acceptLegal: body.acceptLegal === true }) };
+    return { data: await this.auth.register({ email, password, name, locale: locale as 'en' | 'ru' | 'kk', acceptLegal: body.acceptLegal === true }, ipOf(request)) };
   }
 
   @Post('auth/verify-email')
   @HttpCode(204)
-  async verifyEmail(@Body() raw: unknown): Promise<void> {
+  async verifyEmail(@Body() raw: unknown, @Req() request: ClientRequest): Promise<void> {
     const body = objectBody(raw);
     rejectUnknown(body, ['token']);
-    await this.auth.verifyEmail(textField(body, 'token', 32, 128));
+    await this.auth.verifyEmail(textField(body, 'token', 32, 128), ipOf(request));
+  }
+
+  /** A new confirmation link. Always 202, so the answer does not reveal which addresses have accounts. */
+  @Post('auth/resend-verification')
+  @HttpCode(202)
+  async resendVerification(@Body() raw: unknown, @Req() request: ClientRequest): Promise<void> {
+    const body = objectBody(raw);
+    rejectUnknown(body, ['email']);
+    await this.auth.resendVerification(emailField(textField(body, 'email', 3, 254)), ipOf(request));
+  }
+
+  /** «Forgot password». Always 202, for the same reason. */
+  @Post('auth/forgot-password')
+  @HttpCode(202)
+  async forgotPassword(@Body() raw: unknown, @Req() request: ClientRequest): Promise<void> {
+    const body = objectBody(raw);
+    rejectUnknown(body, ['email']);
+    await this.auth.requestPasswordReset(emailField(textField(body, 'email', 3, 254)), ipOf(request));
+  }
+
+  @Post('auth/reset-password')
+  @HttpCode(204)
+  async resetPassword(@Body() raw: unknown, @Req() request: ClientRequest): Promise<void> {
+    const body = objectBody(raw);
+    rejectUnknown(body, ['token', 'password']);
+    await this.auth.resetPassword(textField(body, 'token', 32, 128), textField(body, 'password', 12, 128), ipOf(request));
   }
 
   @Post('auth/login')
-  async login(@Body() raw: unknown, @Res({ passthrough: true }) response: HttpResponse) {
+  async login(@Body() raw: unknown, @Req() request: ClientRequest, @Res({ passthrough: true }) response: HttpResponse) {
     const body = objectBody(raw);
     rejectUnknown(body, ['email', 'password']);
     const email = emailField(textField(body, 'email', 3, 254));
     const password = textField(body, 'password', 1, 128);
-    const result = await this.auth.login(email, password);
+    const result = await this.auth.login(email, password, ipOf(request));
     response.setHeader('Set-Cookie', cookie(result.token, 30 * 24 * 60 * 60));
     return { data: result.user };
   }

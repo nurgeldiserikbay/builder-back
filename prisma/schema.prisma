@@ -177,6 +177,7 @@ model User {
   updatedAt                DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
   sessions                 UserSession[]
   verificationTokens       EmailVerificationToken[]
+  passwordResetTokens      PasswordResetToken[]
   ownedWorkspaces          Workspace[]               @relation("WorkspaceOwner")
   workspaceMemberships     WorkspaceMember[]
   createdInvitations       WorkspaceInvitation[]     @relation("InvitationCreator")
@@ -232,6 +233,20 @@ model EmailVerificationToken {
 
   @@index([userId, expiresAt], map: "email_verification_tokens_user_expires_idx")
   @@map("email_verification_tokens")
+}
+
+/// One-time link to set a new password; only the SHA-256 of the link token is stored.
+model PasswordResetToken {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash") @db.Char(64)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt], map: "password_reset_tokens_user_expires_idx")
+  @@map("password_reset_tokens")
 }
 
 model Workspace {
@@ -1159,6 +1174,7 @@ model ChangeNotice {
   targetStage       ProjectStage       @relation("ChangeNoticeTarget", fields: [targetStageId], references: [id], onDelete: Cascade)
   messages          ChangeMessage[]
 
+  @@index([projectId, status], map: "change_notices_project_status_idx")
   @@index([targetStageId, status], map: "change_notices_target_status_idx")
   @@index([status, respondBy], map: "change_notices_status_respond_idx")
   @@index([sourceStageId, status], map: "change_notices_source_status_idx")

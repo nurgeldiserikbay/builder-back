@@ -66,6 +66,19 @@ export class JourneyService {
 
   constructor(private readonly prisma: PrismaService, private readonly billing: BillingService, private readonly worktime: WorktimeService) {}
 
+  /** Projects with an AI request in progress in this process. */
+  private readonly aiRunning = new Set<string>();
+
+  /**
+   * One AI request per project at a time: a double click or a second tab would otherwise pay twice and could pass the
+   * balance and limit checks together. Per process; several API instances would each allow one.
+   */
+  private async oneAiRequest<T>(projectId: string, run: () => Promise<T>): Promise<T> {
+    if (this.aiRunning.has(projectId)) throw new ConflictException('AI_ALREADY_RUNNING');
+    this.aiRunning.add(projectId);
+    try { return await run(); } finally { this.aiRunning.delete(projectId); }
+  }
+
   /** Tests may inject a provider; production reads environment configuration. */
   setProvider(provider: StageAiProvider | null): void { this.provider = provider; }
   private ai(): StageAiProvider | null {
@@ -536,7 +549,11 @@ export class JourneyService {
     return { data: { id: ruleId, status } };
   }
 
-  async generate(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram' }) {
+  generate(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram' }) {
+    return this.oneAiRequest(projectId, () => this.generateNow(userId, projectId, key, input));
+  }
+
+  private async generateNow(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram' }) {
     const source = input.source ?? 'app';
     const ctx = await this.load(userId, projectId, 'write', key);
     const assignment = this.assignmentFor(ctx, key);
@@ -606,11 +623,11 @@ export class JourneyService {
       } });
     };
     let merged: unknown;
+    let proposal: unknown;
     try {
       const detailed = provider.generateDetailed ? await provider.generateDetailed(prompt) : { output: await provider.generate(prompt), usage: null };
       usage = detailed.usage;
       const raw = detailed.output;
-      let proposal: unknown;
       if (definition.artifactType === 'content' && input.targetKey) {
         const section = (raw as { section?: unknown })?.section;
         const baseContent = base!.content as ContentArtifact;
@@ -625,11 +642,22 @@ export class JourneyService {
       if (code === 'AI_OUTPUT_REJECTED') throw new BadGatewayException(code);
       throw new ServiceUnavailableException(code);
     }
+    // The request takes seconds; if someone saved the stage meanwhile, the answer goes on top of that newer version
+    // (with its locks) instead of silently replacing it.
+    const fresh = await this.prisma.projectStage.findUnique({ where: { id: stage.id }, select: { currentVersionId: true, lockedKeys: true } });
+    let baseId = base?.id ?? null;
+    if (fresh && fresh.currentVersionId !== baseId) {
+      const latest = await this.versionContent(fresh.currentVersionId);
+      try {
+        merged = normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, latest?.content ?? null, proposal, fresh.lockedKeys, input.targetKey));
+        baseId = latest?.id ?? null;
+      } catch { /* keep the answer merged on the version it was asked for */ }
+    }
     const version = await this.prisma.$transaction(async (tx) => {
       const run = await tx.generationRun.create({ data: {
         projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
         targetKey: input.targetKey, instructionId: instruction?.id ?? null, ruleIds: rules.map((rule) => rule.id), inputVersionIds: Object.values(inputs).map((item) => item.versionId),
-        baseVersionId: base?.id ?? null, status: 'succeeded', durationMs: Date.now() - started, source,
+        baseVersionId: baseId, status: 'succeeded', durationMs: Date.now() - started, source,
         inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null, costTiyn: costOf(usage, pricing),
       }, select: { id: true } });
       const created = await this.createVersion(tx, {
@@ -936,7 +964,13 @@ export class JourneyService {
       if (issues.length) throw new UnprocessableEntityException(`STAGE_INCOMPLETE:${issues.map((issue) => issue.key).join(',')}`);
     }
     await this.prisma.$transaction(async (tx) => {
-      await tx.projectStage.update({ where: { id: stage.id }, data: { status: 'approved', approvedVersionId: versionId, approvedAt: new Date(), approvedByUserId: userId, reviewNote: null } });
+      // The guarded update locks the stage row: a second «accept» (double click, two tabs) waits and then finds nothing to
+      // change, so payments and change notices are created once.
+      const moved = await tx.projectStage.updateMany({
+        where: { id: stage.id, status: { in: ['in_progress', 'stale', 'changes_requested', 'in_review'] }, currentVersionId: versionId },
+        data: { status: 'approved', approvedVersionId: versionId, approvedAt: new Date(), approvedByUserId: userId, reviewNote: null },
+      });
+      if (moved.count !== 1) throw new ConflictException('STAGE_VERSION_CONFLICT');
       // What paid specialists are owed is fixed at acceptance: the fixed price, or approved minutes × rate within the limit.
       await this.worktime.paymentsOnAccept(tx, stage.id, version.versionNumber);
       // Specialists keep read access for a grace period after acceptance; writing and AI use stop now.
@@ -1073,7 +1107,11 @@ export class JourneyService {
    * AI explains a change notice to the side that decides: what changed, what it means for their stage, what to check.
    * It suggests, never decides. Costs one AI request (plan, balance and limits apply); the result is kept on the notice.
    */
-  async explainChange(userId: string, projectId: string, noticeId: string) {
+  explainChange(userId: string, projectId: string, noticeId: string) {
+    return this.oneAiRequest(projectId, () => this.explainChangeNow(userId, projectId, noticeId));
+  }
+
+  private async explainChangeNow(userId: string, projectId: string, noticeId: string) {
     const notice = await this.prisma.changeNotice.findFirst({ where: { id: noticeId, projectId }, select: { id: true, status: true, changes: true, sourceStageId: true, targetStageId: true, previousVersionId: true, newVersionId: true, aiExplanation: true } });
     if (!notice) throw new NotFoundException('CHANGE_NOT_FOUND');
     if (notice.status !== 'open' && notice.status !== 'discussing') throw new ConflictException('CHANGE_ALREADY_DECIDED');

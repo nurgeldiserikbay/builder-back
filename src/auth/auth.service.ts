@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -10,6 +12,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { telegramConfig, verifyWebAppInitData } from '../notifications/telegram.js';
 import { emailConfig, sendEmail, type EmailConfig } from '../notifications/email.js';
 import { LEGAL_VERSIONS } from '../legal/documents.js';
+import { RateLimiter, authLimits } from '../security/rate-limit.js';
 
 const scrypt = (password: string, salt: Buffer, length: number, options: { N: number; r: number; p: number; maxmem: number }): Promise<Buffer> =>
   new Promise((resolve, reject) => {
@@ -20,6 +23,7 @@ const scrypt = (password: string, salt: Buffer, length: number, options: { N: nu
   });
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
+const RESET_TTL_MS = 60 * 60 * 1000;
 
 export interface SafeUser {
   id: string;
@@ -40,14 +44,24 @@ export function consentIsCurrent(consent: ConsentRow | undefined): boolean {
 
 @Injectable()
 export class AuthService {
+  readonly limits = new RateLimiter();
+
   constructor(private readonly prisma: PrismaService) {}
 
-  async register(input: { email: string; password: string; name?: string; locale: 'en' | 'ru' | 'kk'; acceptLegal: boolean }) {
+  async register(input: { email: string; password: string; name?: string; locale: 'en' | 'ru' | 'kk'; acceptLegal: boolean }, ip = '') {
     if (input.acceptLegal !== true) throw new BadRequestException('CONSENT_REQUIRED');
     const normalized = input.email.trim().toLowerCase();
     const mail = this.mailConfig();
+    this.limits.take('register-ip', ip, authLimits.registerPerIp);
+    this.limits.take('mail-ip', ip, authLimits.mailPerIp);
     const existing = await this.prisma.user.findUnique({ where: { emailNormalized: normalized } });
-    if (existing) return { status: 'verification_pending' as const };
+    // Registering again with an unconfirmed address sends a fresh link; the answer is the same either way, so it does not
+    // reveal which addresses have accounts.
+    if (existing) {
+      if (!existing.emailVerifiedAt && !existing.deletionRequestedAt) await this.sendVerification(existing.id, existing.email).catch(() => undefined);
+      return { status: 'verification_pending' as const };
+    }
+    this.limits.take('mail-email', normalized, authLimits.mailPerEmail);
 
     const passwordHash = await this.hashPassword(input.password);
     const rawToken = randomBytes(32).toString('base64url');
@@ -107,7 +121,67 @@ export class AuthService {
     return { status: 'verification_pending' as const };
   }
 
-  async verifyEmail(token: string): Promise<void> {
+  /** A new confirmation link for an account that is not confirmed yet. Answers the same for unknown addresses. */
+  async resendVerification(email: string, ip = ''): Promise<void> {
+    const normalized = email.trim().toLowerCase();
+    this.mailConfig();
+    this.limits.take('mail-ip', ip, authLimits.mailPerIp);
+    const user = await this.prisma.user.findUnique({ where: { emailNormalized: normalized }, select: { id: true, email: true, emailVerifiedAt: true, deletionRequestedAt: true } });
+    if (!user || user.emailVerifiedAt || user.deletionRequestedAt) return;
+    await this.sendVerification(user.id, user.email);
+  }
+
+  private async sendVerification(userId: string, email: string): Promise<void> {
+    const normalized = email.trim().toLowerCase();
+    if (!this.limits.allowed('mail-email', normalized, authLimits.mailPerEmail)) return;
+    this.limits.hit('mail-email', normalized, authLimits.mailPerEmail);
+    const mail = this.mailConfig();
+    const rawToken = randomBytes(32).toString('base64url');
+    await this.prisma.emailVerificationToken.create({ data: { userId, tokenHash: this.digest(rawToken), expiresAt: new Date(Date.now() + VERIFY_TTL_MS) } });
+    const verifyUrl = new URL('/verify-email', mail.appUrl);
+    verifyUrl.searchParams.set('token', rawToken);
+    const sent = await sendEmail(mail.email, email, 'Verify your BuildPath account',
+      `<p>Confirm your email to finish creating your BuildPath account.</p><p><a href="${verifyUrl.toString()}">Verify email</a></p><p>This link expires in 24 hours.</p>`);
+    if (!sent) throw new ServiceUnavailableException('EMAIL_DELIVERY_UNAVAILABLE');
+  }
+
+  /** «Forgot password»: mails a one-hour link. Answers the same for unknown addresses. */
+  async requestPasswordReset(email: string, ip = ''): Promise<void> {
+    const normalized = email.trim().toLowerCase();
+    const mail = this.mailConfig();
+    this.limits.take('mail-ip', ip, authLimits.mailPerIp);
+    const user = await this.prisma.user.findUnique({ where: { emailNormalized: normalized }, select: { id: true, email: true, deletionRequestedAt: true } });
+    if (!user || user.deletionRequestedAt) return;
+    if (!this.limits.allowed('mail-email', normalized, authLimits.mailPerEmail)) return;
+    this.limits.hit('mail-email', normalized, authLimits.mailPerEmail);
+    const rawToken = randomBytes(32).toString('base64url');
+    await this.prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash: this.digest(rawToken), expiresAt: new Date(Date.now() + RESET_TTL_MS) } });
+    const url = new URL('/reset-password', mail.appUrl);
+    url.searchParams.set('token', rawToken);
+    const sent = await sendEmail(mail.email, user.email, 'Reset your BuildPath password',
+      `<p>Someone asked to set a new password for your BuildPath account. If it was you, open the link:</p><p><a href="${url.toString()}">Set a new password</a></p><p>The link works for one hour. If you did not ask, ignore this email: your password stays the same.</p>`);
+    if (!sent) throw new ServiceUnavailableException('EMAIL_DELIVERY_UNAVAILABLE');
+  }
+
+  /** Sets the new password, confirms the address (the link came to it) and signs out every session. */
+  async resetPassword(token: string, password: string, ip = ''): Promise<void> {
+    this.limits.take('token-ip', ip, authLimits.tokenPerIp);
+    const now = new Date();
+    const record = await this.prisma.passwordResetToken.findUnique({ where: { tokenHash: this.digest(token) } });
+    if (!record || record.consumedAt || record.expiresAt <= now) throw new UnauthorizedException('RESET_TOKEN_INVALID');
+    const passwordHash = await this.hashPassword(password);
+    await this.prisma.$transaction(async (tx) => {
+      const consumed = await tx.passwordResetToken.updateMany({ where: { id: record.id, consumedAt: null }, data: { consumedAt: now } });
+      if (!consumed.count) throw new UnauthorizedException('RESET_TOKEN_INVALID');
+      const user = await tx.user.findUnique({ where: { id: record.userId }, select: { emailVerifiedAt: true } });
+      await tx.user.update({ where: { id: record.userId }, data: { passwordHash, ...(user?.emailVerifiedAt ? {} : { emailVerifiedAt: now }) } });
+      await tx.passwordResetToken.deleteMany({ where: { userId: record.userId, id: { not: record.id } } });
+      await tx.userSession.updateMany({ where: { userId: record.userId, revokedAt: null }, data: { revokedAt: now } });
+    });
+  }
+
+  async verifyEmail(token: string, ip = ''): Promise<void> {
+    this.limits.take('token-ip', ip, authLimits.tokenPerIp);
     const tokenHash = this.digest(token);
     const now = new Date();
     const record = await this.prisma.emailVerificationToken.findUnique({ where: { tokenHash } });
@@ -123,14 +197,19 @@ export class AuthService {
     ]);
   }
 
-  async login(email: string, password: string): Promise<{ token: string; user: SafeUser }> {
+  async login(email: string, password: string, ip = ''): Promise<{ token: string; user: SafeUser }> {
+    const normalized = email.trim().toLowerCase();
+    this.limits.take('login-ip', ip, authLimits.loginPerIp, 'LOGIN_RATE_LIMITED');
+    if (!this.limits.allowed('login-fail', normalized, authLimits.loginFailuresPerEmail)) throw new HttpException('LOGIN_RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
     const user = await this.prisma.user.findUnique({
-      where: { emailNormalized: email.trim().toLowerCase() },
+      where: { emailNormalized: normalized },
       include: { consents: latestConsent },
     });
     if (!user || !(await this.verifyPassword(password, user.passwordHash))) {
+      this.limits.hit('login-fail', normalized, authLimits.loginFailuresPerEmail);
       throw new UnauthorizedException('INVALID_CREDENTIALS');
     }
+    this.limits.clear('login-fail', normalized);
     // Shown only after the correct password, so it does not reveal which emails have accounts.
     if (user.deletionRequestedAt) throw new ForbiddenException('ACCOUNT_DELETED');
     if (!user.emailVerifiedAt) throw new UnauthorizedException('EMAIL_NOT_VERIFIED');
