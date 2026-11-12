@@ -1,9 +1,11 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
-import { inLocale, tr, type Message } from '../i18n/i18n.js';
+import { contentLocale, inLocale, runWithLocale, tr, type Message } from '../i18n/i18n.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
+import { emailConfig, sendEmail } from '../notifications/email.js';
+import { escapeHtml } from '../journey/site-renderer.js';
 import { stageDefinitions, type StageKey } from '../journey/catalog.js';
-import { canOpen, checkClaim, checkMessage, checkResolution, kindsBySide, sideOf, type Side } from './dispute-rules.js';
+import { REVOKED_WINDOW_DAYS, canOpen, checkClaim, checkMessage, checkResolution, kindsBySide, sideOf, type Side } from './dispute-rules.js';
 
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const tenge = (tiyn: number | null) => (tiyn === null ? null : tiyn / 100);
@@ -34,11 +36,27 @@ type DisputeRow = { id: string; assignmentId: string; projectId: string; openedB
 export class DisputesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private async notify(userId: string | null, text: Message) {
-    const config = telegramConfig();
-    if (!config || !userId) return;
-    const identity = await this.prisma.externalIdentity.findUnique({ where: { userId_provider: { userId, provider: 'telegram' } }, select: { chatId: true, user: { select: { locale: true } } } });
-    if (identity) await sendTelegramMessage(config, identity.chatId, inLocale(identity.user.locale, text)).catch(() => undefined);
+  /**
+   * Telegram when linked, and e-mail for the steps that matter (opened, support wrote, decided, withdrawn) so a side
+   * without Telegram still learns about them. Replies between the sides go to Telegram only, to keep mail quiet.
+   * Never throws: a failed notice must not undo a dispute action.
+   */
+  private async notify(userId: string | null, text: Message, byEmail = true) {
+    if (!userId) return;
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true, locale: true, deletionRequestedAt: true, externalIdentities: { where: { provider: 'telegram' }, select: { chatId: true } } } });
+    if (!user || user.deletionRequestedAt) return;
+    const telegram = telegramConfig();
+    const chatId = user.externalIdentities[0]?.chatId;
+    if (telegram && chatId) await sendTelegramMessage(telegram, chatId, inLocale(user.locale, text)).catch(() => undefined);
+    const mail = byEmail ? emailConfig() : null;
+    if (!mail) return;
+    const appUrl = process.env.PUBLIC_APP_URL;
+    await runWithLocale(contentLocale(user.locale), async () => {
+      const body = inLocale(user.locale, text);
+      const link = appUrl ? new URL('/account/disputes', appUrl).toString() : null;
+      const html = `<p style="font:15px/1.5 system-ui,sans-serif">${escapeHtml(body)}</p>${link ? `<p><a href="${escapeHtml(link)}">${escapeHtml(tr('Открыть споры'))}</a></p>` : ''}`;
+      await sendEmail(mail, user.email, tr('BuildPath: спор по работе специалиста'), html).catch(() => undefined);
+    });
   }
 
   /** The other side: the specialist, or the project owner. */
@@ -90,7 +108,7 @@ export class DisputesService {
       throw error;
     });
     const title = stageTitle(assignment.stage.stageKey);
-    await this.notify(this.otherSide(side, assignment), () => tr('По этапу «{0}» в проекте «{1}» открыт спор. Поддержка BuildPath разберёт его по истории этапа; вы можете добавить своё объяснение на странице этапа.', [tr(title), assignment.project.name]));
+    await this.notify(this.otherSide(side, assignment), () => tr('По этапу «{0}» в проекте «{1}» открыт спор. Поддержка BuildPath разберёт его по истории этапа; вы можете добавить своё объяснение в разделе «Споры».', [tr(title), assignment.project.name]));
     return this.forAssignment(userId, assignmentId);
   }
 
@@ -108,7 +126,7 @@ export class DisputesService {
     const checked = checkMessage(text, dispute._count.messages);
     if (!checked.ok) throw new BadRequestException(checked.code);
     await this.prisma.disputeMessage.create({ data: { disputeId, side, authorUserId: userId, text: checked.text } });
-    await this.notify(this.otherSide(side, assignment), () => tr('Новое сообщение в споре по этапу «{0}» проекта «{1}».', [tr(stageTitle(assignment.stage.stageKey)), assignment.project.name]));
+    await this.notify(this.otherSide(side, assignment), () => tr('Новое сообщение в споре по этапу «{0}» проекта «{1}».', [tr(stageTitle(assignment.stage.stageKey)), assignment.project.name]), false);
     return this.forAssignment(userId, dispute.assignmentId);
   }
 
@@ -129,11 +147,25 @@ export class DisputesService {
       orderBy: [{ status: 'asc' }, { createdAt: 'desc' }], take: 50,
       select: { id: true, status: true, kind: true, outcome: true, createdAt: true, assignment: { select: { userId: true, projectId: true, project: { select: { name: true } }, stage: { select: { stageKey: true } } } } },
     });
+    // A specialist whose access is over can no longer open the stage page, so the account lists where a dispute is still possible.
+    const now = new Date();
+    const since = new Date(now.getTime() - REVOKED_WINDOW_DAYS * 86_400_000);
+    const closedAccess = await this.prisma.stageAssignment.findMany({
+      where: {
+        userId, acceptedAt: { not: null }, disputes: { none: { status: 'open' } },
+        OR: [{ status: 'revoked', revokedAt: { gt: since } }, { status: 'completed', completedAt: { gt: since }, OR: [{ readUntil: null }, { readUntil: { lte: now } }] }],
+      },
+      orderBy: { updatedAt: 'desc' }, take: 20,
+      select: { id: true, status: true, project: { select: { name: true } }, stage: { select: { stageKey: true } } },
+    });
     return {
-      data: rows.map((row) => ({
-        id: row.id, status: row.status, kind: row.kind, outcome: row.outcome, createdAt: row.createdAt, projectId: row.assignment.projectId, projectName: row.assignment.project.name,
-        stageKey: row.assignment.stage.stageKey, stageTitle: stageTitle(row.assignment.stage.stageKey), side: row.assignment.userId === userId ? 'specialist' : 'owner',
-      })),
+      data: {
+        disputes: rows.map((row) => ({
+          id: row.id, status: row.status, kind: row.kind, outcome: row.outcome, createdAt: row.createdAt, projectId: row.assignment.projectId, projectName: row.assignment.project.name,
+          stageKey: row.assignment.stage.stageKey, stageTitle: stageTitle(row.assignment.stage.stageKey), side: row.assignment.userId === userId ? 'specialist' : 'owner',
+        })),
+        withoutStageAccess: closedAccess.map((row) => ({ assignmentId: row.id, projectName: row.project.name, stageTitle: stageTitle(row.stage.stageKey), status: row.status })),
+      },
     };
   }
 

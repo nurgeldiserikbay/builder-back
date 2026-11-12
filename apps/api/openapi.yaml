@@ -2220,7 +2220,7 @@ paths:
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       responses:
-        '200': { description: 'id, status, kind, outcome, createdAt, projectId, projectName, stageKey, stageTitle, side' }
+        '200': { description: 'disputes[] (id, status, kind, outcome, createdAt, projectId, projectName, stageKey, stageTitle, side); withoutStageAccess[] (assignmentId, projectName, stageTitle, status) — the specialist''s assignments of the last 30 days whose stage page is closed to them and where a dispute can still be opened' }
   /admin/disputes:
     get:
       tags: [Disputes]
