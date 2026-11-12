@@ -6,6 +6,7 @@ import { emailConfig, sendEmail } from '../notifications/email.js';
 import { escapeHtml } from './site-renderer.js';
 import { stageDefinitions, type StageKey } from './catalog.js';
 import { BillingService } from '../billing/billing.service.js';
+import { reviewState } from '../catalog/catalog-rules.js';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const manageRoles = new Set(['owner', 'manager']);
@@ -115,13 +116,18 @@ export class SpecialistsService {
     const { stage } = await this.manager(userId, projectId, stageKey);
     const rows = await this.prisma.stageAssignment.findMany({
       where: { stageId: stage!.id, status: { not: 'revoked' } }, orderBy: { createdAt: 'desc' },
-      select: { id: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, user: { select: { name: true } }, ...termsSelect },
+      select: { id: true, userId: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, user: { select: { name: true, specialistProfile: { select: { id: true, displayName: true, published: true } } } }, review: { select: { rating: true, text: true, reply: true, createdAt: true, authorUserId: true } }, ...termsSelect },
     });
     return {
       data: {
-        assignments: rows.map(({ user, payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime, ...row }) => {
+        assignments: rows.map(({ user, review, userId: specialistId, payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime, ...row }) => {
           const terms = termsView({ payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime });
-          return { ...row, name: user?.name ?? null, inviteExpired: row.status === 'invited' && row.inviteExpiresAt < new Date(), terms, termsText: termsText(terms) };
+          const profile = user?.specialistProfile?.published ? user.specialistProfile : null;
+          return {
+            ...row, name: profile?.displayName ?? user?.name ?? null, profileId: profile?.id ?? null, inviteExpired: row.status === 'invited' && row.inviteExpiresAt < new Date(), terms, termsText: termsText(terms),
+            review: review ? { rating: review.rating, text: review.text, reply: review.reply } : null,
+            canReview: reviewState({ status: row.status, userId: specialistId }, review, userId).allowed,
+          };
         }),
         roles: roleAccess,
       },

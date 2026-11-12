@@ -3,6 +3,7 @@ import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { JourneyService } from './journey.service.js';
 import { SpecialistsService, type SpecialistTerms } from './specialists.service.js';
+import { CatalogService } from '../catalog/catalog.service.js';
 import { WorktimeService } from './worktime.service.js';
 
 function body(value: unknown, fields: string[]): Record<string, unknown> {
@@ -49,7 +50,7 @@ function uuid(value: string, code: string): string {
 @Controller()
 @UseGuards(AuthGuard)
 export class JourneyController {
-  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService) {}
+  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService) {}
 
   @Post('projects/:projectId/stages/:stageKey/activity')
   @HttpCode(200)
@@ -119,9 +120,11 @@ export class JourneyController {
   }
 
   @Post('projects/:projectId/stages/:stageKey/assignments')
-  invite(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
-    const input = body(raw, ['email', 'role', 'aiBudget', 'payKind', 'fixedAmount', 'hourlyRate', 'hourLimit', 'weeklyHourLimit', 'revisionsIncluded', 'onlyResultTime']);
-    const email = text(input.email, 'email', 3, 254)!;
+  async invite(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw, ['email', 'profileId', 'role', 'aiBudget', 'payKind', 'fixedAmount', 'hourlyRate', 'hourLimit', 'weeklyHourLimit', 'revisionsIncluded', 'onlyResultTime']);
+    // From the catalog the owner picks a profile; the address stays on the server and is never shown in the catalog.
+    if ((input.email === undefined) === (input.profileId === undefined)) throw new BadRequestException('INVITE_EMAIL_OR_PROFILE');
+    const email = input.profileId !== undefined ? await this.specialistCatalog.emailForInvite(String(input.profileId)) : text(input.email, 'email', 3, 254)!;
     if (!/^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(email)) throw new BadRequestException('INVALID_EMAIL');
     if (input.role !== 'lead' && input.role !== 'consultant') throw new BadRequestException('INVALID_ROLE');
     const aiBudget = input.aiBudget ?? null;
