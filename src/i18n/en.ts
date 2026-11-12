@@ -1458,4 +1458,11 @@ export const en: Record<string, string> = {
   "📤 Отправить на приёмку": "📤 Send for review",
   "💬 Предложить правку": "💬 Suggest an edit",
   "← Этапы": "← Stages",
+  "По этапу «{0}» в проекте «{1}» открыт спор. Поддержка BuildPath разберёт его по истории этапа; вы можете добавить своё объяснение в разделе «Споры».": "A dispute was opened about the “{0}” stage in project “{1}”. BuildPath support will review it using the stage history; you can add your explanation under “Disputes”.",
+  "Открыть споры": "Open disputes",
+  "BuildPath: спор по работе специалиста": "BuildPath: a dispute about a specialist's work",
+  "Новое сообщение в споре по этапу «{0}» проекта «{1}».": "New message in the dispute about the “{0}” stage of project “{1}”.",
+  "Спор по этапу «{0}» проекта «{1}» отозван.": "The dispute about the “{0}” stage of project “{1}” was withdrawn.",
+  "Поддержка BuildPath написала в споре по этапу «{0}» проекта «{1}».": "BuildPath support wrote in the dispute about the “{0}” stage of project “{1}”.",
+  "Поддержка BuildPath решила спор по этапу «{0}» проекта «{1}»: {2}": "BuildPath support decided the dispute about the “{0}” stage of project “{1}”: {2}",
 };

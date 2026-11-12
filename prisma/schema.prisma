@@ -1035,6 +1035,7 @@ model StageAssignment {
   limitWarnedAt   DateTime?             @map("limit_warned_at") @db.Timestamptz(3)
   timeEntries     TimeEntry[]
   payments        StagePayment[]
+  disputes        Dispute[]
   invitedByUserId String                @map("invited_by_user_id") @db.Uuid
   acceptedAt      DateTime?             @map("accepted_at") @db.Timestamptz(3)
   completedAt     DateTime?             @map("completed_at") @db.Timestamptz(3)
@@ -1511,4 +1512,50 @@ model StoreOrder {
   @@index([projectId, createdAt], map: "store_orders_project_created_idx")
   @@index([publicationId, createdAt], map: "store_orders_publication_created_idx")
   @@map("store_orders")
+}
+
+/// Disagreement about a specialist's stage (payment, refund, quality), decided by BuildPath staff from the stage history.
+model Dispute {
+  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assignmentId      String           @map("assignment_id") @db.Uuid
+  projectId         String           @map("project_id") @db.Uuid
+  openedByUserId    String           @map("opened_by_user_id") @db.Uuid
+  /// owner (owner or manager of the project) or specialist
+  openedBySide      String           @map("opened_by_side") @db.VarChar(12)
+  /// payment | refund | quality | other
+  kind              String           @db.VarChar(12)
+  claim             String           @db.VarChar(2000)
+  claimAmountTiyn   Int?             @map("claim_amount_tiyn")
+  /// open → resolved | withdrawn
+  status            String           @default("open") @db.VarChar(12)
+  /// specialist | owner | split | no_change
+  outcome           String?          @db.VarChar(12)
+  resolutionNote    String?          @map("resolution_note") @db.VarChar(1000)
+  /// Payment created by the decision for the specialist, if any.
+  resultPaymentId   String?          @map("result_payment_id") @db.Uuid
+  resolvedByStaffId String?          @map("resolved_by_staff_id") @db.Uuid
+  resolvedAt        DateTime?        @map("resolved_at") @db.Timestamptz(3)
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  assignment        StageAssignment  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  messages          DisputeMessage[]
+
+  @@index([status, createdAt], map: "disputes_status_created_idx")
+  @@index([assignmentId], map: "disputes_assignment_idx")
+  @@map("disputes")
+}
+
+model DisputeMessage {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  disputeId    String   @map("dispute_id") @db.Uuid
+  /// owner | specialist | staff
+  side         String   @db.VarChar(12)
+  authorUserId String?  @map("author_user_id") @db.Uuid
+  staffId      String?  @map("staff_id") @db.Uuid
+  text         String   @db.VarChar(2000)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  dispute      Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
+
+  @@index([disputeId, createdAt], map: "dispute_messages_dispute_created_idx")
+  @@map("dispute_messages")
 }

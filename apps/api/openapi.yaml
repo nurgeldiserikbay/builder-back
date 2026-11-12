@@ -21,6 +21,7 @@ tags:
   - name: Publishing
   - name: Telegram
   - name: Specialists
+  - name: Disputes
   - name: Plans
 paths:
   /admin/auth/login:
@@ -1916,7 +1917,7 @@ paths:
         - { name: paymentId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: 'holderName, iban' }
-        '409': { description: PAYOUT_DETAILS_MISSING }
+        '409': { description: 'PAYOUT_DETAILS_MISSING, DISPUTE_OPEN (an open dispute about this assignment)' }
   /admin/payouts/{paymentId}/paid-out:
     post:
       tags: [Admin]
@@ -1933,6 +1934,7 @@ paths:
             schema: { type: object, additionalProperties: false, required: [reference], properties: { reference: { type: string, minLength: 3, maxLength: 100 } } }
       responses:
         '200': { description: Payout queue }
+        '409': { description: 'PAYMENT_NOT_HELD, DISPUTE_OPEN' }
         '409': { description: PAYMENT_NOT_HELD }
   /admin/payouts/{paymentId}/refund:
     post:
@@ -2141,6 +2143,151 @@ paths:
       responses:
         '200': { description: 'pricingConfigured, perRequest, estimate (min, max, remainingMin, remainingMax, basedOnRequests), spent (total, requests, unpricedRequests), stages, participants, specialists (planned, due, paid in tenge; only for the owner and managers, otherwise null), currency KZT' }
         '404': { $ref: '#/components/responses/Problem' }
+  /assignments/{assignmentId}/disputes:
+    get:
+      tags: [Disputes]
+      operationId: listAssignmentDisputes
+      summary: Disputes of one stage assignment (the specialist, or the project's owner/managers)
+      description: Same thread for both sides. Others get 404 ASSIGNMENT_NOT_FOUND. Returns side, disputes, canOpen and the kinds this side may open.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: assignmentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'side (owner|specialist), disputes[] (id, kind, openedBySide, mine, claim, claimAmount, status, outcome, resolutionNote, resolvedAt, createdAt, paymentCreated, messages[], canWrite, canWithdraw), canOpen, kinds, stageTitle' }
+        '404': { description: ASSIGNMENT_NOT_FOUND }
+    post:
+      tags: [Disputes]
+      operationId: openDispute
+      summary: Open a dispute
+      description: 'Specialist: payment | other. Owner/manager: refund | quality | other. Only after the invitation was accepted, one open dispute per assignment (also a partial unique index), and up to 30 days after access was revoked. While open, staff cannot reveal the payout account or record a payout for this assignment (409 DISPUTE_OPEN). The other side is notified in Telegram. Logged as dispute_opened.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: assignmentId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind, claim]
+              properties:
+                kind: { type: string, enum: [payment, refund, quality, other] }
+                claim: { type: string, minLength: 20, maxLength: 2000 }
+                amount: { type: [integer, 'null'], minimum: 1, maximum: 100000000, description: Whole tenge; required for payment and refund }
+      responses:
+        '201': { description: Same body as GET }
+        '400': { description: 'DISPUTE_KIND_INVALID, DISPUTE_CLAIM_INVALID, DISPUTE_AMOUNT_INVALID, DISPUTE_AMOUNT_REQUIRED' }
+        '409': { description: 'DISPUTE_ALREADY_OPEN, DISPUTE_NOT_AVAILABLE, DISPUTE_WINDOW_CLOSED' }
+  /disputes/{disputeId}/messages:
+    post:
+      tags: [Disputes]
+      operationId: writeInDispute
+      summary: Add a message to an open dispute (either side)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: disputeId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string, minLength: 2, maxLength: 2000 } } }
+      responses:
+        '200': { description: 'Same body as GET /assignments/{assignmentId}/disputes' }
+        '400': { description: 'DISPUTE_MESSAGE_INVALID, DISPUTE_TOO_MANY_MESSAGES (50)' }
+        '409': { description: DISPUTE_CLOSED }
+  /disputes/{disputeId}/withdraw:
+    post:
+      tags: [Disputes]
+      operationId: withdrawDispute
+      summary: The side that opened the dispute withdraws it
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: disputeId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Same body as GET /assignments/{assignmentId}/disputes' }
+        '403': { description: DISPUTE_WITHDRAW_FORBIDDEN }
+        '409': { description: DISPUTE_CLOSED }
+  /me/disputes:
+    get:
+      tags: [Disputes]
+      operationId: myDisputes
+      summary: Disputes the user takes part in, as specialist or owner/manager
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'disputes[] (id, status, kind, outcome, createdAt, projectId, projectName, stageKey, stageTitle, side); withoutStageAccess[] (assignmentId, projectName, stageTitle, status) — the specialist''s assignments of the last 30 days whose stage page is closed to them and where a dispute can still be opened' }
+  /admin/disputes:
+    get:
+      tags: [Disputes]
+      operationId: staffDisputes
+      summary: Staff — open (default) or closed disputes
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [open, closed] } }
+      responses:
+        '200': { description: 'id, status, kind, outcome, openedBySide, claimAmount, createdAt, messages, project, stage, specialist' }
+  /admin/disputes/{disputeId}:
+    get:
+      tags: [Disputes]
+      operationId: staffDispute
+      summary: Staff — dispute with evidence (super_admin, operations_auditor; each view audited)
+      description: Thread, terms, assignment dates, payments, time by status, number of stage versions, last 60 stage and dispute events.
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: disputeId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Dispute with evidence }
+        '404': { description: DISPUTE_NOT_FOUND }
+  /admin/disputes/{disputeId}/messages:
+    post:
+      tags: [Disputes]
+      operationId: staffWriteInDispute
+      summary: Staff — message to both sides (super_admin, audited)
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: disputeId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string, minLength: 2, maxLength: 2000 } } }
+      responses:
+        '200': { description: Dispute with evidence }
+        '409': { description: DISPUTE_CLOSED }
+  /admin/disputes/{disputeId}/resolve:
+    post:
+      tags: [Disputes]
+      operationId: staffResolveDispute
+      summary: Staff — decide (super_admin, audited)
+      description: Outcome and an explanation sent to both sides. paySpecialist (whole tenge) only with specialist or split; it creates a payment due from the owner (basis dispute) and moves no money. Held money goes back to the owner with POST /admin/payouts/{paymentId}/refund. Logged as dispute.resolved and dispute_resolved.
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: disputeId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [outcome, note]
+              properties:
+                outcome: { type: string, enum: [specialist, owner, split, no_change] }
+                note: { type: string, minLength: 10, maxLength: 1000 }
+                paySpecialist: { type: [integer, 'null'], minimum: 1, maximum: 100000000 }
+      responses:
+        '200': { description: Dispute with evidence }
+        '400': { description: 'DISPUTE_OUTCOME_INVALID, DISPUTE_NOTE_REQUIRED, DISPUTE_PAYMENT_NOT_ALLOWED, DISPUTE_AMOUNT_INVALID' }
+        '409': { description: DISPUTE_CLOSED }
   /admin/ai-pricing:
     get:
       tags: [Budget]
