@@ -1,9 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { WorktimeService } from '../journey/worktime.service.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { stageDefinitions, type StageKey } from '../journey/catalog.js';
-import { DEFAULT_TOKENS, estimateRoute, tenge } from './budget.js';
+import { DEFAULT_TOKENS, MAX_LIMIT_TENGE, estimateRoute, requestCost, spendLimitState, tenge } from './budget.js';
 
 const MAX_PRICE_TENGE = 1_000_000;
 
@@ -52,14 +52,31 @@ export class BudgetService {
     return { input: Math.round(recent._avg.inputTokens ?? DEFAULT_TOKENS.input), output: Math.round(recent._avg.outputTokens ?? DEFAULT_TOKENS.output), basedOn: recent._count._all };
   }
 
+  /** Owner or manager sets or removes the project's cap on AI spending (tenge, whole number). Logged in the project history. */
+  async setSpendLimit(userId: string, projectId: string, amount: number | null) {
+    const access = await this.journey.projectAccess(userId, projectId);
+    if (!access.canDecide) throw new ForbiddenException('SPEND_LIMIT_FORBIDDEN');
+    if (amount !== null && (!Number.isInteger(amount) || amount < 1 || amount > MAX_LIMIT_TENGE)) throw new BadRequestException('SPEND_LIMIT_INVALID');
+    const next = amount === null ? null : amount * 100;
+    const previous = await this.prisma.project.findUnique({ where: { id: projectId }, select: { aiSpendLimitTiyn: true } });
+    if ((previous?.aiSpendLimitTiyn ?? null) !== next) {
+      await this.prisma.$transaction([
+        this.prisma.project.update({ where: { id: projectId }, data: { aiSpendLimitTiyn: next } }),
+        this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'ai_spend_limit_changed', details: { previous: previous?.aiSpendLimitTiyn == null ? null : tenge(previous.aiSpendLimitTiyn), next: amount } } }),
+      ]);
+    }
+    return this.projectBudget(userId, projectId);
+  }
+
   /** Estimate for the route and what was spent, by stage and by participant. Members of the project only. */
   async projectBudget(userId: string, projectId: string) {
     const access = await this.journey.projectAccess(userId, projectId);
-    const [row, stages, runs, byAuthor] = await Promise.all([
+    const [row, stages, runs, byAuthor, project] = await Promise.all([
       this.prisma.aiPricing.findUnique({ where: { id: 1 } }),
       this.prisma.projectStage.findMany({ where: { projectId }, orderBy: { position: 'asc' }, select: { id: true, stageKey: true, status: true } }),
       this.prisma.generationRun.groupBy({ by: ['stageId'], where: { projectId, provider: { not: 'template' } }, _count: { _all: true }, _sum: { costTiyn: true } }),
       this.prisma.generationRun.groupBy({ by: ['requestedByUserId'], where: { projectId, provider: { not: 'template' } }, _count: { _all: true }, _sum: { costTiyn: true } }),
+      this.prisma.project.findUnique({ where: { id: projectId }, select: { aiSpendLimitTiyn: true } }),
     ]);
     const unpriced = await this.prisma.generationRun.count({ where: { projectId, provider: { not: 'template' }, costTiyn: null } });
     const tokens = await this.typicalTokens();
@@ -69,12 +86,16 @@ export class BudgetService {
     const estimate = row ? estimateRoute(route, tokens, row) : null;
     const users = await this.prisma.user.findMany({ where: { id: { in: byAuthor.map((item) => item.requestedByUserId) } }, select: { id: true, name: true, email: true } });
     const spentTotal = runs.reduce((sum, item) => sum + (item._sum.costTiyn ?? 0), 0);
+    const cap = spendLimitState(spentTotal, project?.aiSpendLimitTiyn ?? null, row ? requestCost(DEFAULT_TOKENS, row) : 0);
     return {
       data: {
         pricingConfigured: Boolean(row),
         perRequest: estimate ? tenge(estimate.perRequest) : null,
         estimate: estimate ? { min: tenge(estimate.total.min), max: tenge(estimate.total.max), remainingMin: tenge(estimate.remaining.min), remainingMax: tenge(estimate.remaining.max), basedOnRequests: tokens.basedOn } : null,
         spent: { total: tenge(spentTotal), requests: runs.reduce((sum, item) => sum + item._count._all, 0), unpricedRequests: unpriced },
+        // Owner's cap: warn from 80%, block when a typical request no longer fits. Only counted once prices are set.
+        limit: cap.limitTiyn === null ? null : { amount: tenge(cap.limitTiyn), left: tenge(cap.leftTiyn!), percent: Math.round(cap.share! * 100), warn: cap.warn, blocked: Boolean(row) && cap.blocked },
+        canSetLimit: access.canDecide,
         stages: route.map((stage) => {
           const used = runs.find((item) => item.stageId === stage.id);
           const planned = estimate?.perStage.find((item) => item.key === stage.key);

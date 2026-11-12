@@ -2040,7 +2040,7 @@ paths:
         - { name: noticeId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: 'items with explanation (summary, impact, check, suggestion accept|accept_no_change|discuss, why, createdAt)' }
-        '402': { description: PROJECT_BALANCE_LOW }
+        '402': { description: PROJECT_BALANCE_LOW or PROJECT_SPEND_LIMIT }
         '409': { description: CHANGE_ALREADY_DECIDED }
         '503': { description: 'AI_NOT_CONFIGURED, AI_PROVIDER_UNAVAILABLE' }
   /projects/{projectId}/change-settings:
@@ -2139,7 +2139,32 @@ paths:
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
-        '200': { description: 'pricingConfigured, perRequest, estimate (min, max, remainingMin, remainingMax, basedOnRequests), spent (total, requests, unpricedRequests), stages, participants, specialists (planned, due, paid in tenge; only for the owner and managers, otherwise null), currency KZT' }
+        '200': { description: 'pricingConfigured, perRequest, estimate (min, max, remainingMin, remainingMax, basedOnRequests), spent (total, requests, unpricedRequests), limit (amount, left, percent, warn from 80%, blocked when a typical request no longer fits; null without a cap), canSetLimit, stages, participants, specialists (planned, due, paid in tenge; only for the owner and managers, otherwise null), currency KZT' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/budget/limit:
+    post:
+      tags: [Budget]
+      operationId: setProjectSpendLimit
+      summary: Set or remove the project's cap on AI spending (owner or manager)
+      description: Whole tenge (1–10 000 000) or null to remove. Counted against all priced requests of the project. A new AI request is refused with 402 PROJECT_SPEND_LIMIT when spent plus a typical request would pass the cap; a running request is never cut off. The change is written to the project history (ai_spend_limit_changed).
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [amount]
+              properties:
+                amount: { type: [integer, 'null'], minimum: 1, maximum: 10000000 }
+      responses:
+        '200': { description: Same body as GET /projects/{projectId}/budget }
+        '400': { description: SPEND_LIMIT_INVALID, UNKNOWN_FIELD }
+        '403': { description: SPEND_LIMIT_FORBIDDEN }
         '404': { $ref: '#/components/responses/Problem' }
   /admin/ai-pricing:
     get:

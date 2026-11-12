@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { costOf, estimateRoute, requestCost, tenge } from './budget.js';
+import { costOf, estimateRoute, requestCost, spendLimitState, tenge } from './budget.js';
 
 const pricing = { inputPerMillionTiyn: 150_000, outputPerMillionTiyn: 600_000 }; // 1 500 ₸ and 6 000 ₸ per million tokens
 
@@ -20,5 +20,18 @@ describe('AI budget', () => {
     assert.deepEqual(estimate.total, { min: (2 + 3 + 1) * 1500, max: (5 + 10 + 3) * 1500 });
     assert.deepEqual(estimate.remaining, { min: (3 + 1) * 1500, max: (10 + 3) * 1500 });
     assert.deepEqual(estimate.perStage.find((stage) => stage.key === 'build')!.cost, { min: 0, max: 0 });
+  });
+});
+
+describe('AI spending cap', () => {
+  it('without a cap nothing is blocked or warned', () => {
+    assert.deepEqual(spendLimitState(10_000, null, 1500), { limitTiyn: null, leftTiyn: null, share: null, warn: false, blocked: false });
+  });
+  it('warns from 80% and blocks when a typical request no longer fits', () => {
+    assert.equal(spendLimitState(7_000, 10_000, 1500).warn, false);
+    assert.equal(spendLimitState(8_000, 10_000, 1500).warn, true);
+    assert.equal(spendLimitState(8_500, 10_000, 1500).blocked, false); // exactly fits
+    assert.equal(spendLimitState(8_501, 10_000, 1500).blocked, true);
+    assert.equal(spendLimitState(12_000, 10_000, 1500).leftTiyn, 0);
   });
 });
