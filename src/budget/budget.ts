@@ -39,3 +39,18 @@ export function estimateRoute(stages: Array<{ key: StageKey; done: boolean; aiUs
 }
 
 export const tenge = (tiyn: number) => Math.round(tiyn) / 100;
+
+/** Share of the cap after which the owner is warned. */
+export const LIMIT_WARN_SHARE = 0.8;
+export const MAX_LIMIT_TENGE = 10_000_000;
+
+/**
+ * Owner's cap on AI spending. A request may start only if what is spent plus a typical request still fits:
+ * a request already running is never cut off, so the cap can be passed by at most one answer.
+ */
+export function spendLimitState(spentTiyn: number, limitTiyn: number | null, typicalTiyn: number) {
+  if (limitTiyn === null) return { limitTiyn: null, leftTiyn: null, share: null, warn: false, blocked: false };
+  const leftTiyn = Math.max(0, limitTiyn - spentTiyn);
+  const share = limitTiyn > 0 ? spentTiyn / limitTiyn : 1;
+  return { limitTiyn, leftTiyn, share, warn: share >= LIMIT_WARN_SHARE, blocked: spentTiyn + typicalTiyn > limitTiyn };
+}

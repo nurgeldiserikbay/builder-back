@@ -15,6 +15,16 @@ export class ProjectBudgetController {
   get(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
     return this.budget.projectBudget(request.user.id, projectId);
   }
+
+  /** Body: { amount: number | null } — whole tenge, or null to remove the cap. */
+  @Post('limit')
+  setLimit(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new BadRequestException('INVALID_REQUEST_BODY');
+    const input = raw as Record<string, unknown>;
+    if (Object.keys(input).some((key) => key !== 'amount')) throw new BadRequestException('UNKNOWN_FIELD');
+    if (input.amount !== null && typeof input.amount !== 'number') throw new BadRequestException('SPEND_LIMIT_INVALID');
+    return this.budget.setSpendLimit(request.user.id, projectId, input.amount as number | null);
+  }
 }
 
 @Controller('admin/ai-pricing')

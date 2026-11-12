@@ -1,5 +1,5 @@
 import { billingSettings, projectBalance, walletLockKey } from '../payments/wallet.js';
-import { DEFAULT_TOKENS, costOf } from '../budget/budget.js';
+import { DEFAULT_TOKENS, costOf, spendLimitState } from '../budget/budget.js';
 import { ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { PLAN_CATALOG_VERSION, limitLabels, monthStart, paidPlanKeys, planOf, plans, priceOf, validContactUrl, type LimitKey, type PaidPlanKey, type PlanKey } from './plans.js';
@@ -40,8 +40,8 @@ export class BillingService {
 
   /**
    * Before an AI request: plan limit, then — under the project wallet lock — one request at a time and, with prepaid
-   * billing, a hold of twice a typical request's price that must fit in the balance. Returns the hold to release
-   * once the request's actual cost is recorded.
+   * billing, a hold of twice a typical request's price that must fit in the balance. The owner's spending cap is
+   * checked under the same lock. Returns the hold to release once the request's actual cost is recorded.
    */
   async reserveAi(projectId: string, now = new Date()): Promise<string> {
     const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { ownerUserId: true } });
@@ -49,11 +49,20 @@ export class BillingService {
     await this.ensure(project.ownerUserId, 'aiPerMonth', 'PLAN_LIMIT_AI');
     const settings = await billingSettings(this.prisma);
     const prepaid = settings.mode === 'prepaid' && settings.priced;
-    const typical = prepaid ? costOf({ inputTokens: DEFAULT_TOKENS.input, outputTokens: DEFAULT_TOKENS.output }, { inputPerMillionTiyn: settings.inputPerMillionTiyn, outputPerMillionTiyn: settings.outputPerMillionTiyn }) ?? 0 : 0;
+    const typical = settings.priced ? costOf({ inputTokens: DEFAULT_TOKENS.input, outputTokens: DEFAULT_TOKENS.output }, { inputPerMillionTiyn: settings.inputPerMillionTiyn, outputPerMillionTiyn: settings.outputPerMillionTiyn }) ?? 0 : 0;
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${walletLockKey(projectId)}))`;
       await tx.aiReservation.deleteMany({ where: { projectId, expiresAt: { lte: now } } });
       if (await tx.aiReservation.count({ where: { projectId } })) throw new ConflictException('AI_ALREADY_RUNNING');
+      // Without prices there is nothing to count against the cap.
+      if (settings.priced) {
+        const row = await tx.project.findUnique({ where: { id: projectId }, select: { aiSpendLimitTiyn: true } });
+        if (row?.aiSpendLimitTiyn != null) {
+          const spent = await tx.generationRun.aggregate({ where: { projectId, costTiyn: { not: null } }, _sum: { costTiyn: true } });
+          const cap = spendLimitState(spent._sum.costTiyn ?? 0, row.aiSpendLimitTiyn, typical);
+          if (cap.blocked) throw new HttpException({ statusCode: 402, message: 'PROJECT_SPEND_LIMIT', limit: row.aiSpendLimitTiyn / 100, spent: (spent._sum.costTiyn ?? 0) / 100 }, HttpStatus.PAYMENT_REQUIRED);
+        }
+      }
       let amountTiyn = 0;
       if (prepaid) {
         const { balanceTiyn } = await projectBalance(tx, projectId, settings.prepaidSince, now);
