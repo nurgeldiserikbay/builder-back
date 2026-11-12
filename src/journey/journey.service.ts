@@ -659,6 +659,7 @@ export class JourneyService {
   // --- Delegated to the split services (public API kept for controllers, the bot and other modules) ---
 
   setProvider(provider: StageAiProvider | null): void { this.core.setProvider(provider); }
+  aiConfigured(): boolean { return Boolean(this.core.ai()); }
   generate(...args: Parameters<StageAiService['generate']>) { return this.stageAi.generate(...args); }
   aiHistory(...args: Parameters<StageAiService['aiHistory']>) { return this.stageAi.aiHistory(...args); }
   changeNotices(...args: Parameters<ChangeNoticesService['changeNotices']>) { return this.changes.changeNotices(...args); }
