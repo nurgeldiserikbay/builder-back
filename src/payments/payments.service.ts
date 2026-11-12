@@ -1,5 +1,6 @@
 import { inLocale, money, tr, type Message } from '../i18n/i18n.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { hasOpenDispute } from '../disputes/disputes.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { DEFAULT_TOKENS, costOf } from '../budget/budget.js';
@@ -405,13 +406,13 @@ export class PaymentsService {
       where: { status: { in: ['held', 'paid_out'] } }, orderBy: [{ status: 'asc' }, { heldAt: 'asc' }], take: 100,
       select: {
         id: true, status: true, amountTiyn: true, feeTiyn: true, payoutTiyn: true, heldAt: true, paidOutAt: true, payoutReference: true, projectId: true,
-        assignment: { select: { email: true, userId: true, user: { select: { name: true, payoutDetails: { select: { holderName: true, ibanHint: true } } } }, stage: { select: { stageKey: true } }, project: { select: { name: true } } } },
+        assignment: { select: { _count: { select: { disputes: { where: { status: 'open' } } } }, email: true, userId: true, user: { select: { name: true, payoutDetails: { select: { holderName: true, ibanHint: true } } } }, stage: { select: { stageKey: true } }, project: { select: { name: true } } } },
       },
     });
     return {
       data: rows.map((row) => ({
         id: row.id, status: row.status, amount: tenge(row.amountTiyn), fee: tenge(row.feeTiyn ?? 0), payout: tenge(row.payoutTiyn ?? row.amountTiyn),
-        heldAt: row.heldAt, paidOutAt: row.paidOutAt, reference: row.payoutReference, project: row.assignment.project.name,
+        heldAt: row.heldAt, paidOutAt: row.paidOutAt, reference: row.payoutReference, project: row.assignment.project.name, disputeOpen: row.assignment._count.disputes > 0,
         stage: stageDefinitions[row.assignment.stage.stageKey as StageKey]?.title ?? row.assignment.stage.stageKey,
         specialist: row.assignment.user?.name || row.assignment.email,
         account: row.assignment.user?.payoutDetails ? { holderName: row.assignment.user.payoutDetails.holderName, ibanHint: row.assignment.user.payoutDetails.ibanHint } : null,
@@ -424,8 +425,9 @@ export class PaymentsService {
     const key = secretKey();
     if (!key) throw new ServiceUnavailableException('PAYOUTS_NOT_CONFIGURED');
     if (!isUuid(paymentId)) throw new NotFoundException('PAYMENT_NOT_FOUND');
-    const payment = await this.prisma.stagePayment.findUnique({ where: { id: paymentId }, select: { status: true, assignment: { select: { userId: true } } } });
+    const payment = await this.prisma.stagePayment.findUnique({ where: { id: paymentId }, select: { status: true, assignmentId: true, assignment: { select: { userId: true } } } });
     if (!payment || payment.status !== 'held' || !payment.assignment.userId) throw new NotFoundException('PAYMENT_NOT_FOUND');
+    if (await hasOpenDispute(this.prisma, payment.assignmentId)) throw new ConflictException('DISPUTE_OPEN');
     const details = await this.prisma.payoutDetails.findUnique({ where: { userId: payment.assignment.userId } });
     if (!details) throw new ConflictException('PAYOUT_DETAILS_MISSING');
     const iban = openSecret(details.ibanEncrypted, key);
@@ -439,10 +441,11 @@ export class PaymentsService {
     if (!isUuid(paymentId)) throw new NotFoundException('PAYMENT_NOT_FOUND');
     const clean = reference.replace(/[\u0000-\u001f]/g, '').trim();
     if (clean.length < 3 || clean.length > 100) throw new BadRequestException('PAYOUT_REFERENCE_INVALID');
-    const payment = await this.prisma.stagePayment.findUnique({ where: { id: paymentId }, select: { projectId: true, payoutTiyn: true, amountTiyn: true, assignment: { select: { userId: true, stage: { select: { stageKey: true } } } } } });
+    const payment = await this.prisma.stagePayment.findUnique({ where: { id: paymentId }, select: { projectId: true, assignmentId: true, payoutTiyn: true, amountTiyn: true, assignment: { select: { userId: true, stage: { select: { stageKey: true } } } } } });
     if (!payment) throw new NotFoundException('PAYMENT_NOT_FOUND');
-    const updated = await this.prisma.stagePayment.updateMany({ where: { id: paymentId, status: 'held' }, data: { status: 'paid_out', paidOutAt: new Date(), payoutReference: clean, paidOutByStaffId: staffId } });
-    if (!updated.count) throw new ConflictException('PAYMENT_NOT_HELD');
+    // Money of a disputed stage stays with BuildPath until staff decide the dispute.
+    const updated = await this.prisma.stagePayment.updateMany({ where: { id: paymentId, status: 'held', assignment: { disputes: { none: { status: 'open' } } } }, data: { status: 'paid_out', paidOutAt: new Date(), payoutReference: clean, paidOutByStaffId: staffId } });
+    if (!updated.count) throw new ConflictException(await hasOpenDispute(this.prisma, payment.assignmentId) ? 'DISPUTE_OPEN' : 'PAYMENT_NOT_HELD');
     await this.prisma.$transaction([
       this.prisma.adminAuditEvent.create({ data: { staffId, eventType: 'payout.paid_out', targetType: 'stage_payment', targetId: paymentId, details: { amount: tenge(payment.payoutTiyn ?? payment.amountTiyn), reference: clean } } }),
       this.prisma.projectEvent.create({ data: { projectId: payment.projectId, type: 'specialist_paid_out', stageKey: payment.assignment.stage.stageKey, details: { paymentId, amount: tenge(payment.payoutTiyn ?? payment.amountTiyn) } } }),
