@@ -125,6 +125,10 @@ export class WorktimeService {
     const assignment = await this.activeAssignment(userId, projectId, stageKey);
     if (!assignment) throw new ForbiddenException('TIME_ENTRY_FORBIDDEN');
     if (input.date.getTime() > Date.now() || Date.now() - input.date.getTime() > 14 * 86_400_000) throw new BadRequestException('TIME_ENTRY_DATE_INVALID');
+    const endsAt = new Date(input.date.getTime() + input.minutes * 60_000);
+    // The same minutes cannot be counted twice (once tracked, once entered by hand).
+    const overlap = await this.prisma.timeEntry.count({ where: { assignmentId: assignment.id, startedAt: { lt: endsAt }, endedAt: { gt: input.date } } });
+    if (overlap) throw new ConflictException('TIME_ENTRY_OVERLAPS');
     await this.prisma.timeEntry.create({ data: { assignmentId: assignment.id, projectId, startedAt: input.date, endedAt: new Date(input.date.getTime() + input.minutes * 60_000), source: 'manual', note: input.note } });
     return this.timesheet(userId, projectId, stageKey);
   }
@@ -160,9 +164,12 @@ export class WorktimeService {
    * On acceptance of a stage: what each paid specialist on it is owed. Fixed price — the amount from the terms;
    * hourly — approved (and, if set, productive) minutes within the limit × rate.
    */
-  async paymentsOnAccept(tx: Pick<PrismaService, 'stageAssignment' | 'stagePayment'>, stageId: string, versionNumber: number) {
-    const assignments = await tx.stageAssignment.findMany({ where: { stageId, status: 'active', payKind: { not: 'none' } }, select: { id: true, projectId: true, ...termsSelect, timeEntries: true } });
+  async paymentsOnAccept(tx: Pick<PrismaService, 'stageAssignment' | 'stagePayment' | 'timeEntry'>, stageId: string, versionNumber: number) {
     const now = new Date();
+    // Accepting the stage accepts the work behind it: time the owner has not reviewed yet counts as approved.
+    // Disputed time stays out. Without this, the last days of work (not yet auto-approved) would never be paid.
+    await tx.timeEntry.updateMany({ where: { assignment: { stageId, status: 'active' }, status: 'pending' }, data: { status: 'approved', decidedAt: now } });
+    const assignments = await tx.stageAssignment.findMany({ where: { stageId, status: 'active', payKind: { not: 'none' } }, select: { id: true, projectId: true, ...termsSelect, timeEntries: true } });
     for (const assignment of assignments) {
       const summary = summarize(assignment.timeEntries, assignment, now);
       if (summary.amountDueTiyn <= 0) continue;
@@ -175,6 +182,8 @@ export class WorktimeService {
     if (!(await this.viewer(userId, projectId)).manager) throw new ForbiddenException('PAYMENT_FORBIDDEN');
     const payment = await this.prisma.stagePayment.findFirst({ where: { id: paymentId, projectId }, select: { id: true, status: true, amountTiyn: true, assignment: { select: { userId: true, stage: { select: { stageKey: true } } } } } });
     if (!payment) throw new NotFoundException('PAYMENT_NOT_FOUND');
+    // An open online payment may be abandoned; marking it paid directly is allowed. If the online payment still goes
+    // through later, settlement records it as a duplicate for staff to return (PaymentsService.settleStagePayment).
     if (payment.status !== 'due' && payment.status !== 'checkout') throw new ConflictException('PAYMENT_NOT_DUE');
     await this.prisma.$transaction([
       this.prisma.stagePayment.update({ where: { id: payment.id }, data: { status: 'paid_direct', paidAt: new Date(), markedByUserId: userId } }),

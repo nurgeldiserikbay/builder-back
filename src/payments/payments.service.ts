@@ -10,6 +10,7 @@ import { STAGE_ORDER_PREFIX, normalizeIban, splitFee } from './payouts.js';
 import { openSecret, sealSecret, secretKey } from '../common/secret-box.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
 import { stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { reportError } from '../observability/error-reporting.js';
 
 const MAX_TOP_UP_TIYN = 50_000_000; // 500 000 ₸
 const tenge = (tiyn: number) => tiyn / 100;
@@ -101,6 +102,12 @@ export class PaymentsService {
     }
     if (result.amountTiyn !== topUp.amountTiyn || (result.currency && result.currency !== 'KZT')) return 'rejected';
     const updated = await this.prisma.projectTopUp.updateMany({ where: { id: topUp.id, status: { in: ['created', 'failed'] } }, data: { status: 'paid', paidAt: new Date(), providerPaymentId: result.providerPaymentId } });
+    if (!updated.count && result.providerPaymentId && !(await this.prisma.projectTopUp.count({ where: { id: topUp.id, providerPaymentId: result.providerPaymentId } }))) {
+      // A second successful payment for the same top-up: it is not credited twice, so staff must return it.
+      await this.prisma.projectEvent.create({ data: { projectId: topUp.projectId, actorUserId: topUp.userId, type: 'top_up_duplicate', details: { topUpId: topUp.id, amount: tenge(topUp.amountTiyn), providerPaymentId: result.providerPaymentId } } });
+      reportError(new Error(`PAYMENT_DUPLICATE top_up=${topUp.id} provider_payment=${result.providerPaymentId}`));
+      return 'ok';
+    }
     if (updated.count) {
       await this.prisma.projectEvent.create({ data: { projectId: topUp.projectId, actorUserId: topUp.userId, type: 'top_up_paid', details: { topUpId: topUp.id, amount: tenge(topUp.amountTiyn) } } });
     }
@@ -369,6 +376,13 @@ export class PaymentsService {
     }
     if (result.amountTiyn !== payment.amountTiyn || (result.currency && result.currency !== 'KZT')) return 'rejected';
     const updated = await this.prisma.stagePayment.updateMany({ where: { id, status: { in: ['due', 'checkout'] } }, data: { status: 'held', heldAt: new Date(), paidAt: new Date(), providerPaymentId: result.providerPaymentId } });
+    if (!updated.count && result.providerPaymentId && !(await this.prisma.stagePayment.count({ where: { id, providerPaymentId: result.providerPaymentId } }))) {
+      // Money arrived for a payment that is already settled (paid twice, or marked as paid directly meanwhile).
+      // Nothing is lost silently: the project history shows it and error reporting alerts staff to return it.
+      await this.prisma.projectEvent.create({ data: { projectId: payment.projectId, type: 'specialist_payment_duplicate', stageKey: payment.assignment.stage.stageKey, details: { paymentId: id, amount: tenge(payment.amountTiyn), providerPaymentId: result.providerPaymentId, status: payment.status } } });
+      reportError(new Error(`PAYMENT_DUPLICATE stage_payment=${id} provider_payment=${result.providerPaymentId}`));
+      return 'ok';
+    }
     if (updated.count) {
       await this.prisma.projectEvent.create({ data: { projectId: payment.projectId, type: 'specialist_payment_held', stageKey: payment.assignment.stage.stageKey, details: { paymentId: id, amount: tenge(payment.amountTiyn) } } });
       const details = payment.assignment.userId ? await this.prisma.payoutDetails.findUnique({ where: { userId: payment.assignment.userId }, select: { id: true } }) : null;
