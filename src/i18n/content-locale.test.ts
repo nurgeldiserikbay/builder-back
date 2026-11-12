@@ -101,3 +101,16 @@ describe('Project language of sites and messages', () => {
     assert.match(russian.summary, /^Сайт «Lotus Nails» с онлайн-записью/);
   });
 });
+
+describe('Package files in the project language', () => {
+  it('writes the own-server booking package instructions in English for an English project', async () => {
+    const { bookingPackageFiles } = await import('../export/booking-package.js');
+    const content = templateContent(brief, offer);
+    const meta = siteMeta({ brief, offer, content, design, locale: 'en', draft: false, booking });
+    const files = bookingPackageFiles({ html: '<html></html>', meta, checks: [], sourceVersionIds: {}, compiledAt: '2026-11-11T00:00:00Z' }, '// bundle');
+    const readme = files.find((file) => file.name === 'README.md')!.content;
+    assert.match(readme, /^# The site «Lotus Nails» with online booking on your own server/);
+    assert.ok(!CYRILLIC.test(readme.replace(/Lotus Nails/g, '')));
+    assert.match(files.find((file) => file.name === 'Caddyfile')!.content, /^# Replace YOUR-DOMAIN\.kz/);
+  });
+});
