@@ -311,6 +311,64 @@ paths:
         '204': { description: Email verified }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+  /auth/resend-verification:
+    post:
+      tags: [Authentication]
+      operationId: resendVerification
+      summary: Send a new confirmation link to an unconfirmed account
+      description: Always 202, so the answer does not reveal whether the address has an account. At most 3 account emails per address per hour.
+      x-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailOnlyRequest'
+      responses:
+        '202': { description: Accepted; a link is sent if an unconfirmed account exists }
+        '400': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /auth/forgot-password:
+    post:
+      tags: [Authentication]
+      operationId: forgotPassword
+      summary: Email a one-hour link to set a new password
+      description: Always 202, so the answer does not reveal whether the address has an account.
+      x-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailOnlyRequest'
+      responses:
+        '202': { description: Accepted; a link is sent if the account exists }
+        '400': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /auth/reset-password:
+    post:
+      tags: [Authentication]
+      operationId: resetPassword
+      summary: Set a new password with the emailed link
+      description: The link works once and for one hour. Confirms the email address and revokes every session of the account.
+      x-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequest'
+      responses:
+        '204': { description: Password changed }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
   /auth/login:
     post:
       tags: [Authentication]
@@ -4656,6 +4714,19 @@ components:
       required: [token]
       properties:
         token: { type: string, minLength: 32, maxLength: 128 }
+    EmailOnlyRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email: { type: string, format: email, minLength: 3, maxLength: 254 }
+    ResetPasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [token, password]
+      properties:
+        token: { type: string, minLength: 32, maxLength: 128 }
+        password: { type: string, minLength: 12, maxLength: 128 }
     RegisterRequest:
       type: object
       additionalProperties: false
