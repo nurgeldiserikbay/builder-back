@@ -2397,7 +2397,62 @@ paths:
         '200': { description: 'rating, text' }
         '400': { description: 'REVIEW_RATING_INVALID, REVIEW_TEXT_INVALID, REVIEW_TEXT_REQUIRED' }
         '403': { description: REVIEW_FORBIDDEN }
-        '409': { description: 'REVIEW_NOT_AVAILABLE, REVIEW_ALREADY_EXISTS, REVIEW_EDIT_EXPIRED' }
+        '409': { description: 'REVIEW_NOT_AVAILABLE, REVIEW_ALREADY_EXISTS, REVIEW_EDIT_EXPIRED, REVIEW_HIDDEN' }
+  /me/reviews/{reviewId}/report:
+    post:
+      tags: [Specialists]
+      operationId: reportReview
+      summary: The reviewed specialist asks support to check a review (once)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: reviewId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [reason], properties: { reason: { type: string, minLength: 10, maxLength: 1000 } } }
+      responses:
+        '200': { description: 'reportStatus: pending' }
+        '400': { description: REVIEW_REPORT_INVALID }
+        '404': { description: REVIEW_NOT_FOUND }
+        '409': { description: REVIEW_ALREADY_REPORTED }
+  /admin/reviews:
+    get:
+      tags: [Specialists]
+      operationId: staffReportedReviews
+      summary: Staff — reported reviews, pending (default) or decided
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [pending, decided] } }
+      responses:
+        '200': { description: 'id, rating, text, reply, status, reason, reportedAt, note, createdAt, stage, project, specialist' }
+  /admin/reviews/{reviewId}/decide:
+    post:
+      tags: [Specialists]
+      operationId: staffDecideReview
+      summary: Staff — keep or hide a reported review (super_admin, audited)
+      description: A hidden review leaves the card and the rating, and its author can no longer edit it. The specialist (and the author, when hidden) get the reason by Telegram and e-mail.
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: reviewId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, note]
+              properties:
+                decision: { type: string, enum: [hide, keep] }
+                note: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        '200': { description: Pending reported reviews }
+        '400': { description: 'MODERATION_DECISION_INVALID, MODERATION_NOTE_REQUIRED' }
+        '409': { description: REVIEW_NOT_REPORTED }
   /me/reviews/{reviewId}/reply:
     post:
       tags: [Specialists]

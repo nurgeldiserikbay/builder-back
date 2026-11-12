@@ -116,7 +116,7 @@ export class SpecialistsService {
     const { stage } = await this.manager(userId, projectId, stageKey);
     const rows = await this.prisma.stageAssignment.findMany({
       where: { stageId: stage!.id, status: { not: 'revoked' } }, orderBy: { createdAt: 'desc' },
-      select: { id: true, userId: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, user: { select: { name: true, specialistProfile: { select: { id: true, displayName: true, published: true } } } }, review: { select: { rating: true, text: true, reply: true, createdAt: true, authorUserId: true } }, ...termsSelect },
+      select: { id: true, userId: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, user: { select: { name: true, specialistProfile: { select: { id: true, displayName: true, published: true } } } }, review: { select: { rating: true, text: true, reply: true, createdAt: true, authorUserId: true, hiddenAt: true, moderationNote: true } }, ...termsSelect },
     });
     return {
       data: {
@@ -125,8 +125,8 @@ export class SpecialistsService {
           const profile = user?.specialistProfile?.published ? user.specialistProfile : null;
           return {
             ...row, name: profile?.displayName ?? user?.name ?? null, profileId: profile?.id ?? null, inviteExpired: row.status === 'invited' && row.inviteExpiresAt < new Date(), terms, termsText: termsText(terms),
-            review: review ? { rating: review.rating, text: review.text, reply: review.reply } : null,
-            canReview: reviewState({ status: row.status, userId: specialistId }, review, userId).allowed,
+            review: review ? { rating: review.rating, text: review.text, reply: review.reply, hidden: Boolean(review.hiddenAt), moderationNote: review.hiddenAt ? review.moderationNote : null } : null,
+            canReview: !review?.hiddenAt && reviewState({ status: row.status, userId: specialistId }, review, userId).allowed,
           };
         }),
         roles: roleAccess,

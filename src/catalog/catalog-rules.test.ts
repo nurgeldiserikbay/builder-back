@@ -44,3 +44,14 @@ describe('specialist reviews', () => {
     assert.ok(catalogScore(null, 0, 0) > catalogScore(3, 1, 1));
   });
 });
+
+describe('review moderation', () => {
+  it('a complaint and a decision need a reason', async () => {
+    const { checkReport, checkModeration } = await import('./catalog-rules.js');
+    assert.deepEqual(checkReport('плохо'), { ok: false, code: 'REVIEW_REPORT_INVALID' });
+    assert.deepEqual(checkReport('  Отзыв про другой проект, не про мою работу  '), { ok: true, reason: 'Отзыв про другой проект, не про мою работу' });
+    assert.deepEqual(checkModeration('delete', 'Оскорбление'), { ok: false, code: 'MODERATION_DECISION_INVALID' });
+    assert.deepEqual(checkModeration('hide', ''), { ok: false, code: 'MODERATION_NOTE_REQUIRED' });
+    assert.deepEqual(checkModeration('keep', 'Отзыв по существу'), { ok: true, decision: 'keep', note: 'Отзыв по существу' });
+  });
+});

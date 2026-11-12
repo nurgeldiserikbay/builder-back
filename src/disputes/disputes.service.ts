@@ -1,9 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
-import { contentLocale, inLocale, runWithLocale, tr, type Message } from '../i18n/i18n.js';
-import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
-import { emailConfig, sendEmail } from '../notifications/email.js';
-import { escapeHtml } from '../journey/site-renderer.js';
+import { tr, type Message } from '../i18n/i18n.js';
+import { notifyUser } from '../notifications/user-notifier.js';
 import { stageDefinitions, type StageKey } from '../journey/catalog.js';
 import { REVOKED_WINDOW_DAYS, canOpen, checkClaim, checkMessage, checkResolution, kindsBySide, sideOf, type Side } from './dispute-rules.js';
 
@@ -39,24 +37,9 @@ export class DisputesService {
   /**
    * Telegram when linked, and e-mail for the steps that matter (opened, support wrote, decided, withdrawn) so a side
    * without Telegram still learns about them. Replies between the sides go to Telegram only, to keep mail quiet.
-   * Never throws: a failed notice must not undo a dispute action.
    */
-  private async notify(userId: string | null, text: Message, byEmail = true) {
-    if (!userId) return;
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true, locale: true, deletionRequestedAt: true, externalIdentities: { where: { provider: 'telegram' }, select: { chatId: true } } } });
-    if (!user || user.deletionRequestedAt) return;
-    const telegram = telegramConfig();
-    const chatId = user.externalIdentities[0]?.chatId;
-    if (telegram && chatId) await sendTelegramMessage(telegram, chatId, inLocale(user.locale, text)).catch(() => undefined);
-    const mail = byEmail ? emailConfig() : null;
-    if (!mail) return;
-    const appUrl = process.env.PUBLIC_APP_URL;
-    await runWithLocale(contentLocale(user.locale), async () => {
-      const body = inLocale(user.locale, text);
-      const link = appUrl ? new URL('/account/disputes', appUrl).toString() : null;
-      const html = `<p style="font:15px/1.5 system-ui,sans-serif">${escapeHtml(body)}</p>${link ? `<p><a href="${escapeHtml(link)}">${escapeHtml(tr('Открыть споры'))}</a></p>` : ''}`;
-      await sendEmail(mail, user.email, tr('BuildPath: спор по работе специалиста'), html).catch(() => undefined);
-    });
+  private notify(userId: string | null, text: Message, byEmail = true) {
+    return notifyUser(this.prisma, userId, byEmail ? { text, emailSubject: () => tr('BuildPath: спор по работе специалиста'), link: { path: '/account/disputes', label: () => tr('Открыть споры') } } : { text });
   }
 
   /** The other side: the specialist, or the project owner. */

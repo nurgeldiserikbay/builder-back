@@ -1596,10 +1596,19 @@ model SpecialistReview {
   text             String?         @db.VarChar(1000)
   reply            String?         @db.VarChar(1000)
   repliedAt        DateTime?       @map("replied_at") @db.Timestamptz(3)
+  /// The specialist's complaint: none → pending → kept | hidden (decided by staff).
+  reportStatus     String          @default("none") @map("report_status") @db.VarChar(10)
+  reportReason     String?         @map("report_reason") @db.VarChar(1000)
+  reportedAt       DateTime?       @map("reported_at") @db.Timestamptz(3)
+  /// A hidden review is not shown and does not count in the rating.
+  hiddenAt         DateTime?       @map("hidden_at") @db.Timestamptz(3)
+  moderationNote   String?         @map("moderation_note") @db.VarChar(500)
+  moderatedByStaffId String?       @map("moderated_by_staff_id") @db.Uuid
   createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
   assignment       StageAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 
   @@index([specialistUserId, createdAt(sort: Desc)], map: "specialist_reviews_specialist_created_idx")
+  @@index([reportStatus, reportedAt], map: "specialist_reviews_report_idx")
   @@map("specialist_reviews")
 }

@@ -1,6 +1,8 @@
 import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
+import { StaffAuthGuard, type StaffRequest } from '../admin/staff-auth.guard.js';
+import { StaffRoles, StaffRolesGuard } from '../admin/staff-roles.guard.js';
 import { CatalogService } from './catalog.service.js';
 
 function body(value: unknown, fields: string[]): Record<string, unknown> {
@@ -60,9 +62,37 @@ export class CatalogController {
     return this.catalog.review(request.user.id, projectId, assignmentId, input.rating, input.text ?? null);
   }
 
+  @Post('me/reviews/:reviewId/report')
+  @HttpCode(200)
+  report(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Body() raw: unknown) {
+    return this.catalog.report(request.user.id, reviewId, body(raw, ['reason']).reason);
+  }
+
   @Post('me/reviews/:reviewId/reply')
   @HttpCode(200)
   reply(@Req() request: AuthenticatedRequest, @Param('reviewId') reviewId: string, @Body() raw: unknown) {
     return this.catalog.reply(request.user.id, reviewId, body(raw, ['text']).text);
+  }
+}
+
+/** Reported reviews: super admins decide, operations auditors read. */
+@Controller('admin/reviews')
+@UseGuards(StaffAuthGuard, StaffRolesGuard)
+export class AdminReviewsController {
+  constructor(private readonly catalog: CatalogService) {}
+
+  @Get()
+  @Header('Cache-Control', 'no-store')
+  @StaffRoles('super_admin', 'operations_auditor')
+  list(@Query('status') status?: string) {
+    return this.catalog.staffReports(status === 'decided' ? 'decided' : 'pending');
+  }
+
+  @Post(':reviewId/decide')
+  @HttpCode(200)
+  @StaffRoles('super_admin')
+  decide(@Param('reviewId') reviewId: string, @Body() raw: unknown, @Req() request: StaffRequest) {
+    const input = body(raw, ['decision', 'note']);
+    return this.catalog.staffDecide(request.staff.id, reviewId, input.decision, input.note);
   }
 }
