@@ -1473,4 +1473,5 @@ export const en: Record<string, string> = {
   "BuildPath: решение по отзыву": "BuildPath: decision on a review",
   "Поддержка BuildPath скрыла ваш отзыв о специалисте на этапе «{0}»: {1}": "BuildPath support hid your review of the specialist on the “{0}” stage: {1}",
   "Вы ещё не ответили в споре по этапу «{0}» проекта «{1}». Опишите свою сторону — иначе поддержка BuildPath решит спор по тому, что есть.": "You have not answered in the dispute about the “{0}” stage of project “{1}” yet. Describe your side — otherwise BuildPath support will decide based on what it has.",
+  "Сайт не использует cookies. BuildPath считает только, сколько раз открывали страницы сайта и с каких сайтов на него перешли, — без cookies, без вашего IP-адреса и без данных о вашем устройстве, поэтому узнать по этим цифрам конкретного посетителя нельзя.": "The site does not use cookies. BuildPath only counts how many times the site's pages were opened and which sites visitors came from — without cookies, your IP address or data about your device, so these numbers cannot identify a particular visitor.",
 };

@@ -21,9 +21,11 @@ const fakePrisma = {
   $queryRaw: async () => { if (!databaseUp) throw new Error('down'); return [{ '?column?': 1 }]; },
 } as unknown as PrismaClient;
 
+const counted: Array<[string, string, string]> = [];
 const server = createSitesServer(fakePrisma, {
   baseDomain: 'sites.example.kz', urlFor: (slug) => `https://${slug}.sites.example.kz`, trustProxy: true, ipSalt: 'salt', remindersByEmail: false, retentionDays: 365,
   https: true, perIpPerHour: 5, perSitePerDay: 200, notify: async () => undefined, notifyBooking: async () => undefined,
+  visits: { add: (projectId: string, path: string, source: string) => { counted.push([projectId, path, source]); } } as never,
 }).server;
 let base = '';
 before(async () => { await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve)); base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`; });
@@ -74,6 +76,23 @@ describe('sites server service endpoints', () => {
     });
     assert.equal(status, 200);
     assert.match(body, /Торт/);
+  });
+});
+
+describe('page views', () => {
+  const open = (path: string, headers: Record<string, string>) => new Promise<number>((resolve, reject) => {
+    http.get(`${base}${path}`, { headers: { host: 'tort.sites.example.kz', ...headers } }, (response) => { response.resume().on('end', () => resolve(response.statusCode ?? 0)); }).on('error', reject);
+  });
+  it('counts a person opening a page with the referring host only, and skips robots and service pages', async () => {
+    counted.length = 0;
+    const browser = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1';
+    assert.equal(await open('/', { 'user-agent': browser, referer: 'https://www.instagram.com/tort.almaty/?utm=1' }), 200);
+    assert.equal(await open('/', { 'user-agent': 'Googlebot/2.1' }), 200);
+    assert.equal(await open('/privacy', { 'user-agent': browser }), 200);
+    assert.equal(await open('/robots.txt', { 'user-agent': browser }), 200);
+    assert.equal(counted.length, 1);
+    assert.equal(counted[0]![1], '/');
+    assert.equal(counted[0]![2], 'instagram.com');
   });
 });
 

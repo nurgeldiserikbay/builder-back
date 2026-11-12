@@ -334,6 +334,7 @@ model Project {
   changeNotices    ChangeNotice[]
   choices          ProjectChoice[]
   repository       CodeRepository?
+  visitCounts      SiteVisitCount[]
 
   @@index([workspaceId, status, createdAt(sort: Desc)], map: "projects_workspace_status_created_idx")
   @@index([ownerUserId, createdAt(sort: Desc)], map: "projects_owner_created_idx")
@@ -1613,4 +1614,19 @@ model SpecialistReview {
   @@index([specialistUserId, createdAt(sort: Desc)], map: "specialist_reviews_specialist_created_idx")
   @@index([reportStatus, reportedAt], map: "specialist_reviews_report_idx")
   @@map("specialist_reviews")
+}
+
+/// Page views of a published site per day, page and referring host. No cookies, addresses or device data are kept.
+model SiteVisitCount {
+  projectId String   @map("project_id") @db.Uuid
+  day       DateTime @db.Date
+  path      String   @db.VarChar(200)
+  /// Host of the referring site, or «direct».
+  source    String   @db.VarChar(100)
+  views     Int      @default(0)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, day, path, source], map: "site_visit_counts_pkey")
+  @@index([projectId, day], map: "site_visit_counts_project_day_idx")
+  @@map("site_visit_counts")
 }

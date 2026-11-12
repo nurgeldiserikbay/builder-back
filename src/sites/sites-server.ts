@@ -20,6 +20,7 @@ import { notifyOrder } from '../notifications/order-notifier.js';
 import { ORDER_CANCEL_PATH, ORDER_FORM_PATH, cartPage, orderPage, parseOrderForm } from './store-pages.js';
 import { canClientCancelOrder, createOrder } from './store-orders.js';
 import { localDay as localDayOf, openDays, slotsFor } from '../journey/schedule.js';
+import { VisitCounter, countable, sourceOf } from './visit-counter.js';
 
 export interface SitesServerOptions {
   baseDomain: string;
@@ -35,6 +36,8 @@ export interface SitesServerOptions {
   notify: (leadId: string) => Promise<unknown>;
   notifyBooking: (bookingId: string, kind: 'created' | 'cancelled_by_client') => Promise<unknown>;
   notifyOrder?: (orderId: string, kind: 'created' | 'cancelled_by_client') => Promise<unknown>;
+  /** Page view counter; off when absent (tests) or with SITES_VISIT_COUNTS=off. */
+  visits?: VisitCounter;
 }
 
 export function sitesOptionsFromEnv(prisma: PrismaClient, env: NodeJS.ProcessEnv = process.env): SitesServerOptions {
@@ -49,7 +52,13 @@ export function sitesOptionsFromEnv(prisma: PrismaClient, env: NodeJS.ProcessEnv
     notify: (leadId) => notifyLead(prisma, leadId),
     notifyBooking: (bookingId, kind) => notifyBooking(prisma, bookingId, kind),
     notifyOrder: (orderId, kind) => notifyOrder(prisma, orderId, kind),
+    visits: env.SITES_VISIT_COUNTS === 'off' ? undefined : new VisitCounter(prisma, validTimeZone(env.SITES_STATS_TIMEZONE) ?? 'Asia/Almaty'),
   };
+}
+
+function validTimeZone(value: string | undefined): string | null {
+  if (!value) return null;
+  try { new Intl.DateTimeFormat('en', { timeZone: value }); return value; } catch { return null; }
 }
 
 /** `hosts` are the addresses this site answers on: its BuildPath subdomain and, once DNS was checked, the owner's own domain. */
@@ -372,16 +381,18 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     if (store && orderLink) return handleOrderView(url, response, site, orderLink[1]!);
     const manage = /^\/book\/b\/([A-Za-z0-9_-]{32})$/.exec(path);
     if (booking && manage) return handleBookingView(url, response, site, manage[1]!);
+    const view = (page: string) => { if (options.visits && countable(request)) options.visits.add(site.projectId, page, sourceOf(request.headers.referer, site.hosts)); };
     switch (path) {
-      case '/': return send(response, 200, site.html, 'text/html', site.hasForm, cacheHeaders);
+      case '/': view('/'); return send(response, 200, site.html, 'text/html', site.hasForm, cacheHeaders);
       case '/privacy': return send(response, 200, privacyPage(site.meta, options.retentionDays, options.remindersByEmail), 'text/html', false, cacheHeaders);
       case '/thanks': return send(response, 200, thanksPage(site.meta), 'text/html', false, { 'Cache-Control': 'no-store' });
       case '/robots.txt': return send(response, 200, `User-agent: *\nAllow: /\nDisallow: /thanks\nDisallow: /book\nDisallow: /cart\nDisallow: /order\nSitemap: ${site.canonical}/sitemap.xml\n`, 'text/plain', false, cacheHeaders);
       case '/sitemap.xml': return send(response, 200, `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${['/', ...site.pages.keys()].map((page) => `<url><loc>${site.canonical}${page}</loc></url>`).join('')}</urlset>\n`, 'application/xml', false, cacheHeaders);
       default: {
         // Other pages of a multi-page site; «/services/» also works, as on static hosts.
-        const page = site.pages.get(path.length > 1 ? path.replace(/\/$/, '') : path);
-        if (page) return send(response, 200, page, 'text/html', site.hasForm, cacheHeaders);
+        const key = path.length > 1 ? path.replace(/\/$/, '') : path;
+        const page = site.pages.get(key);
+        if (page) { view(key); return send(response, 200, page, 'text/html', site.hasForm, cacheHeaders); }
         return send(response, 404, messagePage(site.meta, 'Страница не найдена', 'Такой страницы на сайте нет.'), 'text/html');
       }
     }
@@ -401,6 +412,8 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     const result = await prisma.siteLead.deleteMany({ where: { createdAt: { lt: cutoff } } });
     const bookings = await prisma.booking.deleteMany({ where: { endsAt: { lt: cutoff } } });
     const orders = await prisma.storeOrder.deleteMany({ where: { createdAt: { lt: cutoff } } });
+    // Visit counts are kept a little over a year, so a year can be compared with the one before.
+    await prisma.siteVisitCount.deleteMany({ where: { day: { lt: new Date(Date.now() - 400 * 86_400_000) } } });
     return result.count + bookings.count + orders.count;
   }
 
@@ -410,5 +423,5 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
       ? `${options.https ? 'https' : 'http'}://${publication.customDomain}` : options.urlFor(publication.slug)), now);
   }
 
-  return { server, cleanup, reminders, invalidate: (slug: string) => { cache.delete(`s:${slug}`); for (const key of cache.keys()) if (key.startsWith('d:')) cache.delete(key); } };
+  return { server, cleanup, reminders, visits: options.visits, invalidate: (slug: string) => { cache.delete(`s:${slug}`); for (const key of cache.keys()) if (key.startsWith('d:')) cache.delete(key); } };
 }

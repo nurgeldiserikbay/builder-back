@@ -6,7 +6,7 @@ import { initErrorReporting } from './observability/error-reporting.js';
 initErrorReporting('sites');
 
 const prisma = new PrismaService();
-const { server, cleanup, reminders } = createSitesServer(prisma, sitesOptionsFromEnv(prisma));
+const { server, cleanup, reminders, visits } = createSitesServer(prisma, sitesOptionsFromEnv(prisma));
 const port = Number(process.env.SITES_PORT ?? 4100);
 server.listen(port, '0.0.0.0', () => console.log(`BuildPath sites server on :${port}`));
 const timer = setInterval(() => { cleanup().catch(() => undefined); }, 60 * 60 * 1000);
@@ -16,7 +16,10 @@ const reminderTimer = setInterval(() => {
   reminders().then((counts) => { if (counts.sent || counts.failed) console.log(`reminders sent ${counts.sent}, failed ${counts.failed}`); }).catch(() => undefined);
 }, 5 * 60 * 1000);
 reminderTimer.unref();
+// Page views are written once a minute; what is still in memory is written on shutdown.
+const visitTimer = setInterval(() => { visits?.flush().catch(() => undefined); }, 60 * 1000);
+visitTimer.unref();
 
-const shutdown = () => { clearInterval(timer); clearInterval(reminderTimer); server.close(() => { void prisma.$disconnect().then(() => process.exit(0)); }); };
+const shutdown = () => { clearInterval(timer); clearInterval(reminderTimer); clearInterval(visitTimer); server.close(() => { void (visits?.flush() ?? Promise.resolve(0)).catch(() => 0).then(() => prisma.$disconnect()).then(() => process.exit(0)); }); };
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

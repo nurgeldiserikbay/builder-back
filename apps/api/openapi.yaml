@@ -2472,6 +2472,20 @@ paths:
         '400': { description: REVIEW_REPLY_INVALID }
         '404': { description: REVIEW_NOT_FOUND }
         '409': { description: REVIEW_ALREADY_REPLIED }
+  /projects/{projectId}/insights:
+    get:
+      tags: [Publishing]
+      operationId: getProjectInsights
+      summary: After launch — page views, popular pages, sources and actions of the published site (project members)
+      description: Counted by the sites server without cookies, IP addresses or device data — only page, day (SITES_STATS_TIMEZONE, default Asia/Almaty) and the host of the referring site. Robots, link previews and prefetches are not counted. Kept 400 days. SITES_VISIT_COUNTS=off switches counting off.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: days, in: query, required: false, schema: { type: integer, enum: [7, 30, 90], default: 30 } }
+      responses:
+        '200': { description: 'published, url, publishedAt, timeZone, days, views, previousViews, change (percent or null), daily[] (day, views), pages[] and sources[] (name, views; top 5 plus other), actions (leads, bookings, orders, perHundredViews)' }
+        '404': { description: PROJECT_NOT_FOUND }
   /admin/ai-pricing:
     get:
       tags: [Budget]
