@@ -1935,7 +1935,6 @@ paths:
       responses:
         '200': { description: Payout queue }
         '409': { description: 'PAYMENT_NOT_HELD, DISPUTE_OPEN' }
-        '409': { description: PAYMENT_NOT_HELD }
   /admin/payouts/{paymentId}/refund:
     post:
       tags: [Admin]
@@ -2165,7 +2164,7 @@ paths:
                 amount: { type: [integer, 'null'], minimum: 1, maximum: 10000000 }
       responses:
         '200': { description: 'Same body as GET /projects/{projectId}/budget' }
-        '400': { description: SPEND_LIMIT_INVALID, UNKNOWN_FIELD }
+        '400': { description: 'SPEND_LIMIT_INVALID, UNKNOWN_FIELD' }
         '403': { description: SPEND_LIMIT_FORBIDDEN }
         '404': { $ref: '#/components/responses/Problem' }
   /assignments/{assignmentId}/disputes:
@@ -2366,7 +2365,7 @@ paths:
                 headline: { type: string, minLength: 5, maxLength: 140 }
                 about: { type: [string, 'null'], maxLength: 2000 }
                 stageKeys: { type: array, maxItems: 20, items: { type: string }, description: Stages with AI; at least one when published }
-                hourlyRate: { type: [integer, 'null'], minimum: 1, maximum: 1000000, description: Whole tenge, shown as a guide; the rate of a job is set in the invitation }
+                hourlyRate: { type: [integer, 'null'], minimum: 1, maximum: 1000000, description: 'Whole tenge, shown as a guide; the rate of a job is set in the invitation' }
                 city: { type: [string, 'null'], maxLength: 80 }
                 published: { type: boolean }
       responses:
@@ -2395,7 +2394,7 @@ paths:
                 rating: { type: integer, minimum: 1, maximum: 5 }
                 text: { type: [string, 'null'], maxLength: 1000 }
       responses:
-        '200': { description: rating, text }
+        '200': { description: 'rating, text' }
         '400': { description: 'REVIEW_RATING_INVALID, REVIEW_TEXT_INVALID, REVIEW_TEXT_REQUIRED' }
         '403': { description: REVIEW_FORBIDDEN }
         '409': { description: 'REVIEW_NOT_AVAILABLE, REVIEW_ALREADY_EXISTS, REVIEW_EDIT_EXPIRED' }
