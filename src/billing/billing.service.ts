@@ -1,8 +1,11 @@
-import { billingSettings, projectBalance } from '../payments/wallet.js';
+import { billingSettings, projectBalance, walletLockKey } from '../payments/wallet.js';
 import { DEFAULT_TOKENS, costOf } from '../budget/budget.js';
-import { ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { PLAN_CATALOG_VERSION, limitLabels, monthStart, paidPlanKeys, planOf, plans, priceOf, validContactUrl, type LimitKey, type PaidPlanKey, type PlanKey } from './plans.js';
+
+/** A hold older than this belongs to a request that crashed; it stops counting. */
+const AI_HOLD_MS = 10 * 60_000;
 
 export class PlanLimitException extends ForbiddenException {
   constructor(code: string) { super(code); }
@@ -35,17 +38,36 @@ export class BillingService {
 
   assertCanCreateProject(ownerUserId: string) { return this.ensure(ownerUserId, 'projects', 'PLAN_LIMIT_PROJECTS'); }
 
-  async assertCanGenerate(projectId: string) {
+  /**
+   * Before an AI request: plan limit, then — under the project wallet lock — one request at a time and, with prepaid
+   * billing, a hold of twice a typical request's price that must fit in the balance. Returns the hold to release
+   * once the request's actual cost is recorded.
+   */
+  async reserveAi(projectId: string, now = new Date()): Promise<string> {
     const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { ownerUserId: true } });
     if (!project) throw new NotFoundException('PROJECT_NOT_FOUND');
     await this.ensure(project.ownerUserId, 'aiPerMonth', 'PLAN_LIMIT_AI');
-    // Prepaid billing: the next request must fit in the project balance (a typical request's cost).
     const settings = await billingSettings(this.prisma);
-    if (settings.mode === 'prepaid' && settings.priced) {
-      const { balanceTiyn } = await projectBalance(this.prisma, projectId, settings.prepaidSince);
-      const next = costOf({ inputTokens: DEFAULT_TOKENS.input, outputTokens: DEFAULT_TOKENS.output }, { inputPerMillionTiyn: settings.inputPerMillionTiyn, outputPerMillionTiyn: settings.outputPerMillionTiyn }) ?? 0;
-      if (balanceTiyn < next) throw new HttpException({ statusCode: 402, message: 'PROJECT_BALANCE_LOW', balance: balanceTiyn / 100 }, HttpStatus.PAYMENT_REQUIRED);
-    }
+    const prepaid = settings.mode === 'prepaid' && settings.priced;
+    const typical = prepaid ? costOf({ inputTokens: DEFAULT_TOKENS.input, outputTokens: DEFAULT_TOKENS.output }, { inputPerMillionTiyn: settings.inputPerMillionTiyn, outputPerMillionTiyn: settings.outputPerMillionTiyn }) ?? 0 : 0;
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${walletLockKey(projectId)}))`;
+      await tx.aiReservation.deleteMany({ where: { projectId, expiresAt: { lte: now } } });
+      if (await tx.aiReservation.count({ where: { projectId } })) throw new ConflictException('AI_ALREADY_RUNNING');
+      let amountTiyn = 0;
+      if (prepaid) {
+        const { balanceTiyn } = await projectBalance(tx, projectId, settings.prepaidSince, now);
+        if (balanceTiyn < typical) throw new HttpException({ statusCode: 402, message: 'PROJECT_BALANCE_LOW', balance: balanceTiyn / 100 }, HttpStatus.PAYMENT_REQUIRED);
+        // Answers vary in length: hold up to twice a typical request, never more than is there.
+        amountTiyn = Math.min(2 * typical, balanceTiyn);
+      }
+      const hold = await tx.aiReservation.create({ data: { projectId, amountTiyn, expiresAt: new Date(now.getTime() + AI_HOLD_MS) }, select: { id: true } });
+      return hold.id;
+    });
+  }
+
+  async releaseAi(reservationId: string): Promise<void> {
+    await this.prisma.aiReservation.deleteMany({ where: { id: reservationId } });
   }
 
   /** Republishing a site that is already live does not take a new slot. */

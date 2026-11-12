@@ -66,17 +66,14 @@ export class JourneyService {
 
   constructor(private readonly prisma: PrismaService, private readonly billing: BillingService, private readonly worktime: WorktimeService) {}
 
-  /** Projects with an AI request in progress in this process. */
-  private readonly aiRunning = new Set<string>();
-
   /**
-   * One AI request per project at a time: a double click or a second tab would otherwise pay twice and could pass the
-   * balance and limit checks together. Per process; several API instances would each allow one.
+   * Runs a paid AI request under a hold in the database (BillingService.reserveAi): one request per project at a time,
+   * so a double click or a second tab cannot pay twice, and parallel requests cannot spend the same balance.
+   * The request records its actual cost before the hold is released.
    */
   private async oneAiRequest<T>(projectId: string, run: () => Promise<T>): Promise<T> {
-    if (this.aiRunning.has(projectId)) throw new ConflictException('AI_ALREADY_RUNNING');
-    this.aiRunning.add(projectId);
-    try { return await run(); } finally { this.aiRunning.delete(projectId); }
+    const hold = await this.billing.reserveAi(projectId);
+    try { return await run(); } finally { await this.billing.releaseAi(hold).catch(() => undefined); }
   }
 
   /** Tests may inject a provider; production reads environment configuration. */
@@ -447,6 +444,9 @@ export class JourneyService {
     projectId: string; stage: StageRow; artifactType: ArtifactType; content: unknown; origin: 'owner_edit' | 'ai_generated' | 'template' | 'imported' | 'compiled' | 'restored';
     note: string | null; userId: string; generationRunId?: string | null; lockedKeys?: string[]; status?: StageStatus; accept?: boolean;
   }) {
+    // Lock the stage row first: two versions saved at the same moment (an edit and an AI answer) then get consecutive
+    // numbers instead of failing on the unique (stage, number) pair.
+    await tx.projectStage.update({ where: { id: input.stage.id }, data: { updatedAt: new Date() } });
     const last = await tx.stageArtifactVersion.findFirst({ where: { stageId: input.stage.id }, orderBy: { versionNumber: 'desc' }, select: { versionNumber: true } });
     const version = await tx.stageArtifactVersion.create({
       data: {
@@ -550,7 +550,10 @@ export class JourneyService {
   }
 
   generate(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram' }) {
-    return this.oneAiRequest(projectId, () => this.generateNow(userId, projectId, key, input));
+    // Drafts by template (no AI connected) cost nothing and need no hold.
+    if (!this.ai()) return this.generateNow(userId, projectId, key, input);
+    // Access first: the hold reports the balance and whether AI is busy, which only project people may learn.
+    return this.load(userId, projectId, 'write', key).then(() => this.oneAiRequest(projectId, () => this.generateNow(userId, projectId, key, input)));
   }
 
   private async generateNow(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram' }) {
@@ -594,7 +597,6 @@ export class JourneyService {
       return { data: { versionId: version.id, versionNumber: version.versionNumber, provider: 'template' } };
     }
 
-    await this.billing.assertCanGenerate(projectId);
     if (await this.remainingAiRuns(projectId) < 1) throw new HttpException('AI_DAILY_LIMIT_REACHED', HttpStatus.TOO_MANY_REQUESTS);
     if (assignment && assignment.aiBudget !== null && assignment.aiUsed >= assignment.aiBudget) throw new HttpException('AI_BUDGET_EXHAUSTED', HttpStatus.TOO_MANY_REQUESTS);
     const rules = await this.prisma.stageInstruction.findMany({
@@ -615,6 +617,8 @@ export class JourneyService {
     const pricing = await this.prisma.aiPricing.findUnique({ where: { id: 1 } });
     let usage: { inputTokens: number | null; outputTokens: number | null } | null = null;
     const recordFailure = async (code: string) => {
+      // A rule asked for together with a failed request is not switched on; it stays in the history as a one-off request.
+      if (instruction && input.saveAs !== 'one_off') await this.prisma.stageInstruction.update({ where: { id: instruction.id }, data: { kind: 'one_off' } });
       await this.prisma.generationRun.create({ data: {
         projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
         targetKey: input.targetKey, instructionId: instruction?.id ?? null, ruleIds: rules.map((rule) => rule.id), inputVersionIds: Object.values(inputs).map((item) => item.versionId),
@@ -1108,7 +1112,7 @@ export class JourneyService {
    * It suggests, never decides. Costs one AI request (plan, balance and limits apply); the result is kept on the notice.
    */
   explainChange(userId: string, projectId: string, noticeId: string) {
-    return this.oneAiRequest(projectId, () => this.explainChangeNow(userId, projectId, noticeId));
+    return this.load(userId, projectId, 'read').then(() => this.oneAiRequest(projectId, () => this.explainChangeNow(userId, projectId, noticeId)));
   }
 
   private async explainChangeNow(userId: string, projectId: string, noticeId: string) {
@@ -1123,7 +1127,6 @@ export class JourneyService {
     if (notice.aiExplanation) return this.changeNotices(userId, projectId, target.stageKey);
     const provider = this.ai();
     if (!provider) throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
-    await this.billing.assertCanGenerate(projectId);
     if (await this.remainingAiRuns(projectId) < 1) throw new HttpException('AI_DAILY_LIMIT_REACHED', HttpStatus.TOO_MANY_REQUESTS);
     const [before, after, mine] = await Promise.all([
       this.versionContent(notice.previousVersionId), this.versionContent(notice.newVersionId),
