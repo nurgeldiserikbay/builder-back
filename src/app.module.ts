@@ -18,9 +18,10 @@ import { BudgetModule } from './budget/budget.module.js';
 import { DisputesModule } from './disputes/disputes.module.js';
 import { CatalogModule } from './catalog/catalog.module.js';
 import { InsightsModule } from './insights/insights.module.js';
+import { MonitoringModule } from './monitoring/monitoring.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule],
+  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule, MonitoringModule],
   controllers: [HealthController, WorkspacesController],
 })
 export class AppModule {}

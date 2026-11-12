@@ -952,6 +952,18 @@ model SitePublication {
   unpublishedAt     DateTime?             @map("unpublished_at") @db.Timestamptz(3)
   notifyTelegram    Boolean               @default(true) @map("notify_telegram")
   notifyEmail       Boolean               @default(true) @map("notify_email")
+  /// Availability checks every 10 minutes: unknown | up | down, consecutive failures, last check.
+  monitorStatus     String                @default("unknown") @map("monitor_status") @db.VarChar(10)
+  monitorFailures   Int                   @default(0) @map("monitor_failures")
+  monitorCheckedAt  DateTime?             @map("monitor_checked_at") @db.Timestamptz(3)
+  monitorDownSince  DateTime?             @map("monitor_down_since") @db.Timestamptz(3)
+  monitorAlertedAt  DateTime?             @map("monitor_alerted_at") @db.Timestamptz(3)
+  monitorLastMs     Int?                  @map("monitor_last_ms")
+  monitorLastError  String?               @map("monitor_last_error") @db.VarChar(40)
+  /// Monday e-mail with the week's visits, actions and outages; the week it was last sent for (YYYY-MM-DD of Monday).
+  weeklyReport      Boolean               @default(true) @map("weekly_report")
+  weeklyReportWeek  String?               @map("weekly_report_week") @db.VarChar(10)
+  incidents         SiteIncident[]
   /// The owner's own domain (ASCII/punycode, lower case). Served only after DNS points to BuildPath (domainStatus active).
   customDomain      String?               @unique(map: "site_publications_custom_domain_key") @map("custom_domain") @db.VarChar(253)
   /// pending | active | failed
@@ -1629,4 +1641,19 @@ model SiteVisitCount {
   @@id([projectId, day, path, source], map: "site_visit_counts_pkey")
   @@index([projectId, day], map: "site_visit_counts_project_day_idx")
   @@map("site_visit_counts")
+}
+
+/// A period when a published site did not open for the availability check.
+model SiteIncident {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  publicationId String          @map("publication_id") @db.Uuid
+  projectId     String          @map("project_id") @db.Uuid
+  startedAt     DateTime        @map("started_at") @db.Timestamptz(3)
+  endedAt       DateTime?       @map("ended_at") @db.Timestamptz(3)
+  /// What the check saw: TIMEOUT, DNS, TLS, HTTP_502 and so on.
+  cause         String          @db.VarChar(40)
+  publication   SitePublication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, startedAt(sort: Desc)], map: "site_incidents_project_started_idx")
+  @@map("site_incidents")
 }

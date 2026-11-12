@@ -2486,6 +2486,36 @@ paths:
       responses:
         '200': { description: 'published, url, publishedAt, timeZone, days, views, previousViews, change (percent or null), daily[] (day, views), pages[] and sources[] (name, views; top 5 plus other), actions (leads, bookings, orders, perHundredViews)' }
         '404': { description: PROJECT_NOT_FOUND }
+  /projects/{projectId}/monitoring:
+    get:
+      tags: [Publishing]
+      operationId: getSiteMonitoring
+      summary: After launch — availability of the published site and outages of the last 30 days (project members)
+      description: The API opens each live site every 10 minutes at the address visitors use (BuildPath subdomain directly; an owner's domain only after it resolves to a public address, with the connection pinned to it; no redirects followed). Down after 2 failed checks in a row; the owner gets one message when it goes down and one when it is back (Telegram and e-mail). Runs inside the API — if the whole platform is down nobody is told. SITE_MONITORING_DISABLED=true switches it off. null when the site is not live.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'status (unknown|up|down), checkedAt, downSince, lastMs, lastError, incidents[] (startedAt, endedAt, cause), weeklyReport, canChange; or null' }
+        '404': { description: PROJECT_NOT_FOUND }
+    post:
+      tags: [Publishing]
+      operationId: setWeeklyReport
+      summary: Switch the Monday e-mail report on or off (owner or manager)
+      description: The report goes once a week from Monday 9:00 (SITES_STATS_TIMEZONE) — or at the first chance later that week — with page views against the week before, leads, bookings, orders and outages. A site published during a week gets its first report the next Monday.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [weeklyReport], properties: { weeklyReport: { type: boolean } } }
+      responses:
+        '201': { description: Same body as GET }
+        '404': { description: PROJECT_NOT_FOUND }
   /admin/ai-pricing:
     get:
       tags: [Budget]
