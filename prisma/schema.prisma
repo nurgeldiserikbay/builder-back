@@ -909,6 +909,10 @@ model GenerationRun {
 
   @@index([projectId, provider, createdAt(sort: Desc)], map: "generation_runs_project_provider_created_idx")
   @@index([stageId, createdAt(sort: Desc)], map: "generation_runs_stage_created_idx")
+  /// Balance, daily limit and monthly plan usage read a project's requests by time.
+  @@index([projectId, createdAt(sort: Desc)], map: "generation_runs_project_created_idx")
+  /// Platform-wide average request size (estimates) reads recent successful requests.
+  @@index([status, createdAt(sort: Desc)], map: "generation_runs_status_created_idx")
   @@index([projectId, requestedByUserId, createdAt(sort: Desc)], map: "generation_runs_project_user_created_idx")
   @@map("generation_runs")
 }

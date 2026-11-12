@@ -30,8 +30,20 @@ export class BudgetService {
     return this.pricing();
   }
 
-  /** Average tokens of recent successful requests across the platform; defaults until there are enough of them. */
+  private typicalCache: { at: number; value: { input: number; output: number; basedOn: number } } | null = null;
+
+  /**
+   * Average tokens of recent successful requests across the platform; defaults until there are enough of them.
+   * Cached for 10 minutes: it reads every request of the platform in the last 30 days and changes slowly.
+   */
   private async typicalTokens() {
+    if (this.typicalCache && Date.now() - this.typicalCache.at < 10 * 60_000) return this.typicalCache.value;
+    const value = await this.computeTypicalTokens();
+    this.typicalCache = { at: Date.now(), value };
+    return value;
+  }
+
+  private async computeTypicalTokens() {
     const recent = await this.prisma.generationRun.aggregate({
       where: { status: 'succeeded', inputTokens: { not: null }, createdAt: { gte: new Date(Date.now() - 30 * 86_400_000) } },
       _avg: { inputTokens: true, outputTokens: true }, _count: { _all: true },
