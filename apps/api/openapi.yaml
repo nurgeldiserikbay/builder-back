@@ -2162,7 +2162,7 @@ paths:
               properties:
                 amount: { type: [integer, 'null'], minimum: 1, maximum: 10000000 }
       responses:
-        '200': { description: Same body as GET /projects/{projectId}/budget }
+        '200': { description: 'Same body as GET /projects/{projectId}/budget' }
         '400': { description: SPEND_LIMIT_INVALID, UNKNOWN_FIELD }
         '403': { description: SPEND_LIMIT_FORBIDDEN }
         '404': { $ref: '#/components/responses/Problem' }
