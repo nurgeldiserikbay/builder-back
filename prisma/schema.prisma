@@ -195,6 +195,7 @@ model User {
   externalIdentities        ExternalIdentity[]
   telegramLinkCodes         TelegramLinkCode[]
   stageAssignments          StageAssignment[]
+  specialistProfile         SpecialistProfile?
   telegramChats             TelegramChatState[]
   accountPlan               AccountPlan?
   consents                  UserConsent[]
@@ -1038,6 +1039,7 @@ model StageAssignment {
   timeEntries     TimeEntry[]
   payments        StagePayment[]
   disputes        Dispute[]
+  review          SpecialistReview?
   invitedByUserId String                @map("invited_by_user_id") @db.Uuid
   acceptedAt      DateTime?             @map("accepted_at") @db.Timestamptz(3)
   completedAt     DateTime?             @map("completed_at") @db.Timestamptz(3)
@@ -1560,4 +1562,44 @@ model DisputeMessage {
 
   @@index([disputeId, createdAt], map: "dispute_messages_dispute_created_idx")
   @@map("dispute_messages")
+}
+
+/// Public card of a specialist in the catalog. Shown only while published and the account is not being deleted.
+model SpecialistProfile {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @unique @map("user_id") @db.Uuid
+  displayName    String   @map("display_name") @db.VarChar(80)
+  headline       String   @db.VarChar(140)
+  about          String?  @db.VarChar(2000)
+  /// Stage keys from the catalog the specialist works on.
+  stageKeys      String[] @default([]) @map("stage_keys")
+  hourlyRateTiyn Int?     @map("hourly_rate_tiyn")
+  city           String?  @db.VarChar(80)
+  published      Boolean  @default(false)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([published], map: "specialist_profiles_published_idx")
+  @@map("specialist_profiles")
+}
+
+/// Owner's review of a specialist after the stage was accepted; one per assignment.
+model SpecialistReview {
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assignmentId     String          @unique @map("assignment_id") @db.Uuid
+  specialistUserId String          @map("specialist_user_id") @db.Uuid
+  authorUserId     String          @map("author_user_id") @db.Uuid
+  stageKey         String          @map("stage_key") @db.VarChar(40)
+  projectType      String?         @map("project_type") @db.VarChar(40)
+  rating           Int             @db.SmallInt
+  text             String?         @db.VarChar(1000)
+  reply            String?         @db.VarChar(1000)
+  repliedAt        DateTime?       @map("replied_at") @db.Timestamptz(3)
+  createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  assignment       StageAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([specialistUserId, createdAt(sort: Desc)], map: "specialist_reviews_specialist_created_idx")
+  @@map("specialist_reviews")
 }

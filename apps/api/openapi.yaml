@@ -2313,6 +2313,111 @@ paths:
         '200': { description: Dispute with evidence }
         '400': { description: 'DISPUTE_OUTCOME_INVALID, DISPUTE_NOTE_REQUIRED, DISPUTE_PAYMENT_NOT_ALLOWED, DISPUTE_AMOUNT_INVALID' }
         '409': { description: DISPUTE_CLOSED }
+  /specialists:
+    get:
+      tags: [Specialists]
+      operationId: listSpecialists
+      summary: Specialist catalog (signed-in users)
+      description: Published profiles of accounts not being deleted, optionally for one stage. Ordered by a rating weighted toward 4 by the number of reviews, then by accepted stages. No e-mail addresses.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: stage, in: query, required: false, schema: { type: string }, description: Stage key with AI (400 PROFILE_STAGE_INVALID otherwise) }
+      responses:
+        '200': { description: 'specialists[] (id, displayName, headline, city, hourlyRate, stages[{key,title}], rating, reviews, completedStages), stages[] for the filter' }
+  /specialists/{profileId}:
+    get:
+      tags: [Specialists]
+      operationId: getSpecialist
+      summary: Specialist card with reviews
+      description: Published profile, or the viewer's own. Reviews show rating, text, the specialist's reply, stage and kind of project — never the owner or project name.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: profileId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'card fields plus reviewCount, about, own, published, reviews[] (latest 50) (id, rating, text, reply, repliedAt, createdAt, stageTitle, projectTypeTitle, canReply)' }
+        '404': { description: PROFILE_NOT_FOUND }
+  /me/specialist-profile:
+    get:
+      tags: [Specialists]
+      operationId: getMySpecialistProfile
+      summary: Own catalog card (null before the first save)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'profile (id, displayName, headline, about, stageKeys, hourlyRate, city, published) or null, suggestedName, stages' }
+    put:
+      tags: [Specialists]
+      operationId: saveMySpecialistProfile
+      summary: Create or update the own catalog card
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [displayName, headline, stageKeys, published]
+              properties:
+                displayName: { type: string, minLength: 2, maxLength: 80 }
+                headline: { type: string, minLength: 5, maxLength: 140 }
+                about: { type: [string, 'null'], maxLength: 2000 }
+                stageKeys: { type: array, maxItems: 20, items: { type: string }, description: Stages with AI; at least one when published }
+                hourlyRate: { type: [integer, 'null'], minimum: 1, maximum: 1000000, description: Whole tenge, shown as a guide; the rate of a job is set in the invitation }
+                city: { type: [string, 'null'], maxLength: 80 }
+                published: { type: boolean }
+      responses:
+        '200': { description: Same as GET }
+        '400': { description: 'PROFILE_NAME_INVALID, PROFILE_HEADLINE_INVALID, PROFILE_ABOUT_TOO_LONG, PROFILE_STAGE_INVALID, PROFILE_STAGES_REQUIRED, PROFILE_RATE_INVALID, PROFILE_CITY_INVALID' }
+  /projects/{projectId}/assignments/{assignmentId}/review:
+    post:
+      tags: [Specialists]
+      operationId: reviewSpecialist
+      summary: Owner or manager reviews a specialist after the stage was accepted
+      description: One review per assignment, only when the assignment is completed (stage accepted). The author may change it for 14 days. Ratings 1–2 need a comment. Logged as specialist_reviewed / specialist_review_changed.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: assignmentId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [rating]
+              properties:
+                rating: { type: integer, minimum: 1, maximum: 5 }
+                text: { type: [string, 'null'], maxLength: 1000 }
+      responses:
+        '200': { description: rating, text }
+        '400': { description: 'REVIEW_RATING_INVALID, REVIEW_TEXT_INVALID, REVIEW_TEXT_REQUIRED' }
+        '403': { description: REVIEW_FORBIDDEN }
+        '409': { description: 'REVIEW_NOT_AVAILABLE, REVIEW_ALREADY_EXISTS, REVIEW_EDIT_EXPIRED' }
+  /me/reviews/{reviewId}/reply:
+    post:
+      tags: [Specialists]
+      operationId: replyToReview
+      summary: The reviewed specialist answers once
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: reviewId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string, minLength: 2, maxLength: 1000 } } }
+      responses:
+        '200': { description: reply }
+        '400': { description: REVIEW_REPLY_INVALID }
+        '404': { description: REVIEW_NOT_FOUND }
+        '409': { description: REVIEW_ALREADY_REPLIED }
   /admin/ai-pricing:
     get:
       tags: [Budget]
@@ -5645,9 +5750,11 @@ components:
     InviteSpecialistRequest:
       type: object
       additionalProperties: false
-      required: [email, role]
+      required: [role]
+      description: Exactly one of email or profileId (INVITE_EMAIL_OR_PROFILE otherwise).
       properties:
         email: { type: string, format: email, maxLength: 254 }
+        profileId: { type: string, format: uuid, description: Published catalog profile; the address is taken on the server and not returned. 404 PROFILE_NOT_FOUND when not published. }
         role: { type: string, enum: [lead, consultant] }
         aiBudget: { type: [integer, 'null'], minimum: 0, maximum: 1000, description: Maximum AI generations for this assignment; null means only the project daily limit applies. }
         payKind: { type: string, enum: [none, fixed, hourly], default: none, description: How the specialist is paid for this stage. Nothing is paid upfront; what is owed is fixed when the owner accepts the stage. }
