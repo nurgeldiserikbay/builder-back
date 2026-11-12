@@ -1,0 +1,149 @@
+# BuildPath development/test environment on Render (workspace "dev-flow").
+# Not the production setup: production is one server in Kazakhstan, see deploy/README.md.
+# How to create it, what each value means and the monthly cost: deploy/RENDER.md.
+#
+# Paid: api (Starter), app (Starter), database (Basic-256mb). Free and sleeping when idle: admin, sites.
+# Nothing deploys on its own: no PR previews, no deploy on every push to main. Deploys are started by hand.
+# Values marked "sync: false" are asked for once when the Blueprint is created; nothing secret is stored here.
+
+envVarGroups:
+  # Settings both backend processes (API and published sites server) read.
+  - name: buildpath-backend
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SENTRY_ENVIRONMENT
+        value: render-dev
+      # Public addresses, e.g. https://buildpath-app.onrender.com and https://buildpath-api.onrender.com
+      - key: PUBLIC_APP_URL
+        sync: false
+      - key: PUBLIC_API_URL
+        sync: false
+      # Published sites: <slug>.<SITES_BASE_DOMAIN>; needs a domain with a wildcard record (deploy/RENDER.md)
+      - key: SITES_BASE_DOMAIN
+        sync: false
+      - key: SITES_PUBLIC_URL_TEMPLATE
+        sync: false
+      - key: SITES_IP_HASH_SALT
+        generateValue: true
+      - key: CODE_HOSTING_TOKEN_ENCRYPTION_KEY
+        generateValue: true
+      # Mail (Resend) — without it e-mail sign-up and owner e-mails are unavailable; Telegram sign-in still works
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # Telegram bot @buildpath_bot; the webhook secret may contain only A-Z a-z 0-9 _ - (openssl rand -hex 32)
+      - key: TELEGRAM_BOT_USERNAME
+        value: buildpath_bot
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+
+services:
+  - type: web
+    name: buildpath-api
+    runtime: docker
+    repo: https://github.com/nurgeldiserikbay/builder-back
+    branch: main
+    autoDeployTrigger: "off" # deploy by hand for larger changes (deploy/RENDER.md)
+    region: frankfurt
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    preDeployCommand: npx prisma migrate deploy
+    healthCheckPath: /api/v1/health
+    envVars:
+      - fromGroup: buildpath-backend
+      - key: PORT
+        value: "4000"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: buildpath-db
+          property: connectionString
+      # Render's proxy (and the app's /api proxy) set X-Forwarded-For
+      - key: TRUST_PROXY
+        value: "true"
+      # Stage AI agent; without a key the journey works with forms and template drafts
+      - key: BUILDER_AI_OPENAI_API_KEY
+        sync: false
+      - key: BUILDER_AI_OPENAI_MODEL
+        sync: false
+
+  - type: web
+    name: buildpath-app
+    runtime: docker
+    repo: https://github.com/nurgeldiserikbay/builder-front
+    branch: main
+    autoDeployTrigger: "off" # deploy by hand for larger changes (deploy/RENDER.md)
+    region: frankfurt
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: "3000"
+      # /api/* on this host is forwarded to the API over the private network (src/app/api/[...path]/route.ts)
+      - key: API_INTERNAL_URL
+        fromService:
+          type: web
+          name: buildpath-api
+          property: hostport
+
+  - type: web
+    name: buildpath-admin
+    runtime: docker
+    repo: https://github.com/nurgeldiserikbay/builder-admin
+    branch: main
+    autoDeployTrigger: "off" # deploy by hand for larger changes (deploy/RENDER.md)
+    region: frankfurt
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: "3000"
+      - key: API_INTERNAL_URL
+        fromService:
+          type: web
+          name: buildpath-api
+          property: hostport
+
+  # Published customer sites. Free: sleeps after 15 minutes idle, so booking reminders and lead cleanup run only while awake.
+  - type: web
+    name: buildpath-sites
+    runtime: docker
+    repo: https://github.com/nurgeldiserikbay/builder-back
+    branch: main
+    autoDeployTrigger: "off" # deploy by hand for larger changes (deploy/RENDER.md)
+    region: frankfurt
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerCommand: node dist/sites.js
+    healthCheckPath: /__health
+    envVars:
+      - fromGroup: buildpath-backend
+      - key: SITES_PORT
+        value: "4100"
+      - key: PORT
+        value: "4100"
+      - key: SITES_TRUST_PROXY
+        value: "true"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: buildpath-db
+          property: connectionString
+
+databases:
+  - name: buildpath-db
+    region: frankfurt
+    plan: basic-256mb
+    diskSizeGB: 1
+    postgresMajorVersion: "17"
+    databaseName: buildpath
+    user: buildpath
+    ipAllowList: [] # only Render services in this workspace can connect
