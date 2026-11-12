@@ -2,6 +2,7 @@ import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, describe, it } from 'node:test';
+import { createServer } from 'node:http';
 import { PrismaService } from '../database/prisma.service.js';
 import type { JourneyService } from '../journey/journey.service.js';
 import { PaymentsService } from '../payments/payments.service.js';
@@ -42,6 +43,18 @@ describe('disputes (database)', async () => {
   });
 
   it('opens one dispute at a time, holds the payout while open, and a decision can create an amount due', { skip }, async () => {
+    // A local stand-in for the mail service records what would be sent.
+    const mails: Array<{ to: string; subject: string }> = [];
+    const server = createServer((request, response) => {
+      let raw = '';
+      request.on('data', (chunk) => { raw += chunk; });
+      request.on('end', () => { const body = JSON.parse(raw); mails.push({ to: body.to[0].email, subject: body.subject }); response.writeHead(201).end('{}'); });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const saved = { ...process.env };
+    Object.assign(process.env, { EMAIL_FROM: 'BuildPath <noreply@test.local>', BREVO_API_KEY: 'test', BREVO_API_URL: `http://127.0.0.1:${(server.address() as { port: number }).port}` });
+    delete process.env.RESEND_API_KEY;
+    try {
     const owner = await user('owner');
     const specialist = await user('spec');
     const outsider = await user('outsider');
@@ -104,6 +117,21 @@ describe('disputes (database)', async () => {
     // The opener can withdraw.
     const second = await disputes!.open(specialist.id, assignment.id, { kind: 'other', claim: 'Хочу уточнить условия по оплате части работы.', amount: null });
     await disputes!.withdraw(specialist.id, second.data.disputes[0].id);
-    assert.equal((await disputes!.mine(owner.id)).data.filter((row) => row.projectId === project.id).length, 2);
+    assert.equal((await disputes!.mine(owner.id)).data.disputes.filter((row) => row.projectId === project.id).length, 2);
+
+    // After access ends, the specialist still finds the assignment in the account and can open a dispute there.
+    await prisma!.stageAssignment.update({ where: { id: assignment.id }, data: { readUntil: new Date(Date.now() - 1000) } });
+    assert.ok((await disputes!.mine(specialist.id)).data.withoutStageAccess.some((row) => row.assignmentId === assignment.id));
+    assert.ok(!(await disputes!.mine(owner.id)).data.withoutStageAccess.some((row) => row.assignmentId === assignment.id));
+
+    // Mail: opening reaches the other side, a reply between the sides does not, support's message and the decision reach both.
+    const to = (address: string) => mails.filter((mail) => mail.to === address).length;
+    assert.equal(to(specialist.emailNormalized), 3); // owner opened, support wrote, decided — the owner's replies are not mailed
+    assert.equal(to(owner.emailNormalized), 4); // support wrote, decided, the specialist's second dispute opened and withdrawn — not the specialist's reply
+    assert.ok(mails.every((mail) => mail.subject.length > 0));
+    } finally {
+      process.env = saved;
+      server.close();
+    }
   });
 });
