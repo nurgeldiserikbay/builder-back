@@ -338,6 +338,7 @@ model Project {
   @@index([ownerUserId, createdAt(sort: Desc)], map: "projects_owner_created_idx")
   @@map("projects")
   topUps            ProjectTopUp[]
+  aiReservations    AiReservation[]
   /// Days the next stage has to answer a change notice (1–14).
   changeResponseDays Int            @default(3) @map("change_response_days")
 }
@@ -1243,6 +1244,21 @@ model CodeRepository {
 }
 
 /// Single-row customer prices for AI usage (id = 1), set in the admin console. Each request stores its own cost.
+/// Money set aside for an AI request while it runs: the balance check and the hold happen under the project wallet lock,
+/// so parallel requests cannot spend the same money. One active hold per project also means one AI request at a time.
+/// A hold past expiresAt (a crashed request) no longer counts.
+model AiReservation {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId  String   @map("project_id") @db.Uuid
+  amountTiyn Int      @map("amount_tiyn")
+  expiresAt  DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, expiresAt], map: "ai_reservations_project_expires_idx")
+  @@map("ai_reservations")
+}
+
 model AiPricing {
   id                   Int      @id @default(1) @db.SmallInt
   inputPerMillionTiyn  Int      @map("input_per_million_tiyn")

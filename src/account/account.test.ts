@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import { consentIsCurrent } from '../auth/auth.service.js';
 import type { AuthService } from '../auth/auth.service.js';
+import { RateLimiter } from '../security/rate-limit.js';
 import { LEGAL_VERSIONS, legalValuesFromEnv, legalDetailsMissing, renderLegal } from '../legal/documents.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { AccountService, purgeDueAt } from './account.service.js';
@@ -50,7 +51,7 @@ describe('account deletion (database)', async () => {
   }
   const skip = prisma ? false : 'database not available';
   const ids: string[] = [];
-  const auth = { confirmPassword: async (_userId: string, password: string) => password === 'correct-password' } as unknown as AuthService;
+  const auth = { limits: new RateLimiter(), confirmPassword: async (_userId: string, password: string) => password === 'correct-password' } as unknown as AuthService;
   const service = prisma ? new AccountService(prisma, auth) : null;
 
   async function user(label: string) {

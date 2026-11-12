@@ -10,8 +10,8 @@
 export const legalDocumentKeys = ['terms', 'privacy'] as const;
 export type LegalDocumentKey = (typeof legalDocumentKeys)[number];
 
-export const LEGAL_VERSIONS: Record<LegalDocumentKey, string> = { terms: '1.0', privacy: '1.0' };
-export const LEGAL_EFFECTIVE_DATE: Record<LegalDocumentKey, string> = { terms: '2026-11-10', privacy: '2026-11-10' };
+export const LEGAL_VERSIONS: Record<LegalDocumentKey, string> = { terms: '1.0', privacy: '1.1' };
+export const LEGAL_EFFECTIVE_DATE: Record<LegalDocumentKey, string> = { terms: '2026-11-10', privacy: '2026-11-12' };
 export const LEGAL_TITLES: Record<LegalDocumentKey, string> = {
   terms: 'Публичная оферта BuildPath',
   privacy: 'Политика конфиденциальности BuildPath',
@@ -76,7 +76,7 @@ function formatDate(iso: string): string {
 }
 
 /** Text of the single registration checkbox; the same words are shown in the app. */
-export const CONSENT_STATEMENT = 'Я принимаю оферту и политику конфиденциальности и соглашаюсь на обработку моих данных, в том числе на их передачу за границу (OpenAI, Resend, Telegram) для работы ИИ, писем и уведомлений.';
+export const CONSENT_STATEMENT = 'Я принимаю оферту и политику конфиденциальности и соглашаюсь на обработку моих данных, в том числе на их передачу за границу (OpenAI, Resend или Brevo, Telegram) для работы ИИ, писем и уведомлений.';
 
 const PRIVACY = `Редакция {{version}} от {{date}}
 
@@ -123,12 +123,12 @@ const PRIVACY = `Редакция {{version}} от {{date}}
 | Исполнитель | Страна | Что получает | Когда |
 |---|---|---|---|
 | OpenAI | США | Материалы этапа, правила и инструкции, нужные для черновика | Только когда вы или специалист просите ИИ подготовить черновик |
-| Resend | США | Почта получателя и текст письма | Служебные письма: подтверждение почты, приглашения, уведомления о заявках |
+| Resend или Brevo (один из них, смотря что подключено) | Resend — США, Brevo — Франция (ЕС) | Почта получателя и текст письма | Служебные письма: подтверждение почты, восстановление пароля, приглашения, уведомления о заявках |
 | Telegram | За пределами РК | Текст уведомления, сведения о проекте и заявке | Если вы привязали Telegram |
 | Сервис отчётов об ошибках (если включён) | Зависит от настройки | Технические сведения об ошибке без cookie, паролей, текстов запросов и данных пользователя | При сбое |
 | {{hostingProvider}} | Казахстан | Все данные платформы на его серверах | Постоянно |
 
-Передача в OpenAI, Resend и Telegram трансграничная. Мы делаем её на основании вашего согласия, данного при регистрации. Если вы не хотите передавать материалы проекта в OpenAI, не используйте ИИ: формы, ручное редактирование, шаблоны и сборка сайта работают без него.
+Передача в OpenAI, Resend или Brevo и Telegram трансграничная. Мы делаем её на основании вашего согласия, данного при регистрации. Если вы не хотите передавать материалы проекта в OpenAI, не используйте ИИ: формы, ручное редактирование, шаблоны и сборка сайта работают без него.
 
 По требованию закона мы раскрываем данные уполномоченным государственным органам.
 

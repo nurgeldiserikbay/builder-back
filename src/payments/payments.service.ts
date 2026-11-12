@@ -5,7 +5,7 @@ import { JourneyService } from '../journey/journey.service.js';
 import { DEFAULT_TOKENS, costOf } from '../budget/budget.js';
 import { PaymentProviderError, activeProvider, automaticRefund, freedomCallback, freedomCheckout, freedomConfig, freedomReply } from './providers.js';
 export { activeProvider } from './providers.js';
-import { billingSettings, projectBalance } from './wallet.js';
+import { billingSettings, projectBalance, walletLockKey } from './wallet.js';
 import { STAGE_ORDER_PREFIX, normalizeIban, splitFee } from './payouts.js';
 import { openSecret, sealSecret, secretKey } from '../common/secret-box.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
@@ -167,7 +167,7 @@ export class PaymentsService {
     const cleanReason = reason.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 300);
     const settings = await billingSettings(this.prisma);
     await this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`wallet:${projectId}`}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${walletLockKey(projectId)}))`;
       const topUp = await tx.projectTopUp.findFirst({ where: { id: topUpId, projectId }, select: { id: true, status: true, amountTiyn: true, refundedTiyn: true, refundStatus: true } });
       if (!topUp || topUp.status !== 'paid') throw new NotFoundException('TOP_UP_NOT_FOUND');
       if (topUp.refundStatus === 'requested') throw new ConflictException('REFUND_ALREADY_REQUESTED');
@@ -224,7 +224,15 @@ export class PaymentsService {
       if (!reference || reference.length < 3 || reference.length > 100) throw new BadRequestException('REFUND_REFERENCE_REQUIRED');
     } else if (!note) throw new BadRequestException('REFUND_NOTE_REQUIRED');
     const amountTiyn = topUp.refundRequestedTiyn;
+    const settings = await billingSettings(this.prisma);
     await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${walletLockKey(topUp.projectId)}))`;
+      if (decision === 'refund') {
+        // The amount was set aside at the request, but an AI answer longer than its hold may have spent past zero since:
+        // money already spent must not be returned.
+        const { balanceTiyn } = await projectBalance(tx, topUp.projectId, settings.prepaidSince);
+        if (balanceTiyn < 0) throw new ConflictException('REFUND_MORE_THAN_LEFT');
+      }
       const updated = await tx.projectTopUp.updateMany({
         where: { id: topUp.id, refundStatus: 'requested' },
         data: decision === 'refund'

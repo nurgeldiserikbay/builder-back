@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, OnApplicationBootstrap, OnApplicationShutdown, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, HttpException, HttpStatus, Injectable, Logger, NotFoundException, OnApplicationBootstrap, OnApplicationShutdown, UnauthorizedException } from '@nestjs/common';
 import { DeleteObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { PrismaService } from '../database/prisma.service.js';
 import { AuthService } from '../auth/auth.service.js';
+import { authLimits } from '../security/rate-limit.js';
 import { legalValuesFromEnv, renderLegal, LEGAL_EFFECTIVE_DATE, LEGAL_TITLES, LEGAL_VERSIONS, type LegalDocumentKey, CONSENT_STATEMENT } from '../legal/documents.js';
 
 export const DEFAULT_RETENTION_DAYS = 30;
@@ -115,7 +116,12 @@ export class AccountService implements OnApplicationBootstrap, OnApplicationShut
    * the user's own specialist access closed, Telegram unlinked. Everything else waits for the retention period.
    */
   async requestDeletion(userId: string, password: string) {
-    if (!(await this.auth.confirmPassword(userId, password))) throw new UnauthorizedException('INVALID_PASSWORD');
+    // The same limit as sign-in: a stolen session must not be able to guess the password here.
+    if (!this.auth.limits.allowed('login-fail', userId, authLimits.loginFailuresPerEmail)) throw new HttpException('LOGIN_RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
+    if (!(await this.auth.confirmPassword(userId, password))) {
+      this.auth.limits.hit('login-fail', userId, authLimits.loginFailuresPerEmail);
+      throw new UnauthorizedException('INVALID_PASSWORD');
+    }
     const now = new Date();
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { emailNormalized: true, deletionRequestedAt: true } });
     if (!user) throw new NotFoundException('ACCOUNT_NOT_FOUND');
