@@ -114,10 +114,22 @@ describe('disputes (database)', async () => {
     const again = await disputes!.forAssignment(specialist.id, assignment.id);
     assert.equal(again.data.canOpen, true);
 
+    // Silence: the specialist never wrote in the second dispute; after 3 days it is reminded once, not twice.
+    const quiet = await disputes!.open(owner.id, assignment.id, { kind: 'other', claim: 'Хочу уточнить объём правок, которые входят в цену.', amount: null });
+    const quietId = quiet.data.disputes[0].id;
+    await prisma!.dispute.update({ where: { id: quietId }, data: { createdAt: new Date(Date.now() - 4 * 86_400_000) } });
+    assert.deepEqual((await disputes!.staffDetail(staffId, quietId)).data.waiting, { side: 'specialist', days: 4, reminded: false });
+    const mailsBefore = mails.length;
+    assert.ok((await disputes!.processReminders()) >= 1);
+    assert.equal(mails.filter((mail) => mail.to === specialist.emailNormalized).length - mails.slice(0, mailsBefore).filter((mail) => mail.to === specialist.emailNormalized).length, 1);
+    assert.equal(await disputes!.processReminders(), 0);
+    assert.equal((await disputes!.staffDetail(staffId, quietId)).data.waiting?.reminded, true);
+    await disputes!.withdraw(owner.id, quietId);
+
     // The opener can withdraw.
     const second = await disputes!.open(specialist.id, assignment.id, { kind: 'other', claim: 'Хочу уточнить условия по оплате части работы.', amount: null });
     await disputes!.withdraw(specialist.id, second.data.disputes[0].id);
-    assert.equal((await disputes!.mine(owner.id)).data.disputes.filter((row) => row.projectId === project.id).length, 2);
+    assert.equal((await disputes!.mine(owner.id)).data.disputes.filter((row) => row.projectId === project.id).length, 3);
 
     // After access ends, the specialist still finds the assignment in the account and can open a dispute there.
     await prisma!.stageAssignment.update({ where: { id: assignment.id }, data: { readUntil: new Date(Date.now() - 1000) } });
@@ -126,8 +138,8 @@ describe('disputes (database)', async () => {
 
     // Mail: opening reaches the other side, a reply between the sides does not, support's message and the decision reach both.
     const to = (address: string) => mails.filter((mail) => mail.to === address).length;
-    assert.equal(to(specialist.emailNormalized), 3); // owner opened, support wrote, decided — the owner's replies are not mailed
-    assert.equal(to(owner.emailNormalized), 4); // support wrote, decided, the specialist's second dispute opened and withdrawn — not the specialist's reply
+    assert.equal(to(specialist.emailNormalized), 6); // owner opened, support wrote, decided, quiet dispute opened, reminder, withdrawn — replies are not mailed
+    assert.equal(to(owner.emailNormalized), 4); // support wrote, decided, the specialist's dispute opened and withdrawn — not the specialist's reply
     assert.ok(mails.every((mail) => mail.subject.length > 0));
     } finally {
       process.env = saved;

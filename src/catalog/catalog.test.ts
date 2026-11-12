@@ -81,6 +81,27 @@ describe('specialist catalog and reviews (database)', async () => {
     await assert.rejects(catalog!.reply(specialist.id, reviewId, 'Ещё раз'), /REVIEW_ALREADY_REPLIED/);
     assert.equal((await catalog!.get(profileId, specialist.id)).data.reviews[0].reply, 'Спасибо!');
 
+    // The specialist reports the review once; support hides it, it leaves the card and the rating, and editing cannot bring it back.
+    await assert.rejects(catalog!.report(outsider.id, reviewId, 'Отзыв не про мою работу'), /REVIEW_NOT_FOUND/);
+    await catalog!.report(specialist.id, reviewId, 'Отзыв не про мою работу, а про другой проект');
+    await assert.rejects(catalog!.report(specialist.id, reviewId, 'Ещё раз пожалуюсь на тот же отзыв'), /REVIEW_ALREADY_REPORTED/);
+    assert.equal((await catalog!.get(profileId, specialist.id)).data.reviews[0].reportStatus, 'pending');
+    assert.ok((await catalog!.staffReports('pending')).data.some((row) => row.id === reviewId));
+    const staffEmail = `staff-${randomUUID()}@test.local`;
+    const staffId = (await prisma!.staffAccount.create({ data: { email: staffEmail, emailNormalized: staffEmail, passwordHash: 'x', displayName: 'Support', role: 'super_admin' } })).id;
+    try {
+      await assert.rejects(catalog!.staffDecide(staffId, reviewId, 'hide', ''), /MODERATION_NOTE_REQUIRED/);
+      await catalog!.staffDecide(staffId, reviewId, 'hide', 'Отзыв о другом проекте');
+      await assert.rejects(catalog!.staffDecide(staffId, reviewId, 'keep', 'Передумали'), /REVIEW_NOT_REPORTED/);
+      const hiddenCard = await catalog!.get(profileId, owner.id);
+      assert.equal(hiddenCard.data.reviews.length, 0);
+      assert.equal(hiddenCard.data.rating, null);
+      await assert.rejects(catalog!.review(owner.id, project.id, assignment.id, 5, 'Исправил отзыв'), /REVIEW_HIDDEN/);
+    } finally {
+      await prisma!.adminAuditEvent.deleteMany({ where: { staffId } });
+      await prisma!.staffAccount.deleteMany({ where: { id: staffId } });
+    }
+
     // An account being deleted disappears from the catalog at once.
     await prisma!.user.update({ where: { id: specialist.id }, data: { deletionRequestedAt: new Date() } });
     assert.ok(!(await catalog!.list(null)).data.specialists.some((item) => item.id === profileId));

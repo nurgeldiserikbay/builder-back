@@ -334,6 +334,7 @@ model Project {
   changeNotices    ChangeNotice[]
   choices          ProjectChoice[]
   repository       CodeRepository?
+  visitCounts      SiteVisitCount[]
 
   @@index([workspaceId, status, createdAt(sort: Desc)], map: "projects_workspace_status_created_idx")
   @@index([ownerUserId, createdAt(sort: Desc)], map: "projects_owner_created_idx")
@@ -1539,6 +1540,8 @@ model Dispute {
   resultPaymentId   String?          @map("result_payment_id") @db.Uuid
   resolvedByStaffId String?          @map("resolved_by_staff_id") @db.Uuid
   resolvedAt        DateTime?        @map("resolved_at") @db.Timestamptz(3)
+  /// The other side was reminded once that it has not answered.
+  remindedAt        DateTime?        @map("reminded_at") @db.Timestamptz(3)
   createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
   assignment        StageAssignment  @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
@@ -1596,10 +1599,34 @@ model SpecialistReview {
   text             String?         @db.VarChar(1000)
   reply            String?         @db.VarChar(1000)
   repliedAt        DateTime?       @map("replied_at") @db.Timestamptz(3)
+  /// The specialist's complaint: none → pending → kept | hidden (decided by staff).
+  reportStatus     String          @default("none") @map("report_status") @db.VarChar(10)
+  reportReason     String?         @map("report_reason") @db.VarChar(1000)
+  reportedAt       DateTime?       @map("reported_at") @db.Timestamptz(3)
+  /// A hidden review is not shown and does not count in the rating.
+  hiddenAt         DateTime?       @map("hidden_at") @db.Timestamptz(3)
+  moderationNote   String?         @map("moderation_note") @db.VarChar(500)
+  moderatedByStaffId String?       @map("moderated_by_staff_id") @db.Uuid
   createdAt        DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
   assignment       StageAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 
   @@index([specialistUserId, createdAt(sort: Desc)], map: "specialist_reviews_specialist_created_idx")
+  @@index([reportStatus, reportedAt], map: "specialist_reviews_report_idx")
   @@map("specialist_reviews")
+}
+
+/// Page views of a published site per day, page and referring host. No cookies, addresses or device data are kept.
+model SiteVisitCount {
+  projectId String   @map("project_id") @db.Uuid
+  day       DateTime @db.Date
+  path      String   @db.VarChar(200)
+  /// Host of the referring site, or «direct».
+  source    String   @db.VarChar(100)
+  views     Int      @default(0)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, day, path, source], map: "site_visit_counts_pkey")
+  @@index([projectId, day], map: "site_visit_counts_project_day_idx")
+  @@map("site_visit_counts")
 }

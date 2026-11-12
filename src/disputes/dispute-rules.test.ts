@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { canOpen, checkClaim, checkMessage, checkResolution, sideOf } from './dispute-rules.js';
+import { canOpen, checkClaim, checkMessage, checkResolution, sideOf, waitingFor } from './dispute-rules.js';
 
 const claim = 'Этап закрыли без приёмки, хотя тексты были сданы вовремя.';
 
@@ -39,5 +39,19 @@ describe('dispute rules', () => {
     assert.deepEqual(checkResolution({ outcome: 'owner', note, paySpecialist: 1000 }), { ok: false, code: 'DISPUTE_PAYMENT_NOT_ALLOWED' });
     assert.deepEqual(checkResolution({ outcome: 'split', note, paySpecialist: 15000 }), { ok: true, outcome: 'split', note, payTiyn: 1_500_000 });
     assert.deepEqual(checkResolution({ outcome: 'maybe', note, paySpecialist: null }), { ok: false, code: 'DISPUTE_OUTCOME_INVALID' });
+  });
+});
+
+describe('waiting for an answer', () => {
+  const opened = new Date('2026-11-01T00:00:00Z');
+  const at = (days: number) => new Date(opened.getTime() + days * 86_400_000);
+  it('waits for the side that did not open the dispute and reminds it once after 3 days', () => {
+    const dispute = { status: 'open', openedBySide: 'owner', createdAt: opened, remindedAt: null, messages: [] as Array<{ side: string }> };
+    assert.deepEqual(waitingFor(dispute, at(2)), { side: 'specialist', days: 2, remind: false });
+    assert.deepEqual(waitingFor(dispute, at(3)), { side: 'specialist', days: 3, remind: true });
+    assert.equal(waitingFor({ ...dispute, remindedAt: at(3) }, at(5)).remind, false);
+    assert.equal(waitingFor({ ...dispute, messages: [{ side: 'owner' }, { side: 'staff' }] }, at(4)).side, 'specialist');
+    assert.equal(waitingFor({ ...dispute, messages: [{ side: 'specialist' }] }, at(4)).side, null);
+    assert.equal(waitingFor({ ...dispute, status: 'resolved' }, at(4)).side, null);
   });
 });

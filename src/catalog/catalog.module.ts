@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module.js';
-import { CatalogController } from './catalog.controller.js';
+import { AdminReviewsController, CatalogController } from './catalog.controller.js';
+import { StaffAuthModule } from '../admin/staff-auth.module.js';
 import { CatalogService } from './catalog.service.js';
 
 @Module({
-  imports: [AuthModule],
-  controllers: [CatalogController],
+  imports: [AuthModule, StaffAuthModule],
+  controllers: [CatalogController, AdminReviewsController],
   providers: [CatalogService],
   exports: [CatalogService],
 })

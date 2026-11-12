@@ -2255,13 +2255,13 @@ paths:
       parameters:
         - { name: status, in: query, required: false, schema: { type: string, enum: [open, closed] } }
       responses:
-        '200': { description: 'id, status, kind, outcome, openedBySide, claimAmount, createdAt, messages, project, stage, specialist' }
+        '200': { description: 'id, status, kind, outcome, openedBySide, claimAmount, createdAt, messages, waiting (side that has not written since the dispute opened, days, reminded) or null, project, stage, specialist' }
   /admin/disputes/{disputeId}:
     get:
       tags: [Disputes]
       operationId: staffDispute
       summary: Staff — dispute with evidence (super_admin, operations_auditor; each view audited)
-      description: Thread, terms, assignment dates, payments, time by status, number of stage versions, last 60 stage and dispute events.
+      description: Thread, waiting (silent side, days, reminded), terms, assignment dates, payments, time by status, number of stage versions, last 60 stage and dispute events. The silent side is reminded once after 3 days (Telegram and e-mail; DISPUTE_REMINDERS_DISABLED=true switches it off).
       x-implementation-status: implemented
       security: [{ adminSessionCookie: [] }]
       parameters:
@@ -2397,7 +2397,62 @@ paths:
         '200': { description: 'rating, text' }
         '400': { description: 'REVIEW_RATING_INVALID, REVIEW_TEXT_INVALID, REVIEW_TEXT_REQUIRED' }
         '403': { description: REVIEW_FORBIDDEN }
-        '409': { description: 'REVIEW_NOT_AVAILABLE, REVIEW_ALREADY_EXISTS, REVIEW_EDIT_EXPIRED' }
+        '409': { description: 'REVIEW_NOT_AVAILABLE, REVIEW_ALREADY_EXISTS, REVIEW_EDIT_EXPIRED, REVIEW_HIDDEN' }
+  /me/reviews/{reviewId}/report:
+    post:
+      tags: [Specialists]
+      operationId: reportReview
+      summary: The reviewed specialist asks support to check a review (once)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: reviewId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [reason], properties: { reason: { type: string, minLength: 10, maxLength: 1000 } } }
+      responses:
+        '200': { description: 'reportStatus: pending' }
+        '400': { description: REVIEW_REPORT_INVALID }
+        '404': { description: REVIEW_NOT_FOUND }
+        '409': { description: REVIEW_ALREADY_REPORTED }
+  /admin/reviews:
+    get:
+      tags: [Specialists]
+      operationId: staffReportedReviews
+      summary: Staff — reported reviews, pending (default) or decided
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [pending, decided] } }
+      responses:
+        '200': { description: 'id, rating, text, reply, status, reason, reportedAt, note, createdAt, stage, project, specialist' }
+  /admin/reviews/{reviewId}/decide:
+    post:
+      tags: [Specialists]
+      operationId: staffDecideReview
+      summary: Staff — keep or hide a reported review (super_admin, audited)
+      description: A hidden review leaves the card and the rating, and its author can no longer edit it. The specialist (and the author, when hidden) get the reason by Telegram and e-mail.
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: reviewId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, note]
+              properties:
+                decision: { type: string, enum: [hide, keep] }
+                note: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        '200': { description: Pending reported reviews }
+        '400': { description: 'MODERATION_DECISION_INVALID, MODERATION_NOTE_REQUIRED' }
+        '409': { description: REVIEW_NOT_REPORTED }
   /me/reviews/{reviewId}/reply:
     post:
       tags: [Specialists]
@@ -2417,6 +2472,20 @@ paths:
         '400': { description: REVIEW_REPLY_INVALID }
         '404': { description: REVIEW_NOT_FOUND }
         '409': { description: REVIEW_ALREADY_REPLIED }
+  /projects/{projectId}/insights:
+    get:
+      tags: [Publishing]
+      operationId: getProjectInsights
+      summary: After launch — page views, popular pages, sources and actions of the published site (project members)
+      description: Counted by the sites server without cookies, IP addresses or device data — only page, day (SITES_STATS_TIMEZONE, default Asia/Almaty) and the host of the referring site. Robots, link previews and prefetches are not counted. Kept 400 days. SITES_VISIT_COUNTS=off switches counting off.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: days, in: query, required: false, schema: { type: integer, enum: [7, 30, 90], default: 30 } }
+      responses:
+        '200': { description: 'published, url, publishedAt, timeZone, days, views, previousViews, change (percent or null), daily[] (day, views), pages[] and sources[] (name, views; top 5 plus other), actions (leads, bookings, orders, perHundredViews)' }
+        '404': { description: PROJECT_NOT_FOUND }
   /admin/ai-pricing:
     get:
       tags: [Budget]

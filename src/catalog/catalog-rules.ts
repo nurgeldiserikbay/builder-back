@@ -67,3 +67,18 @@ export function catalogScore(rating: number | null, reviews: number, completed: 
   const bayes = ((rating ?? prior) * reviews + prior * weight) / (reviews + weight);
   return bayes * 1000 + Math.min(completed, 999);
 }
+
+/** A complaint says what is wrong, so staff can check it against the stage history. */
+export function checkReport(reason: unknown): { ok: true; reason: string } | { ok: false; code: string } {
+  const value = typeof reason === 'string' ? reason.replace(/\s+/g, ' ').trim() : '';
+  if (value.length < 10 || value.length > 1000) return { ok: false, code: 'REVIEW_REPORT_INVALID' };
+  return { ok: true, reason: value };
+}
+
+export function checkModeration(decision: unknown, note: unknown): { ok: true; decision: 'hide' | 'keep'; note: string } | { ok: false; code: string } {
+  if (decision !== 'hide' && decision !== 'keep') return { ok: false, code: 'MODERATION_DECISION_INVALID' };
+  const value = typeof note === 'string' ? note.replace(/\s+/g, ' ').trim() : '';
+  // Both sides are told why, so a decision without a reason is not accepted.
+  if (value.length < 5 || value.length > 500) return { ok: false, code: 'MODERATION_NOTE_REQUIRED' };
+  return { ok: true, decision, note: value };
+}
