@@ -28,7 +28,7 @@ export async function notifyUser(prisma: Pick<PrismaClient, 'user'>, userId: str
       const appUrl = process.env.PUBLIC_APP_URL;
       const body = inLocale(user.locale, notice.text);
       const link = appUrl && notice.link ? `<p><a href="${escapeHtml(new URL(notice.link.path, appUrl).toString())}">${escapeHtml(inLocale(user.locale, notice.link.label))}</a></p>` : '';
-      await sendEmail(mail, user.email, inLocale(user.locale, notice.emailSubject!), `<p style="font:15px/1.5 system-ui,sans-serif">${escapeHtml(body)}</p>${link}`).catch(() => undefined);
+      await sendEmail(mail, user.email, inLocale(user.locale, notice.emailSubject!), `<p style="font:15px/1.5 system-ui,sans-serif;white-space:pre-line">${escapeHtml(body)}</p>${link}`).catch(() => undefined);
     });
   } catch {
     // A failed notice must never undo the action it reports.
