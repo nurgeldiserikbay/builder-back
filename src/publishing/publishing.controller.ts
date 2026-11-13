@@ -42,6 +42,20 @@ export class PublishingController {
     return this.publishing.publish(request.user.id, projectId, { slug: slugParam(input.slug), confirm: true });
   }
 
+  @Get('projects/:projectId/publication/history')
+  @UseGuards(AuthGuard)
+  history(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.publishing.history(request.user.id, projectId);
+  }
+
+  @Post('projects/:projectId/publication/rollback')
+  @HttpCode(200)
+  @UseGuards(AuthGuard)
+  rollback(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw, ['versionId', 'confirm']);
+    return this.publishing.rollback(request.user.id, projectId, { versionId: input.versionId, confirm: input.confirm });
+  }
+
   @Post('projects/:projectId/publication/unpublish')
   @HttpCode(200)
   @UseGuards(AuthGuard)

@@ -3220,6 +3220,45 @@ paths:
               schema: { $ref: '#/components/schemas/SlugCheckResponse' }
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/publication/history:
+    get:
+      tags: [Publishing]
+      operationId: getPublicationHistory
+      summary: Builds that have been on the live site, newest first (up to 10)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'canRollback, versions[] (versionId, versionNumber, builtAt, lastPublishedAt, live, accepted)' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/publication/rollback:
+    post:
+      tags: [Publishing]
+      operationId: rollbackPublication
+      summary: Put an earlier published build back on the live site (owner or manager)
+      description: Only builds that were live before. Only what visitors see changes; the stages and the accepted build stay, the status shows rolledBack, and POST /projects/{projectId}/publication brings the accepted build back. Visible within about two minutes because of caching. Logged as site_rolled_back.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [versionId, confirm]
+              properties:
+                versionId: { type: string, format: uuid }
+                confirm: { type: boolean, const: true }
+      responses:
+        '200': { description: 'Same body as GET /projects/{projectId}/publication' }
+        '400': { description: 'PUBLISH_CONFIRMATION_REQUIRED, ROLLBACK_VERSION_INVALID' }
+        '403': { description: PUBLICATION_FORBIDDEN }
+        '404': { description: ROLLBACK_VERSION_NOT_FOUND }
+        '409': { description: 'SITE_NOT_PUBLISHED, ROLLBACK_ALREADY_LIVE, PUBLICATION_CHANGED' }
   /projects/{projectId}/publication/unpublish:
     post:
       tags: [Publishing]
@@ -5809,7 +5848,7 @@ components:
       properties:
         data:
           type: object
-          required: [publication, acceptedBuild, outdated, canManage, suggestedSlug, baseDomain, channels, leadsCount]
+          required: [publication, acceptedBuild, outdated, rolledBack, canManage, suggestedSlug, baseDomain, channels, leadsCount]
           properties:
             publication:
               type: [object, 'null']
@@ -5854,6 +5893,7 @@ components:
                 versionNumber: { type: integer }
                 hasForm: { type: boolean }
             outdated: { type: boolean, description: A newer accepted build exists than the published one. }
+            rolledBack: { type: boolean, description: The live site shows an older build than the accepted one because the owner put it back. }
             canManage: { type: boolean }
             suggestedSlug: { type: string }
             baseDomain: { type: string }
