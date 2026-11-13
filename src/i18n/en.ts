@@ -1786,4 +1786,7 @@ export const en: Record<string, string> = {
   "Кнопки действий": "Action buttons",
   "Показатели": "Figures",
   "Поиск и фильтры": "Search and filters",
+  "Роли: {0}": "Roles: {0}",
+  "Обязательные функции: {0}": "Required functions: {0}",
+  "Экраны: {0}": "Screens: {0}",
 };
