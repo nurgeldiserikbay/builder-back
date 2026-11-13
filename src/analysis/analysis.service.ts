@@ -11,6 +11,18 @@ import { stageDefinitions, type StageKey } from '../journey/catalog.js';
 
 /** Archives get the code analysis; PDF, Word and text get the document check. */
 export const ANALYSABLE_KINDS = ['zip', 'pdf', 'docx', 'text'] as const;
+/** Where a finding usually belongs, first stage of the route that matches. */
+const sectionStages: Record<string, string[]> = {
+  goal: ['goal'], audience: ['goal'], features: ['features', 'process', 'goal'], pages: ['sitemap', 'screens', 'content'], content: ['content'], design: ['design'],
+  integrations: ['process', 'techplan'], deadline: ['goal'], budget: ['goal'], acceptance: ['features', 'goal'],
+};
+export function suggestStage(finding: { code: string; params?: Record<string, string | number> }, route: string[]): string | null {
+  const wanted = finding.code === 'DOC_SECTION_MISSING' ? sectionStages[String(finding.params?.section)] ?? ['goal']
+    : finding.code.startsWith('DOC_') ? ['goal']
+      : ['build', 'handoff', 'techplan'];
+  return wanted.find((key) => route.includes(key)) ?? route[0] ?? null;
+}
+
 export const ANALYSIS_RUN_LIMITS = { active: 2, perDay: 20, list: 30 };
 const refPattern = /^[A-Za-z0-9._/-]{1,200}$/;
 
@@ -159,9 +171,12 @@ export class AnalysisService implements OnApplicationBootstrap {
   }
 
   async get(userId: string, projectId: string, runId: string) {
-    const { run } = await this.load(userId, projectId, runId);
+    const { ctx, run } = await this.load(userId, projectId, runId);
     const people = await this.people([run.requestedByUserId]);
-    return { data: { ...this.runView(run, people), report: run.report ? reportView(run.report as unknown as AnalysisReport) : null } };
+    const route = ctx.project.projectType ? (await this.prisma.projectStage.findMany({ where: { projectId }, orderBy: { position: 'asc' }, select: { stageKey: true } })).map((row) => row.stageKey) : [];
+    const report = run.report as unknown as AnalysisReport | null;
+    const view = report ? reportView(report) : null;
+    return { data: { ...this.runView(run, people), report: view ? { ...view, findings: view.findings.map((finding, index) => ({ ...finding, suggestedStageKey: route.length ? suggestStage(report!.findings[index]!, route) : null })) } : null } };
   }
 
   /**

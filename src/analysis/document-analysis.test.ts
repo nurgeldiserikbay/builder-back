@@ -67,3 +67,17 @@ describe('document analysis', () => {
     assert.throws(() => docxParagraphs(Buffer.from('not a zip')), (error: unknown) => error instanceof DocumentError);
   });
 });
+
+describe('where a finding goes', () => {
+  it('suggests the stage of the route that usually owns it', async () => {
+    const { suggestStage } = await import('./analysis.service.js');
+    const landing = ['goal', 'process', 'techplan', 'content', 'design', 'build'];
+    const webApp = ['goal', 'process', 'features', 'screens', 'techplan', 'handoff'];
+    assert.equal(suggestStage({ code: 'DOC_SECTION_MISSING', params: { section: 'design' } }, landing), 'design');
+    assert.equal(suggestStage({ code: 'DOC_SECTION_MISSING', params: { section: 'acceptance' } }, webApp), 'features');
+    assert.equal(suggestStage({ code: 'DOC_SECTION_MISSING', params: { section: 'pages' } }, landing), 'content');
+    assert.equal(suggestStage({ code: 'DOC_VAGUE_WORDING' }, landing), 'goal');
+    assert.equal(suggestStage({ code: 'ENV_FILE_COMMITTED' }, landing), 'build');
+    assert.equal(suggestStage({ code: 'ENV_FILE_COMMITTED' }, webApp), 'handoff');
+  });
+});

@@ -2225,6 +2225,41 @@ paths:
         '200': { description: 'Same body as GET /assignments/{assignmentId}/disputes' }
         '400': { description: 'DISPUTE_MESSAGE_INVALID, DISPUTE_TOO_MANY_MESSAGES (50)' }
         '409': { description: DISPUTE_CLOSED }
+  /disputes/{disputeId}/attachments:
+    post:
+      tags: [Disputes]
+      operationId: attachToDispute
+      summary: Add a screenshot (JPG/PNG/WebP, re-encoded to WebP without metadata) or a PDF to an open dispute, with an optional text
+      description: Either side. Scanned for malware before it is stored (503 FILE_SCAN_UNAVAILABLE when the scanner is unreachable). 5 MB per file, 10 files per dispute; counts as a message. Messages in GET carry file (name, mime, bytes) when they have one.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: disputeId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [file], properties: { file: { type: string, format: binary }, text: { type: string, maxLength: 2000 } } }
+      responses:
+        '200': { description: 'Same body as GET /assignments/{assignmentId}/disputes' }
+        '400': { description: 'FILE_REQUIRED, DISPUTE_MESSAGE_INVALID, DISPUTE_TOO_MANY_MESSAGES' }
+        '404': { description: DISPUTE_NOT_FOUND }
+        '409': { description: 'DISPUTE_CLOSED, DISPUTE_TOO_MANY_FILES' }
+        '422': { description: 'FILE_TOO_LARGE, DISPUTE_FILE_TYPE, FILE_REJECTED_BY_SCAN, IMAGE_UNREADABLE' }
+        '503': { description: FILE_SCAN_UNAVAILABLE }
+  /disputes/{disputeId}/files/{messageId}:
+    get:
+      tags: [Disputes]
+      operationId: downloadDisputeFile
+      summary: Download a dispute file (sides of the dispute); always an attachment
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: disputeId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: messageId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The file }
+        '404': { description: 'DISPUTE_NOT_FOUND, FILE_NOT_FOUND' }
   /disputes/{disputeId}/withdraw:
     post:
       tags: [Disputes]
@@ -2271,6 +2306,19 @@ paths:
       responses:
         '200': { description: Dispute with evidence }
         '404': { description: DISPUTE_NOT_FOUND }
+  /admin/disputes/{disputeId}/files/{messageId}:
+    get:
+      tags: [Disputes]
+      operationId: staffDownloadDisputeFile
+      summary: Staff — download a dispute file (super_admin, operations_auditor)
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: disputeId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: messageId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The file }
+        '404': { description: FILE_NOT_FOUND }
   /admin/disputes/{disputeId}/messages:
     post:
       tags: [Disputes]
@@ -2501,6 +2549,20 @@ paths:
       responses:
         '200': { description: 'published, url, publishedAt, timeZone, days, views, previousViews, change (percent or null), daily[] (day, views), pages[] and sources[] (name, views; top 5 plus other), actions (leads, bookings, orders, perHundredViews)' }
         '404': { description: PROJECT_NOT_FOUND }
+  /projects/{projectId}/monitoring/live-check:
+    post:
+      tags: [Publishing]
+      operationId: checkPublishedAddress
+      summary: Check the published address now — HTTPS, HSTS, http→https redirect, CSP and frame-ancestors, nosniff, Referrer-Policy, Permissions-Policy, robots.txt
+      description: Owner or manager. The address is resolved and pinned to a public IP for an owner's domain (as the availability monitor does); redirects are not followed. At most once a minute per site; a repeat returns the last result. The result is part of GET /monitoring (liveCheck with items[id, status passed|failed|unknown, title, fix]).
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: Same as GET /monitoring }
+        '404': { description: PROJECT_NOT_FOUND }
+        '409': { description: SITE_NOT_LIVE }
   /projects/{projectId}/monitoring:
     get:
       tags: [Publishing]

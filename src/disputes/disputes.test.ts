@@ -88,6 +88,25 @@ describe('disputes (database)', async () => {
 
     const disputeId = opened.data.disputes[0].id;
     const answered = await disputes!.message(specialist.id, disputeId, 'Все правки из списка сделаны, версии 3 и 4 на этапе.');
+
+    // Evidence: a screenshot is re-encoded (no metadata), a PDF kept; other types, strangers and too big files are refused.
+    process.env.UPLOAD_MALWARE_SCAN = 'disabled';
+    const sharp = (await import('sharp')).default;
+    const png = await sharp({ create: { width: 40, height: 30, channels: 3, background: '#cc3333' } }).png().toBuffer();
+    const withShot = await disputes!.attach(specialist.id, disputeId, { buffer: png, size: png.length, originalname: 'правки.png' }, 'Скриншот версии 4');
+    const shot = withShot.data.disputes[0].messages.at(-1)!;
+    assert.equal(shot.text, 'Скриншот версии 4');
+    assert.deepEqual([shot.file?.name, shot.file?.mime], ['правки.webp', 'image/webp']);
+    const pdf = await disputes!.attach(owner.id, disputeId, { buffer: Buffer.from('%PDF-1.7 act'), size: 12, originalname: 'акт.pdf' }, undefined);
+    const pdfMessage = pdf.data.disputes[0].messages.at(-1)!;
+    assert.equal(pdfMessage.text, '📎 акт.pdf');
+    await assert.rejects(disputes!.attach(owner.id, disputeId, { buffer: Buffer.from('<svg/>'), size: 6, originalname: 'x.svg' }, undefined), /DISPUTE_FILE_TYPE/);
+    await assert.rejects(disputes!.attach(outsider.id, disputeId, { buffer: png, size: png.length, originalname: 'a.png' }, undefined), /DISPUTE_NOT_FOUND/);
+    await assert.rejects(disputes!.file(outsider.id, disputeId, shot.id), /DISPUTE_NOT_FOUND/);
+    const fetched = await disputes!.file(owner.id, disputeId, shot.id);
+    assert.equal(fetched.mime, 'image/webp');
+    assert.equal(fetched.data.subarray(8, 12).toString('latin1'), 'WEBP');
+    assert.equal((await disputes!.file(null, disputeId, pdfMessage.id)).data.toString(), '%PDF-1.7 act');
     assert.equal(answered.data.side, 'specialist');
     assert.equal(answered.data.disputes[0].messages[0].mine, true);
     await assert.rejects(disputes!.withdraw(specialist.id, disputeId), /DISPUTE_WITHDRAW_FORBIDDEN/);
@@ -95,7 +114,7 @@ describe('disputes (database)', async () => {
 
     const detail = await disputes!.staffDetail(staffId, disputeId);
     assert.equal(detail.data.payments.length, 1);
-    assert.equal(detail.data.messages.length, 2);
+    assert.equal(detail.data.messages.length, 4);
     assert.ok(detail.data.events.some((event) => event.type === 'dispute_opened'));
 
     await assert.rejects(disputes!.resolve(staffId, disputeId, { outcome: 'owner', note: 'Возврат владельцу по истории этапа.', paySpecialist: 5000 }), /DISPUTE_PAYMENT_NOT_ALLOWED/);
