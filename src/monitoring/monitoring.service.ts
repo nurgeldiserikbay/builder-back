@@ -175,10 +175,10 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
    * Once a day per live site: the address check again. When something that was fine is not any more (the certificate
    * ends within 14 days, a header disappeared, HTTPS stopped working), the owner gets one message about it.
    */
-  async dailyLiveChecks(now = new Date(), limit = 20) {
+  async dailyLiveChecks(now = new Date(), limit = 20, onlySiteIds?: string[]) {
     const due = new Date(now.getTime() - 24 * 3600_000);
     const sites = await this.prisma.sitePublication.findMany({
-      where: { status: 'live', OR: [{ liveCheckedAt: null }, { liveCheckedAt: { lt: due } }] }, orderBy: { liveCheckedAt: { sort: 'asc', nulls: 'first' } }, take: limit,
+      where: { status: 'live', ...(onlySiteIds ? { id: { in: onlySiteIds } } : {}), OR: [{ liveCheckedAt: null }, { liveCheckedAt: { lt: due } }] }, orderBy: { liveCheckedAt: { sort: 'asc', nulls: 'first' } }, take: limit,
       select: { id: true, projectId: true, slug: true, customDomain: true, domainStatus: true, liveCheck: true, project: { select: { name: true, ownerUserId: true } } },
     });
     let alerts = 0;
