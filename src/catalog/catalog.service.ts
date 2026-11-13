@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
-import { catalogScore, catalogStageKeys, checkModeration, checkProfile, checkReport, checkReview, ratingSummary, reviewState, type ProfileInput } from './catalog-rules.js';
+import { catalogScore, catalogStageKeys, checkModeration, checkPortfolio, checkProfile, checkReport, checkReview, ratingSummary, reviewState, type PortfolioItem, type ProfileInput } from './catalog-rules.js';
 import { tr } from '../i18n/i18n.js';
 import { notifyUser } from '../notifications/user-notifier.js';
 
@@ -45,10 +45,10 @@ export class CatalogService {
     if (stageKey && !(catalogStageKeys as string[]).includes(stageKey)) throw new BadRequestException('PROFILE_STAGE_INVALID');
     const profiles = await this.prisma.specialistProfile.findMany({
       where: { ...visible, ...(stageKey ? { stageKeys: { has: stageKey } } : {}) }, take: 200, orderBy: { updatedAt: 'desc' },
-      select: { id: true, userId: true, displayName: true, headline: true, stageKeys: true, hourlyRateTiyn: true, city: true },
+      select: { id: true, userId: true, displayName: true, headline: true, stageKeys: true, hourlyRateTiyn: true, city: true, portfolio: true },
     });
     const stat = await this.stats(profiles.map((profile) => profile.userId));
-    const cards = profiles.map((profile) => this.card(profile, stat(profile.userId)));
+    const cards = profiles.map((profile) => ({ ...this.card(profile, stat(profile.userId)), works: (profile.portfolio as unknown as PortfolioItem[]).length }));
     cards.sort((a, b) => catalogScore(b.rating, b.reviews, b.completedStages) - catalogScore(a.rating, a.reviews, a.completedStages));
     return { data: { specialists: cards, stages: this.stages() } };
   }
@@ -57,7 +57,7 @@ export class CatalogService {
     if (!isUuid(profileId)) throw new NotFoundException('PROFILE_NOT_FOUND');
     const profile = await this.prisma.specialistProfile.findFirst({
       where: { id: profileId, OR: [visible, { userId: viewerId }] },
-      select: { id: true, userId: true, displayName: true, headline: true, about: true, stageKeys: true, hourlyRateTiyn: true, city: true, published: true },
+      select: { id: true, userId: true, displayName: true, headline: true, about: true, stageKeys: true, hourlyRateTiyn: true, city: true, published: true, portfolio: true },
     });
     if (!profile) throw new NotFoundException('PROFILE_NOT_FOUND');
     const [stat, reviews] = await Promise.all([
@@ -69,6 +69,7 @@ export class CatalogService {
     return {
       data: {
         ...this.card(profile, summary), reviewCount: summary.reviews, about: profile.about, own, published: profile.published,
+        portfolio: (profile.portfolio as unknown as PortfolioItem[]).map((item) => ({ ...item, stageTitle: item.stageKey ? stageTitle(item.stageKey) : null, host: item.url ? new URL(item.url).hostname.replace(/^www\./, '') : null })),
         reviews: reviews.map((review) => ({
           id: review.id, rating: review.rating, text: review.text, reply: review.reply, repliedAt: review.repliedAt, createdAt: review.createdAt,
           stageTitle: stageTitle(review.stageKey), projectTypeTitle: projectTypeOf(review.projectType)?.title ?? null, canReply: own && !review.reply,
@@ -81,16 +82,24 @@ export class CatalogService {
 
   async mine(userId: string) {
     const [profile, user] = await Promise.all([
-      this.prisma.specialistProfile.findUnique({ where: { userId }, select: { id: true, displayName: true, headline: true, about: true, stageKeys: true, hourlyRateTiyn: true, city: true, published: true } }),
+      this.prisma.specialistProfile.findUnique({ where: { userId }, select: { id: true, displayName: true, headline: true, about: true, stageKeys: true, hourlyRateTiyn: true, city: true, published: true, portfolio: true } }),
       this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } }),
     ]);
     return { data: { profile: profile ? { ...profile, hourlyRate: tenge(profile.hourlyRateTiyn), hourlyRateTiyn: undefined } : null, suggestedName: user?.name ?? null, stages: this.stages() } };
   }
 
-  async saveMine(userId: string, input: ProfileInput) {
+  /** portfolio: undefined keeps what is saved, so an older client does not wipe it. */
+  async saveMine(userId: string, input: ProfileInput, portfolio?: unknown) {
     const checked = checkProfile(input);
     if (!checked.ok) throw new BadRequestException(checked.code);
-    await this.prisma.specialistProfile.upsert({ where: { userId }, create: { userId, ...checked.value }, update: checked.value });
+    let works: PortfolioItem[] | undefined;
+    if (portfolio !== undefined) {
+      const items = checkPortfolio(portfolio);
+      if (!items.ok) throw new BadRequestException(items.code);
+      works = items.items;
+    }
+    const data = { ...checked.value, ...(works ? { portfolio: works as unknown as object } : {}) };
+    await this.prisma.specialistProfile.upsert({ where: { userId }, create: { userId, ...data }, update: data });
     return this.mine(userId);
   }
 

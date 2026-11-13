@@ -43,7 +43,7 @@ export class CatalogController {
 
   @Put('me/specialist-profile')
   save(@Req() request: AuthenticatedRequest, @Body() raw: unknown) {
-    const input = body(raw, ['displayName', 'headline', 'about', 'stageKeys', 'hourlyRate', 'city', 'published']);
+    const input = body(raw, ['displayName', 'headline', 'about', 'stageKeys', 'hourlyRate', 'city', 'published', 'portfolio']);
     if (typeof input.displayName !== 'string') throw new BadRequestException('PROFILE_NAME_INVALID');
     if (typeof input.headline !== 'string') throw new BadRequestException('PROFILE_HEADLINE_INVALID');
     if (!Array.isArray(input.stageKeys) || input.stageKeys.length > 20 || input.stageKeys.some((key) => typeof key !== 'string')) throw new BadRequestException('PROFILE_STAGE_INVALID');
@@ -52,7 +52,7 @@ export class CatalogController {
     return this.catalog.saveMine(request.user.id, {
       displayName: input.displayName, headline: input.headline, about: optionalText(input.about, 'PROFILE_ABOUT_TOO_LONG'), stageKeys: input.stageKeys as string[],
       hourlyRate: (input.hourlyRate as number | null | undefined) ?? null, city: optionalText(input.city, 'PROFILE_CITY_INVALID'), published: input.published,
-    });
+    }, input.portfolio);
   }
 
   @Post('projects/:projectId/assignments/:assignmentId/review')

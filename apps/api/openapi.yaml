@@ -2323,7 +2323,7 @@ paths:
       parameters:
         - { name: stage, in: query, required: false, schema: { type: string }, description: Stage key with AI (400 PROFILE_STAGE_INVALID otherwise) }
       responses:
-        '200': { description: 'specialists[] (id, displayName, headline, city, hourlyRate, stages[{key,title}], rating, reviews, completedStages), stages[] for the filter' }
+        '200': { description: 'specialists[] (id, displayName, headline, city, hourlyRate, stages[{key,title}], rating, reviews, completedStages, works), stages[] for the filter' }
   /specialists/{profileId}:
     get:
       tags: [Specialists]
@@ -2335,7 +2335,7 @@ paths:
       parameters:
         - { name: profileId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
-        '200': { description: 'card fields plus reviewCount, about, own, published, reviews[] (latest 50) (id, rating, text, reply, repliedAt, createdAt, stageTitle, projectTypeTitle, canReply)' }
+        '200': { description: 'card fields plus reviewCount, about, own, published, portfolio[] (title, description, url, stageKey, stageTitle, host), reviews[] (latest 50) (id, rating, text, reply, repliedAt, createdAt, stageTitle, projectTypeTitle, canReply)' }
         '404': { description: PROFILE_NOT_FOUND }
   /me/specialist-profile:
     get:
@@ -2368,6 +2368,19 @@ paths:
                 hourlyRate: { type: [integer, 'null'], minimum: 1, maximum: 1000000, description: 'Whole tenge, shown as a guide; the rate of a job is set in the invitation' }
                 city: { type: [string, 'null'], maxLength: 80 }
                 published: { type: boolean }
+                portfolio:
+                  type: array
+                  maxItems: 12
+                  description: 'Examples of work in display order. Omit to keep the saved ones. url: http(s) only, no credentials, a host name (not an IP or localhost); BuildPath never opens it. Errors: PORTFOLIO_INVALID, PORTFOLIO_TOO_MANY, PORTFOLIO_TITLE_INVALID:<i>, PORTFOLIO_DESCRIPTION_TOO_LONG:<i>, PORTFOLIO_URL_INVALID:<i>, PORTFOLIO_URL_DUPLICATE:<i>, PORTFOLIO_STAGE_INVALID:<i>.'
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [title]
+                    properties:
+                      title: { type: string, minLength: 3, maxLength: 80 }
+                      description: { type: [string, 'null'], maxLength: 500 }
+                      url: { type: [string, 'null'], maxLength: 300 }
+                      stageKey: { type: [string, 'null'] }
       responses:
         '200': { description: Same as GET }
         '400': { description: 'PROFILE_NAME_INVALID, PROFILE_HEADLINE_INVALID, PROFILE_ABOUT_TOO_LONG, PROFILE_STAGE_INVALID, PROFILE_STAGES_REQUIRED, PROFILE_RATE_INVALID, PROFILE_CITY_INVALID' }
