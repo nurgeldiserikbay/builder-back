@@ -8,9 +8,11 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
 COPY . .
-# prisma.config.ts requires DATABASE_URL, but generate and the tests never connect: a placeholder is enough to build.
-ARG DATABASE_URL=postgresql://build:build@localhost:5432/build
-RUN npm run build && npm test
+# prisma.config.ts requires DATABASE_URL, but generate and the tests need no database: a placeholder is enough to build.
+# It is set inside RUN on purpose, not as ARG: hosts such as Render pass their environment as build arguments, and the
+# database tests would then run against the real database, before its migrations, and write test rows into it.
+RUN DATABASE_URL=postgresql://build:build@127.0.0.1:1/build npm run build \
+ && DATABASE_URL=postgresql://build:build@127.0.0.1:1/build npm test
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
