@@ -1,3 +1,4 @@
+import type { QualityReport } from '../quality/gate.js';
 // Typed artifact schemas, deterministic validation, locking/merge rules, templates and text import.
 import { tr } from '../i18n/i18n.js';
 import { PLACEHOLDER } from './placeholder.js';
@@ -43,6 +44,8 @@ export interface SiteArtifact {
   /** Multi-page sites: every page, «/» first; html is the home page. */
   pages?: Array<{ path: string; title: string; html: string }>;
   checks: Array<{ id: string; status: 'passed' | 'warning' | 'failed'; title: string; details: string; required: boolean }>;
+  /** Release gate of the pages as they will be published (builds from 13 November 2026 on). */
+  quality?: QualityReport;
   sourceVersionIds: Record<string, string>;
   compiledAt: string;
 }

@@ -3055,7 +3055,7 @@ paths:
       tags: [Journey]
       operationId: acceptStage
       summary: Accept the current version of a stage
-      description: Requires owner or manager, accepted inputs, a complete artifact and, for the build stage, no failed required checks on a build from the currently accepted versions. Refused with APPROVAL_POLICY_ACTIVE when the stage has an approval policy — then reviewers approve via /approve.
+      description: Requires owner or manager, accepted inputs, a complete artifact and, for the build stage, no failed required checks on a build from the currently accepted versions. For the build stage the quality report must have passed (422 QUALITY_GATE_FAILED; 409 BUILD_NOT_QUALITY_CHECKED for builds made before the gate). Refused with APPROVAL_POLICY_ACTIVE when the stage has an approval policy — then reviewers approve via /approve.
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -3107,7 +3107,7 @@ paths:
       tags: [Journey]
       operationId: buildProjectSite
       summary: Compile the site from accepted stages and run checks
-      description: Deterministic, script-free renderer; no AI and no code execution.
+      description: 'Deterministic, script-free renderer; no AI and no code execution. The response and the stored build carry quality — the release gate: the pages as they will be published are parsed and audited by fixed rules (security, accessibility, performance budgets, SEO; audit 1.0.0) and judged by the active default quality profile (or the built-in default). Fields: status passed|failed, summary, categories[] (counts by severity, status passed|warning|failed|off), findings[] (id, category, severity, title, details, pages, blocking), unmeasured[] (Core Web Vitals, live server headers, screen reader — never guessed), pages[] (htmlKb, imagesKb), profile, auditVersion. An automated check, not a certification.'
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -3357,7 +3357,7 @@ paths:
       tags: [Publishing]
       operationId: publishSite
       summary: Publish or update the site on a BuildPath subdomain
-      description: Requires owner or manager, an accepted build stage and confirm=true. Makes the site public at the returned URL and sets the project status to live.
+      description: Requires owner or manager, an accepted build stage whose quality report passed (QUALITY_GATE_FAILED; BUILD_NOT_QUALITY_CHECKED for builds made before the gate — build again) and confirm=true. Makes the site public at the returned URL and sets the project status to live. Putting back an earlier published build (/publication/rollback) is not gated again.
       x-implementation-status: implemented
       security:
         - sessionCookie: []
