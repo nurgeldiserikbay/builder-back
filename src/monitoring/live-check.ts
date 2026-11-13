@@ -6,19 +6,30 @@ export type LiveItem = { id: string; status: 'passed' | 'failed' | 'unknown'; de
 export type LiveCheck = { url: string; checkedAt: string; reachable: boolean; error: string | null; ms: number | null; items: LiveItem[] };
 
 const HALF_YEAR = 15_552_000;
+/** A certificate that ends sooner than this is reported, so there is time to renew it. */
+export const CERT_WARN_DAYS = 14;
+
+/** Items that turned bad since the previous check (a first check reports nothing: there is no «since»). */
+export function regressions(previous: LiveCheck | null, next: LiveCheck): string[] {
+  if (!previous) return [];
+  const was = new Map(previous.items.map((item) => [item.id, item.status]));
+  return next.items.filter((item) => item.status === 'failed' && was.get(item.id) === 'passed').map((item) => item.id);
+}
 
 /** Pure: judges the answers. `main` is the page, `plain` the same address over http (null when the site is http only). */
-export function judge(url: string, main: Answer | null, plain: Answer | { error: string } | null, robots: Answer | null): LiveItem[] {
+export function judge(url: string, main: Answer | null, plain: Answer | { error: string } | null, robots: Answer | null, now = new Date()): LiveItem[] {
   const https = url.startsWith('https://');
   const h = main?.headers ?? {};
   const csp = h['content-security-policy'] ?? '';
   const item = (id: string, ok: boolean | null, detail: string | null = null): LiveItem => ({ id, status: ok === null ? 'unknown' : ok ? 'passed' : 'failed', detail });
-  if (!main) return ['https', 'hsts', 'http_redirect', 'csp', 'frame', 'nosniff', 'referrer', 'permissions', 'robots'].map((id) => item(id, null));
+  if (!main) return ['https', 'certificate', 'hsts', 'http_redirect', 'csp', 'frame', 'nosniff', 'referrer', 'permissions', 'robots'].map((id) => item(id, null));
+  const daysLeft = main.certExpires ? Math.floor((Date.parse(main.certExpires) - now.getTime()) / 86_400_000) : null;
   const maxAge = Number(/max-age=(\d+)/i.exec(h['strict-transport-security'] ?? '')?.[1] ?? 0);
   let redirect: boolean | null = null;
   if (https && plain) redirect = 'status' in plain ? [301, 302, 307, 308].includes(plain.status) && (plain.headers.location ?? '').startsWith('https://') : false;
   return [
     item('https', https),
+    item('certificate', https ? (daysLeft === null ? null : daysLeft > CERT_WARN_DAYS) : false, daysLeft === null ? null : String(daysLeft)),
     item('hsts', https ? maxAge >= HALF_YEAR : false, maxAge ? String(maxAge) : null),
     item('http_redirect', https ? redirect : false),
     item('csp', /default-src/i.test(csp)),

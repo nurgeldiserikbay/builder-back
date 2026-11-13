@@ -2431,9 +2431,59 @@ paths:
                       description: { type: [string, 'null'], maxLength: 500 }
                       url: { type: [string, 'null'], maxLength: 300 }
                       stageKey: { type: [string, 'null'] }
+                      photoId: { type: [string, 'null'], format: uuid, description: 'One of the own portfolio photos (PORTFOLIO_PHOTO_INVALID:<i> otherwise)' }
       responses:
         '200': { description: Same as GET }
         '400': { description: 'PROFILE_NAME_INVALID, PROFILE_HEADLINE_INVALID, PROFILE_ABOUT_TOO_LONG, PROFILE_STAGE_INVALID, PROFILE_STAGES_REQUIRED, PROFILE_RATE_INVALID, PROFILE_CITY_INVALID' }
+  /me/specialist-profile/photos:
+    post:
+      tags: [Specialists]
+      operationId: uploadPortfolioPhoto
+      summary: Upload a photo for a portfolio work (JPEG, PNG or WebP)
+      description: The file is checked by its bytes, scanned for malware when scanning is on (fail-closed), re-encoded to WebP without metadata. Put it on a work with portfolio[].photoId; a save with a portfolio removes the own photos that no work shows. At most 24 kept at once.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201': { description: 'id, width, height' }
+        '400': { description: IMAGE_FILE_REQUIRED }
+        '409': { description: PORTFOLIO_PHOTO_LIMIT }
+        '422': { description: 'IMAGE_TOO_LARGE, IMAGE_TYPE_NOT_SUPPORTED, IMAGE_REJECTED_BY_SCAN, IMAGE_UNREADABLE' }
+        '503': { description: IMAGE_SCAN_UNAVAILABLE }
+  /me/specialist-profile/photos/{photoId}:
+    delete:
+      tags: [Specialists]
+      operationId: deletePortfolioPhoto
+      summary: Delete an own portfolio photo that no work shows
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: photoId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'deleted: true' }
+        '404': { description: PHOTO_NOT_FOUND }
+        '409': { description: PORTFOLIO_PHOTO_IN_USE }
+  /specialist-photos/{photoId}:
+    get:
+      tags: [Specialists]
+      operationId: getPortfolioPhoto
+      summary: A portfolio photo as WebP
+      description: To its author always; to others only while a work of a published card shows it. Served with nosniff and a restrictive CSP.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: photoId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: image/webp, content: { image/webp: { schema: { type: string, format: binary } } } }
+        '404': { description: PHOTO_NOT_FOUND }
   /projects/{projectId}/assignments/{assignmentId}/review:
     post:
       tags: [Specialists]
@@ -2549,12 +2599,47 @@ paths:
       responses:
         '200': { description: 'published, url, publishedAt, timeZone, days, views, previousViews, change (percent or null), daily[] (day, views), pages[] and sources[] (name, views; top 5 plus other), actions (leads, bookings, orders, perHundredViews)' }
         '404': { description: PROJECT_NOT_FOUND }
+  /projects/{projectId}/quality-profile:
+    get:
+      tags: [Publishing]
+      operationId: getProjectQualityProfile
+      summary: Quality profile chosen for this project, and the active profiles to choose from
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'chosen (key or null = the default profile), effective (the profile new checks use), options[] (active profiles), canChange' }
+        '404': { description: PROJECT_NOT_FOUND }
+    post:
+      tags: [Publishing]
+      operationId: setProjectQualityProfile
+      summary: Choose the quality profile for new checks of this project (owner or manager); null returns to the default
+      description: A profile without an active version is refused. Checks already made keep the profile version they used.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [key]
+              properties:
+                key: { type: [string, 'null'], maxLength: 80 }
+      responses:
+        '200': { description: Same as GET }
+        '403': { description: QUALITY_PROFILE_FORBIDDEN }
+        '404': { description: 'PROJECT_NOT_FOUND, QUALITY_PROFILE_NOT_FOUND' }
   /projects/{projectId}/monitoring/live-check:
     post:
       tags: [Publishing]
       operationId: checkPublishedAddress
-      summary: Check the published address now — HTTPS, HSTS, http→https redirect, CSP and frame-ancestors, nosniff, Referrer-Policy, Permissions-Policy, robots.txt
-      description: Owner or manager. The address is resolved and pinned to a public IP for an owner's domain (as the availability monitor does); redirects are not followed. At most once a minute per site; a repeat returns the last result. The result is part of GET /monitoring (liveCheck with items[id, status passed|failed|unknown, title, fix]).
+      summary: Check the published address now — HTTPS, HSTS, http→https redirect, CSP and frame-ancestors, nosniff, Referrer-Policy, Permissions-Policy, robots.txt, certificate validity
+      description: Owner or manager. The certificate item fails when it expires within 14 days. The API repeats the check once a day for every live site and tells the owner (Telegram and e-mail) when an item that passed now fails. The address is resolved and pinned to a public IP for an owner's domain (as the availability monitor does); redirects are not followed. At most once a minute per site; a repeat returns the last result. The result is part of GET /monitoring (liveCheck with items[id, status passed|failed|unknown, title, fix]).
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:

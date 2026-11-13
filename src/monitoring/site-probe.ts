@@ -59,7 +59,7 @@ export async function probeSite(url: string, trusted: boolean): Promise<Probe> {
   }
 }
 
-export type Answer = { status: number; headers: Record<string, string>; ms: number };
+export type Answer = { status: number; headers: Record<string, string>; ms: number; certExpires?: string | null };
 
 /** One GET with the same safety as probeSite, keeping the response headers (the body is dropped). */
 export async function fetchHeaders(url: string, trusted: boolean): Promise<Answer> {
@@ -73,7 +73,11 @@ export async function fetchHeaders(url: string, trusted: boolean): Promise<Answe
       response.resume();
       const headers: Record<string, string> = {};
       for (const [key, value] of Object.entries(response.headers)) if (value !== undefined) headers[key.toLowerCase()] = Array.isArray(value) ? value.join(', ') : String(value);
-      resolve({ status: response.statusCode ?? 0, headers, ms: Date.now() - started });
+      // For HTTPS, when the certificate stops being valid (the visitor's browser refuses the site after that).
+      const socket = response.socket as unknown as { getPeerCertificate?: () => { valid_to?: string } };
+      const validTo = typeof socket.getPeerCertificate === 'function' ? socket.getPeerCertificate()?.valid_to : undefined;
+      const certExpires = validTo && !Number.isNaN(Date.parse(validTo)) ? new Date(validTo).toISOString() : null;
+      resolve({ status: response.statusCode ?? 0, headers, ms: Date.now() - started, certExpires });
     });
     request.setTimeout(TIMEOUT_MS, () => request.destroy(new Error('PROBE_TIMEOUT')));
     request.once('error', reject);

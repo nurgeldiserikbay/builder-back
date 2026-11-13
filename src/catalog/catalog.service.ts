@@ -1,7 +1,9 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
+import { MAX_UPLOAD_BYTES, ImageRejectedError, detectImageType, processImage } from '../images/image-processing.js';
+import { scanRequired, scanWithClamAv } from '../security/clamav.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
-import { catalogScore, catalogStageKeys, checkModeration, checkPortfolio, checkProfile, checkReport, checkReview, ratingSummary, reviewState, type PortfolioItem, type ProfileInput } from './catalog-rules.js';
+import { MAX_PORTFOLIO, catalogScore, catalogStageKeys, checkModeration, checkPortfolio, checkProfile, checkReport, checkReview, ratingSummary, reviewState, type PortfolioItem, type ProfileInput } from './catalog-rules.js';
 import { tr } from '../i18n/i18n.js';
 import { notifyUser } from '../notifications/user-notifier.js';
 
@@ -94,13 +96,55 @@ export class CatalogService {
     if (!checked.ok) throw new BadRequestException(checked.code);
     let works: PortfolioItem[] | undefined;
     if (portfolio !== undefined) {
-      const items = checkPortfolio(portfolio);
+      const photos = await this.prisma.specialistPhoto.findMany({ where: { userId }, select: { id: true } });
+      const items = checkPortfolio(portfolio, new Set(photos.map((photo) => photo.id)));
       if (!items.ok) throw new BadRequestException(items.code);
       works = items.items;
     }
     const data = { ...checked.value, ...(works ? { portfolio: works as unknown as object } : {}) };
     await this.prisma.specialistProfile.upsert({ where: { userId }, create: { userId, ...data }, update: data });
+    // Photos no saved work shows any more (taken off a work, or uploaded and never saved) are removed with the save.
+    if (works) await this.prisma.specialistPhoto.deleteMany({ where: { userId, id: { notIn: works.flatMap((item) => (item.photoId ? [item.photoId] : [])) } } });
     return this.mine(userId);
+  }
+
+  /** Photos are uploaded first, then put on a work; scanned and re-encoded like project photos. Up to 24 kept between saves. */
+  async uploadPhoto(userId: string, file: { buffer: Buffer; size: number } | undefined) {
+    if (!file?.buffer?.length) throw new BadRequestException('IMAGE_FILE_REQUIRED');
+    if (file.size > MAX_UPLOAD_BYTES) throw new UnprocessableEntityException('IMAGE_TOO_LARGE');
+    if (!detectImageType(file.buffer)) throw new UnprocessableEntityException('IMAGE_TYPE_NOT_SUPPORTED');
+    if ((await this.prisma.specialistPhoto.count({ where: { userId } })) >= MAX_PORTFOLIO * 2) throw new ConflictException('PORTFOLIO_PHOTO_LIMIT');
+    if (scanRequired()) {
+      const scan = await scanWithClamAv(file.buffer);
+      if (scan === 'infected') throw new UnprocessableEntityException('IMAGE_REJECTED_BY_SCAN');
+      if (scan === 'unavailable') throw new ServiceUnavailableException('IMAGE_SCAN_UNAVAILABLE');
+    }
+    let processed;
+    try { processed = await processImage(file.buffer); } catch (error) { throw new UnprocessableEntityException(error instanceof ImageRejectedError ? error.code : 'IMAGE_UNREADABLE'); }
+    const photo = await this.prisma.specialistPhoto.create({ data: { userId, data: new Uint8Array(processed.data), width: processed.width, height: processed.height, sizeBytes: processed.data.length, sha256: processed.sha256 }, select: { id: true, width: true, height: true } });
+    return { data: photo };
+  }
+
+  /** A photo that no work uses any more can be deleted; one on a work must be taken off first. */
+  async deletePhoto(userId: string, photoId: string) {
+    if (!isUuid(photoId)) throw new NotFoundException('PHOTO_NOT_FOUND');
+    const profile = await this.prisma.specialistProfile.findUnique({ where: { userId }, select: { portfolio: true } });
+    if ((profile?.portfolio as unknown as PortfolioItem[] | undefined)?.some((item) => item.photoId === photoId)) throw new ConflictException('PORTFOLIO_PHOTO_IN_USE');
+    const deleted = await this.prisma.specialistPhoto.deleteMany({ where: { id: photoId, userId } });
+    if (!deleted.count) throw new NotFoundException('PHOTO_NOT_FOUND');
+    return { data: { deleted: true } };
+  }
+
+  /** A portfolio photo: to its author always, to others only when a work of a published profile shows it. */
+  async photo(userId: string, photoId: string) {
+    if (!isUuid(photoId)) throw new NotFoundException('PHOTO_NOT_FOUND');
+    const row = await this.prisma.specialistPhoto.findUnique({ where: { id: photoId }, select: { userId: true, data: true, sha256: true } });
+    if (!row) throw new NotFoundException('PHOTO_NOT_FOUND');
+    if (row.userId !== userId) {
+      const profile = await this.prisma.specialistProfile.findFirst({ where: { userId: row.userId, ...visible }, select: { portfolio: true } });
+      if (!(profile?.portfolio as unknown as PortfolioItem[] | undefined)?.some((item) => item.photoId === photoId)) throw new NotFoundException('PHOTO_NOT_FOUND');
+    }
+    return { data: Buffer.from(row.data), etag: row.sha256 };
   }
 
   /** E-mail of a published profile, for an invitation from the catalog. The address is not returned to the inviter. */

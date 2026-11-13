@@ -10,10 +10,10 @@ import { artifactSummary, errorText, helpText, statusEmoji } from './bot-texts.j
 
 const PENDING_TTL_MS = 15 * 60 * 1000;
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-type Pending = 'instruction' | 'changes_note' | 'suggestion' | 'comment' | 'reply';
-const PENDING_KINDS: Pending[] = ['instruction', 'changes_note', 'suggestion', 'comment', 'reply'];
+type Pending = 'instruction' | 'changes_note' | 'suggestion' | 'comment' | 'blocker' | 'reply';
+const PENDING_KINDS: Pending[] = ['instruction', 'changes_note', 'suggestion', 'comment', 'blocker', 'reply'];
 /** Remarks are typed: for a reply the bot keeps the remark id in pendingText, where a voice message would keep its text. */
-const TEXT_ONLY: Pending[] = ['comment', 'reply'];
+const TEXT_ONLY: Pending[] = ['comment', 'blocker', 'reply'];
 /** «voice:<kind>» — recognised text waits for «Выполнить»; «voice_consent:<kind>» — a voice file waits for consent. */
 type VoicePending = `voice:${Pending}` | `voice_consent:${Pending}`;
 export type VoiceMessage = { fileId: string; duration: number; size: number | null };
@@ -152,9 +152,9 @@ export class TelegramBotService {
       } else if (pending === 'changes_note') {
         await this.journey.requestChanges(userId, projectId, stageKey, trimmed);
         await this.send(ctx, tr("↩️ Этап возвращён на доработку с вашим комментарием."));
-      } else if (pending === 'comment' || pending === 'reply') {
-        await this.comments.add(userId, projectId, stageKey, { text: trimmed, targetKey: null, blocking: false, parentId: pending === 'reply' ? target : null });
-        await this.send(ctx, pending === 'reply' ? tr("💬 Ответ добавлен.") : tr("💬 Замечание добавлено. Участники этапа получат уведомление."));
+      } else if (pending === 'comment' || pending === 'blocker' || pending === 'reply') {
+        await this.comments.add(userId, projectId, stageKey, { text: trimmed, targetKey: null, blocking: pending === 'blocker', parentId: pending === 'reply' ? target : null });
+        await this.send(ctx, pending === 'reply' ? tr("💬 Ответ добавлен.") : pending === 'blocker' ? tr("⛔ Блокирующее замечание добавлено: этап нельзя принять, пока его не закроют.") : tr("💬 Замечание добавлено. Участники этапа получат уведомление."));
         return this.showComments(ctx, projectId, stageKey);
       } else {
         await this.journey.suggest(userId, projectId, stageKey, { text: trimmed, targetKey: null });
@@ -235,6 +235,10 @@ export class TelegramBotService {
         case 'CN':
           await this.setState(ctx, { pending: 'comment' });
           await this.send(ctx, tr("Напишите замечание к этапу одним сообщением. Блокирующее замечание и замечание к отдельной части можно оставить в приложении.\n\nОтменить — /cancel"));
+          return;
+        case 'CB':
+          await this.setState(ctx, { pending: 'blocker' });
+          await this.send(ctx, tr("Напишите блокирующее замечание: пока его не закроют, этап нельзя принять или одобрить.\n\nОтменить — /cancel"));
           return;
         case 'CR':
           if (!isUuid(arg)) return;
@@ -347,7 +351,7 @@ export class TelegramBotService {
       if (item.canResolve) row.push({ text: tr("✅ Закрыть {0}", [number]), callback_data: `CX:${item.id}` });
       if (row.length) keyboard.push(row);
     });
-    if (list.canWrite) keyboard.push([{ text: tr("➕ Новое замечание"), callback_data: 'CN' }]);
+    if (list.canWrite) keyboard.push([{ text: tr("➕ Новое замечание"), callback_data: 'CN' }, ...(list.canBlock ? [{ text: tr("⛔ Блокирующее"), callback_data: 'CB' }] : [])]);
     keyboard.push([{ text: tr("← Этап"), callback_data: `S:${stageKey}` }]);
     await this.send(ctx, lines.join('\n'), keyboard);
   }

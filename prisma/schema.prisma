@@ -208,6 +208,7 @@ model User {
   gitAccounts        GitAccount[]
   oauthStates        OAuthState[]
   payoutDetails      PayoutDetails?
+  specialistPhotos  SpecialistPhoto[]
 }
 
 model UserSession {
@@ -320,6 +321,8 @@ model Project {
   projectType      String?          @map("project_type") @db.VarChar(40)
   routeVersion     String?          @map("route_version") @db.VarChar(20)
   startStageKey    String?          @map("start_stage_key") @db.VarChar(40)
+  /// Quality profile chosen for this project (its active version judges builds and site checks); null = the default profile.
+  qualityProfileKey String?         @map("quality_profile_key") @db.VarChar(80)
   stages           ProjectStage[]
   stageVersions    StageArtifactVersion[]
   stageInstructions StageInstruction[]
@@ -1628,6 +1631,22 @@ model SpecialistProfile {
 
   @@index([published], map: "specialist_profiles_published_idx")
   @@map("specialist_profiles")
+}
+
+/// A photo for a portfolio work: scanned, re-encoded to WebP without metadata. Shown only through a work that uses it.
+model SpecialistPhoto {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  data       Bytes
+  width      Int
+  height     Int
+  sizeBytes  Int      @map("size_bytes")
+  sha256     String   @db.VarChar(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt], map: "specialist_photos_user_created_idx")
+  @@map("specialist_photos")
 }
 
 /// Owner's review of a specialist after the stage was accepted; one per assignment.

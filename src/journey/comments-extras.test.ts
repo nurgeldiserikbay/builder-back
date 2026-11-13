@@ -110,6 +110,15 @@ describe('remarks: files, mentions and the bot (database)', async () => {
       await bot.onCallback(owner.id, ochat, 'q8', `CX:${rows[2]!.id}`);
       await settle();
       assert.ok((await prisma!.stageComment.findUniqueOrThrow({ where: { id: rows[2]!.id } })).resolvedAt);
+      // The owner may leave a blocking remark from the bot; the writer is not offered it.
+      assert.ok(!sent.filter((item) => item.chat === wchat).some((item) => item.buttons.includes('CB')));
+      await bot.onCallback(owner.id, ochat, 'q10', 'C');
+      await settle();
+      assert.ok(sent.at(-1)!.buttons.includes('CB'));
+      await bot.onCallback(owner.id, ochat, 'q11', 'CB');
+      await bot.onMessage(owner.id, ochat, 'Нет телефона в контактах', 'text');
+      await settle();
+      assert.equal((await prisma!.stageComment.findFirstOrThrow({ where: { projectId: project.id, text: 'Нет телефона в контактах' } })).blocking, true);
       // A voice message is not taken for a remark.
       await bot.onCallback(writer.id, wchat, 'q9', 'CN');
       await bot.onMessage(writer.id, wchat, null, 'voice', { fileId: 'f', duration: 3, size: 100 });
