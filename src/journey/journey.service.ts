@@ -19,6 +19,7 @@ import { ChangeNoticesService } from './change-notices.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { APPROVER_ROLES, approvalState, approveBlocker, checkPolicy, policyText, readPolicy, type ApprovalPolicy } from '../team/team-rules.js';
 import { qualityReport } from '../quality/quality.js';
+import { BrowserChecksService } from '../quality/browser-checks.js';
 import { CommentsService } from './comments.service.js';
 import { buildHandoff as buildHandoffPackage, renderPrototype, type AppFeatures, type AppScreens, type HandoffArtifact } from './webapp.js';
 import type { BusinessProcess } from './process.js';
@@ -385,6 +386,8 @@ export class JourneyService {
     };
     const version = await this.prisma.$transaction(async (tx) => {
       const created = await this.core.createVersion(tx, { projectId, stage, artifactType: 'site', content: site, origin: 'compiled', note: 'Сборка из принятых этапов', userId });
+      // Checked in a real browser in the background; the result is advisory and does not hold the build.
+      await BrowserChecksService.queue(tx, projectId, created.id, userId);
       await this.core.event(tx, projectId, userId, 'site_built', 'build', {
         versionNumber: created.versionNumber, failed: site.checks.filter((check) => check.status === 'failed').map((check) => check.id),
         quality: { status: quality.status, profile: quality.profile, auditVersion: quality.auditVersion, blocking: quality.findings.filter((finding) => finding.blocking).map((finding) => finding.id) },

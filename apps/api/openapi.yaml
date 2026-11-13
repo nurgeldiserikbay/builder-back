@@ -3316,6 +3316,38 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/build/browser-check:
+    get:
+      tags: [Journey]
+      operationId: getBrowserCheck
+      summary: Check of a build in a real browser (Lighthouse), for the current build or a given version
+      description: |
+        Every build queues a check. The worker serves the build from memory on 127.0.0.1 with the published headers and runs
+        Lighthouse in Chromium (simulated mid-range phone); the browser cannot reach any other host. Up to 7 pages. Scores per
+        category, lab metrics (FCP, LCP, CLS, TBT, Speed Index) and failing audits. Advisory: it never blocks acceptance or
+        publishing. Status unavailable means this server has no browser (BROWSER_NOT_CONFIGURED), not that the site failed.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: versionId, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'check (id, versionId, status queued|running|succeeded|failed|unavailable, statusLabel, error, result with tool, formFactor, throttling, measuredAt, pages[path, scores, metrics, issues[], error], categories[], note) or null; canRerun' }
+        '404': { description: 'PROJECT_NOT_FOUND, VERSION_NOT_FOUND' }
+    post:
+      tags: [Journey]
+      operationId: rerunBrowserCheck
+      summary: Check the build again (also for builds made before checks existed); at most 5 runs per build
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: versionId, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '202': { description: Same as GET }
+        '403': { description: 'STAGE_WRITE_FORBIDDEN, BROWSER_CHECK_LIMIT' }
+        '404': { description: VERSION_NOT_FOUND }
+        '409': { description: BROWSER_CHECK_RUNNING }
   /projects/{projectId}/stages/{stageKey}/files:
     get:
       tags: [Analysis]
