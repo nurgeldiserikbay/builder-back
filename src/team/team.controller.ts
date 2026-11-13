@@ -27,8 +27,8 @@ export class TeamController {
 
   @Post('projects/:projectId/team/invitations')
   invite(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
-    const input = body(raw, ['email', 'role']);
-    return this.team.invite(request.user.id, projectId, { email: str(input.email, 'EMAIL_INVALID'), role: str(input.role, 'ROLE_INVALID') });
+    const input = body(raw, ['email', 'role', 'stageKeys']);
+    return this.team.invite(request.user.id, projectId, { email: str(input.email, 'EMAIL_INVALID'), role: str(input.role, 'ROLE_INVALID'), stageKeys: input.stageKeys });
   }
 
   @Post('projects/:projectId/team/invitations/:invitationId/revoke')
@@ -42,6 +42,13 @@ export class TeamController {
   role(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('memberId') memberId: string, @Body() raw: unknown) {
     const input = body(raw, ['role']);
     return this.team.changeRole(request.user.id, projectId, memberId, str(input.role, 'ROLE_INVALID'));
+  }
+
+  @Post('projects/:projectId/team/members/:memberId/stages')
+  @HttpCode(200)
+  stages(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('memberId') memberId: string, @Body() raw: unknown) {
+    const input = body(raw, ['stageKeys']);
+    return this.team.setStages(request.user.id, projectId, memberId, input.stageKeys);
   }
 
   @Post('projects/:projectId/team/members/:memberId/remove')

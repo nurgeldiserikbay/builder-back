@@ -355,6 +355,8 @@ model ProjectMember {
   projectId   String           @map("project_id") @db.Uuid
   userId      String           @map("user_id") @db.Uuid
   role        ProjectRole
+  /// Contributor: the stages they may work on; empty — every stage.
+  stageKeys   String[]         @default([]) @map("stage_keys") @db.VarChar(40)
   status      MembershipStatus @default(active)
   createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -842,6 +844,7 @@ model ProjectStage {
   incomingChanges   ChangeNotice[]         @relation("ChangeNoticeTarget")
   outgoingChanges   ChangeNotice[]         @relation("ChangeNoticeSource")
   approvals         StageApproval[]
+  comments          StageComment[]
   /// Who must approve a version before the stage is accepted; null — the owner or a manager accepts alone.
   approvalPolicy    Json?              @map("approval_policy")
   /// Bumped whenever the policy changes or changes are requested: earlier approvals stop counting.
@@ -1678,6 +1681,8 @@ model ProjectInvitation {
   projectId       String      @map("project_id") @db.Uuid
   email           String      @db.VarChar(254)
   role            ProjectRole
+  /// Contributor stages given with the invitation; empty — every stage.
+  stageKeys       String[]    @default([]) @map("stage_keys") @db.VarChar(40)
   tokenHash       String      @unique @map("token_hash") @db.Char(64)
   expiresAt       DateTime    @map("expires_at") @db.Timestamptz(3)
   acceptedAt      DateTime?   @map("accepted_at") @db.Timestamptz(3)
@@ -1708,4 +1713,25 @@ model StageApproval {
   @@unique([stageId, versionId, round, userId], map: "stage_approvals_once_key")
   @@index([projectId, createdAt(sort: Desc)], map: "stage_approvals_project_created_idx")
   @@map("stage_approvals")
+}
+
+/// A remark on a stage, on its whole result or one part (targetKey), optionally pinned to a version. Blocking remarks
+/// stop the stage from being accepted or approved until resolved. Resolving never deletes: the history stays.
+model StageComment {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId        String        @map("project_id") @db.Uuid
+  stageId          String        @map("stage_id") @db.Uuid
+  parentId         String?       @map("parent_id") @db.Uuid
+  versionNumber    Int?          @map("version_number")
+  targetKey        String?       @map("target_key") @db.VarChar(60)
+  authorUserId     String        @map("author_user_id") @db.Uuid
+  text             String        @db.VarChar(2000)
+  blocking         Boolean       @default(false)
+  resolvedAt       DateTime?     @map("resolved_at") @db.Timestamptz(3)
+  resolvedByUserId String?       @map("resolved_by_user_id") @db.Uuid
+  createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  stage            ProjectStage  @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([stageId, createdAt], map: "stage_comments_stage_created_idx")
+  @@map("stage_comments")
 }

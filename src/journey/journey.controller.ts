@@ -1,3 +1,4 @@
+import { CommentsService } from './comments.service.js';
 import { BadRequestException, Body, Controller, Get, HttpCode, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
@@ -50,7 +51,26 @@ function uuid(value: string, code: string): string {
 @Controller()
 @UseGuards(AuthGuard)
 export class JourneyController {
-  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService) {}
+  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService) {}
+
+  @Get('projects/:projectId/stages/:stageKey/comments')
+  listComments(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
+    return this.comments.list(request.user.id, projectId, stageKey(key));
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/comments')
+  addComment(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw, ['text', 'targetKey', 'blocking', 'parentId']);
+    if (input.blocking !== undefined && typeof input.blocking !== 'boolean') throw new BadRequestException('INVALID_BLOCKING');
+    return this.comments.add(request.user.id, projectId, stageKey(key), { text: text(input.text, 'text', 2, 2000)!, targetKey: text(input.targetKey, 'targetKey', 1, 60, true), blocking: input.blocking === true, parentId: text(input.parentId, 'parentId', 36, 36, true) });
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/comments/:commentId/:action')
+  @HttpCode(200)
+  resolveComment(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Param('commentId') commentId: string, @Param('action') action: string) {
+    if (action !== 'resolve' && action !== 'reopen') throw new BadRequestException('INVALID_ACTION');
+    return this.comments.resolve(request.user.id, projectId, stageKey(key), commentId, action === 'resolve');
+  }
 
   @Post('projects/:projectId/stages/:stageKey/activity')
   @HttpCode(200)
@@ -279,8 +299,8 @@ export class JourneyController {
   approvalPolicy(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
     const input = body(raw, ['policy']);
     if (input.policy !== null && (typeof input.policy !== 'object' || Array.isArray(input.policy))) throw new BadRequestException('INVALID_POLICY');
-    const policy = input.policy === null ? null : body(input.policy, ['mode', 'reviewers', 'quorum', 'authorMayApprove']);
-    return this.journey.setApprovalPolicy(request.user.id, projectId, stageKey(key), policy ? { mode: policy.mode, reviewers: policy.reviewers, quorum: policy.quorum ?? null, authorMayApprove: policy.authorMayApprove ?? false } : null);
+    const policy = input.policy === null ? null : body(input.policy, ['mode', 'reviewers', 'quorum', 'authorMayApprove', 'order']);
+    return this.journey.setApprovalPolicy(request.user.id, projectId, stageKey(key), policy ? { mode: policy.mode, reviewers: policy.reviewers, quorum: policy.quorum ?? null, authorMayApprove: policy.authorMayApprove ?? false, order: policy.order ?? 'parallel' } : null);
   }
 
   @Post('projects/:projectId/stages/:stageKey/reopen')

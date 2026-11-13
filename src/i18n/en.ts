@@ -1789,4 +1789,11 @@ export const en: Record<string, string> = {
   "Роли: {0}": "Roles: {0}",
   "Обязательные функции: {0}": "Required functions: {0}",
   "Экраны: {0}": "Screens: {0}",
+  "По очереди, в этом порядке.": "In turn, in this order.",
+  "В проекте «{0}» вы теперь работаете на этапах: {1}.": "In «{0}» you now work on the stages: {1}.",
+  "В проекте «{0}» вы теперь можете работать на всех этапах.": "In «{0}» you can now work on every stage.",
+  "Блокирующее замечание к этапу «{0}» в проекте «{1}»: {2} {3}": "Blocking remark on the «{0}» stage in «{1}»: {2} {3}",
+  "Новое замечание к этапу «{0}» в проекте «{1}»: {2} {3}": "New remark on the «{0}» stage in «{1}»: {2} {3}",
+  "Есть открытые блокирующие замечания — их нужно закрыть до приёмки.": "There are open blocking remarks — close them before acceptance.",
+  "Сейчас очередь другого проверяющего.": "It is another reviewer's turn now.",
 };
