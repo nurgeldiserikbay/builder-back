@@ -4,6 +4,7 @@ import { AuthGuard } from '../auth/auth.guard.js';
 import { PublishingService } from './publishing.service.js';
 import { TelegramLinkService } from './telegram-link.service.js';
 import { MastersService } from './masters.service.js';
+import { QuickEditService } from './quick-edit.service.js';
 
 function body(value: unknown, fields: string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('INVALID_REQUEST_BODY');
@@ -206,5 +207,43 @@ export class MastersController {
     const input = body(raw, ['status']);
     if (input.status !== 'done' && input.status !== 'no_show') throw new BadRequestException('INVALID_STATUS');
     return this.masters.markVisit(request.user.id, bookingId, input.status);
+  }
+}
+
+/** «Изменить сайт»: a small change to a live site; nothing reaches the site before the owner confirms. */
+@Controller('projects/:projectId/quick-edit')
+@UseGuards(AuthGuard)
+export class QuickEditController {
+  constructor(private readonly quickEdit: QuickEditService) {}
+
+  @Get()
+  status(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.quickEdit.status(request.user.id, projectId);
+  }
+
+  @Post()
+  @HttpCode(200)
+  start(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw, ['request', 'target', 'allowLocked']);
+    return this.quickEdit.start(request.user.id, projectId, { request: input.request, target: input.target ?? null, allowLocked: input.allowLocked === true });
+  }
+
+  /** New phone, messenger, e-mail or address — no AI; the site is updated in the same call. */
+  @Post('contacts')
+  @HttpCode(200)
+  contacts(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    return this.quickEdit.contacts(request.user.id, projectId, raw);
+  }
+
+  @Post('confirm')
+  @HttpCode(200)
+  confirm(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    return this.quickEdit.confirm(request.user.id, projectId, body(raw, ['versionId']).versionId);
+  }
+
+  @Post('cancel')
+  @HttpCode(200)
+  cancel(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.quickEdit.cancel(request.user.id, projectId);
   }
 }

@@ -2516,6 +2516,102 @@ paths:
       responses:
         '201': { description: Same body as GET }
         '404': { description: PROJECT_NOT_FOUND }
+  /projects/{projectId}/quick-edit:
+    get:
+      tags: [Publishing]
+      operationId: getQuickEdit
+      summary: «Изменить сайт» — whether a quick change of the live site is possible now, the draft waiting for confirmation, current contacts and hand-edited parts
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'available, reason (QUICK_EDIT_FORBIDDEN, QUICK_EDIT_NOT_LIVE, QUICK_EDIT_BUILD_IN_WORK) or null, targets[] (content, design), pending (stageKey, stageTitle, versionId, versionNumber, request, createdAt, changes[]) or null, aiConfigured, contacts (phone, messenger, email, address) or null, locked (hand-edited parts per stage)' }
+    post:
+      tags: [Publishing]
+      operationId: startQuickEdit
+      summary: Ask the AI for a change of texts or look; nothing reaches the live site yet (owner or manager)
+      description: 'Only stages whose sole dependent is the build (texts, look). The stage is reopened and the ordinary stage AI makes a draft (AI limits, balance and the spending cap apply). If the AI changed nothing the stage goes back to its accepted version and the answer says why: QUICK_EDIT_LOCKED with the hand-edited parts (send allowLocked: true to let the AI change them — their protection is lifted), or QUICK_EDIT_NO_CHANGES.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [request]
+              properties:
+                request: { type: string, minLength: 5, maxLength: 1000 }
+                target: { type: [string, 'null'], enum: [content, design, null], description: 'Chosen from the request when null: look words go to design, the rest to texts' }
+                allowLocked: { type: boolean, default: false }
+      responses:
+        '200': { description: Same body as GET }
+        '400': { description: 'QUICK_EDIT_REQUEST_INVALID, QUICK_EDIT_TARGET_INVALID' }
+        '403': { description: QUICK_EDIT_FORBIDDEN }
+        '409': { description: 'QUICK_EDIT_NOT_LIVE, QUICK_EDIT_BUILD_IN_WORK, QUICK_EDIT_PENDING, QUICK_EDIT_STAGE_IN_WORK, QUICK_EDIT_STAGE_HAS_LEAD, AI_NOT_CONFIGURED' }
+        '422': { description: 'QUICK_EDIT_LOCKED (with locked[]), QUICK_EDIT_NO_CHANGES' }
+  /projects/{projectId}/quick-edit/confirm:
+    post:
+      tags: [Publishing]
+      operationId: confirmQuickEdit
+      summary: Accept the draft, rebuild, check and update the live site
+      description: Chains accept → change notice to the build accepted → build → required checks → accept build → update publication. If a required check fails, the stage stays accepted, the live site keeps the old version and the answer is QUICK_EDIT_CHECKS_FAILED.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [versionId], properties: { versionId: { type: string, format: uuid } } }
+      responses:
+        '200': { description: 'Same body as GET plus published (buildVersion, changes)' }
+        '409': { description: QUICK_EDIT_NOTHING_PENDING }
+        '422': { description: 'QUICK_EDIT_NO_CHANGES, QUICK_EDIT_CHECKS_FAILED, REQUIRED_CHECKS_FAILED' }
+  /projects/{projectId}/quick-edit/cancel:
+    post:
+      tags: [Publishing]
+      operationId: cancelQuickEdit
+      summary: Drop the draft; the stage returns to its accepted version (the draft stays in the version history)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: Same body as GET }
+        '409': { description: QUICK_EDIT_NOTHING_PENDING }
+  /projects/{projectId}/quick-edit/contacts:
+    post:
+      tags: [Publishing]
+      operationId: quickEditContacts
+      summary: New phone, messenger, e-mail or address — no AI; the live site is updated in the same call
+      description: Contacts live on «Цель». The stage is accepted with the new contacts; the stages built on it are answered «no change» (contacts do not change what they decided); the site is rebuilt, checked and updated. Empty or null removes a contact.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                phone: { type: [string, 'null'], maxLength: 30 }
+                messenger: { type: [string, 'null'], maxLength: 60 }
+                email: { type: [string, 'null'], maxLength: 120 }
+                address: { type: [string, 'null'], maxLength: 160 }
+      responses:
+        '200': { description: 'Same body as GET plus published (buildVersion, contacts[] with field, before, after)' }
+        '400': { description: 'QUICK_EDIT_CONTACT_INVALID:<field>, UNKNOWN_FIELD' }
+        '409': { description: 'QUICK_EDIT_NOT_LIVE, QUICK_EDIT_BUILD_IN_WORK, QUICK_EDIT_PENDING, QUICK_EDIT_STAGE_IN_WORK, QUICK_EDIT_STAGE_HAS_LEAD' }
+        '422': { description: 'QUICK_EDIT_NO_CHANGES, QUICK_EDIT_CHECKS_FAILED' }
   /admin/ai-pricing:
     get:
       tags: [Budget]
