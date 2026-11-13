@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Header, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { MonitoringService } from './monitoring.service.js';
@@ -21,5 +21,12 @@ export class MonitoringController {
     const input = raw as Record<string, unknown>;
     if (Object.keys(input).some((key) => key !== 'weeklyReport') || typeof input.weeklyReport !== 'boolean') throw new BadRequestException('INVALID_REQUEST_BODY');
     return this.monitoring.setWeeklyReport(request.user.id, projectId, input.weeklyReport);
+  }
+
+  /** Checks the published address now: HTTPS, protective headers, http→https, robots.txt. Owner or manager. */
+  @Post('live-check')
+  @HttpCode(200)
+  liveCheck(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.monitoring.runLiveCheck(request.user.id, projectId);
   }
 }

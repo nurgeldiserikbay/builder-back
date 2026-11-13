@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, NotFoundException, type OnApplicationBootstrap, type OnApplicationShutdown } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { tr } from '../i18n/i18n.js';
 import { notifyUser } from '../notifications/user-notifier.js';
@@ -7,6 +7,7 @@ import { dayIn } from '../sites/visit-counter.js';
 import { change } from '../insights/insights-rules.js';
 import { CHECK_INTERVAL_MS, duration, nextState, weeklyReportDue, type MonitorStatus, type Probe } from './monitor-rules.js';
 import { probeSite } from './site-probe.js';
+import { liveCheck, type LiveCheck } from './live-check.js';
 
 /** Only one API instance checks sites at a time. */
 const LOCK_KEY = 7_316_005;
@@ -31,6 +32,7 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
   private timer: NodeJS.Timeout | null = null;
   /** Replaced in tests. */
   probe: (url: string, trusted: boolean) => Promise<Probe> = probeSite;
+  inspect: (url: string, trusted: boolean) => Promise<LiveCheck> = liveCheck;
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -155,7 +157,7 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
     if (!isUuid(projectId)) throw new NotFoundException('PROJECT_NOT_FOUND');
     const member = await this.prisma.projectMember.findFirst({ where: { projectId, userId, status: 'active' }, select: { role: true } });
     if (!member) throw new NotFoundException('PROJECT_NOT_FOUND');
-    const site = await this.prisma.sitePublication.findUnique({ where: { projectId }, select: { id: true, status: true, monitorStatus: true, monitorCheckedAt: true, monitorDownSince: true, monitorLastMs: true, monitorLastError: true, weeklyReport: true } });
+    const site = await this.prisma.sitePublication.findUnique({ where: { projectId }, select: { id: true, status: true, monitorStatus: true, monitorCheckedAt: true, monitorDownSince: true, monitorLastMs: true, monitorLastError: true, weeklyReport: true, liveCheck: true } });
     if (!site || site.status !== 'live') return { data: null };
     const since = new Date(Date.now() - 30 * 86_400_000);
     const incidents = await this.prisma.siteIncident.findMany({ where: { publicationId: site.id, OR: [{ endedAt: null }, { endedAt: { gte: since } }] }, orderBy: { startedAt: 'desc' }, take: 20, select: { startedAt: true, endedAt: true, cause: true } });
@@ -163,8 +165,24 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
       data: {
         status: site.monitorStatus, checkedAt: site.monitorCheckedAt, downSince: site.monitorDownSince, lastMs: site.monitorLastMs, lastError: site.monitorLastError,
         incidents, weeklyReport: site.weeklyReport, canChange: member.role === 'owner' || member.role === 'manager', today: dayIn(zone()),
+        liveCheck: liveCheckView(site.liveCheck as LiveCheck | null),
       },
     };
+  }
+
+  /** Checks the published address now (owner or manager); at most once a minute per site — a repeat returns the last result. */
+  async runLiveCheck(userId: string, projectId: string) {
+    if (!isUuid(projectId)) throw new NotFoundException('PROJECT_NOT_FOUND');
+    const member = await this.prisma.projectMember.findFirst({ where: { projectId, userId, status: 'active', role: { in: ['owner', 'manager'] } }, select: { id: true } });
+    if (!member) throw new NotFoundException('PROJECT_NOT_FOUND');
+    const site = await this.prisma.sitePublication.findUnique({ where: { projectId }, select: { id: true, status: true, slug: true, customDomain: true, domainStatus: true, liveCheckedAt: true } });
+    if (!site || site.status !== 'live') throw new ConflictException('SITE_NOT_LIVE');
+    if (!site.liveCheckedAt || Date.now() - site.liveCheckedAt.getTime() > 60_000) {
+      const { url, trusted } = this.urlOf(site);
+      const result = await this.inspect(url, trusted);
+      await this.prisma.sitePublication.updateMany({ where: { id: site.id }, data: { liveCheck: result as never, liveCheckedAt: new Date() } });
+    }
+    return this.status(userId, projectId);
   }
 
   async setWeeklyReport(userId: string, projectId: string, enabled: boolean) {
@@ -185,4 +203,24 @@ function causeText(cause: string | null): string {
     case 'NOT_PUBLIC': return tr('домен указывает не на BuildPath');
     default: return cause?.startsWith('HTTP_') ? tr('ответ с ошибкой {0}', [cause.slice(5)]) : tr('ошибка соединения');
   }
+}
+
+const liveTexts: Record<string, { title: string; fix: string }> = {
+  https: { title: 'Сайт открывается по HTTPS', fix: 'Без HTTPS браузер помечает сайт как небезопасный. Для своего домена дождитесь выпуска сертификата или проверьте DNS.' },
+  hsts: { title: 'Браузеру велено всегда открывать сайт по HTTPS (HSTS)', fix: 'Заголовок Strict-Transport-Security ставит сервер сайтов при HTTPS; если его нет — сообщите в поддержку.' },
+  http_redirect: { title: 'Адрес с http:// переводит на https://', fix: 'Иначе часть посетителей останется на незащищённой версии.' },
+  csp: { title: 'Политика безопасности содержимого (CSP)', fix: 'Запрещает странице загружать чужие скрипты.' },
+  frame: { title: 'Сайт нельзя встроить в чужую страницу', fix: 'Защищает от подмены страницы внутри чужого сайта.' },
+  nosniff: { title: 'Браузер не угадывает тип файлов', fix: 'Заголовок X-Content-Type-Options: nosniff.' },
+  referrer: { title: 'Политика передачи адреса страницы (Referrer-Policy)', fix: 'Не даёт отправлять чужим сайтам полный адрес страницы.' },
+  permissions: { title: 'Ограничены камера, микрофон и геолокация', fix: 'Заголовок Permissions-Policy.' },
+  robots: { title: 'Файл robots.txt отвечает', fix: 'Поисковики читают из него карту сайта.' },
+};
+
+function liveCheckView(check: LiveCheck | null) {
+  if (!check) return null;
+  return {
+    url: check.url, checkedAt: check.checkedAt, reachable: check.reachable, error: check.error ? causeText(check.error) : null, ms: check.ms,
+    items: check.items.map((item) => ({ ...item, title: tr(liveTexts[item.id]?.title ?? item.id), fix: item.status === 'failed' ? tr(liveTexts[item.id]?.fix ?? '') : null })),
+  };
 }

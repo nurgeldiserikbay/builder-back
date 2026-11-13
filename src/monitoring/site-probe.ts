@@ -58,3 +58,25 @@ export async function probeSite(url: string, trusted: boolean): Promise<Probe> {
     return { ok: false, status: null, ms: Date.now() - started, error: causeOf(error) };
   }
 }
+
+export type Answer = { status: number; headers: Record<string, string>; ms: number };
+
+/** One GET with the same safety as probeSite, keeping the response headers (the body is dropped). */
+export async function fetchHeaders(url: string, trusted: boolean): Promise<Answer> {
+  const started = Date.now();
+  let lookup: LookupFunction | undefined;
+  if (!trusted) lookup = pinnedLookup((await resolveAndValidateReviewTarget(url)).resolvedAddresses[0]!);
+  const parsed = new URL(url);
+  return new Promise<Answer>((resolve, reject) => {
+    const send = parsed.protocol === 'https:' ? httpsRequest : httpRequest;
+    const request = send(parsed, { method: 'GET', headers: { 'user-agent': 'BuildPathCheck/1.0 (+site check)', accept: 'text/html', 'accept-encoding': 'identity' }, ...(lookup ? { lookup } : {}) }, (response) => {
+      response.resume();
+      const headers: Record<string, string> = {};
+      for (const [key, value] of Object.entries(response.headers)) if (value !== undefined) headers[key.toLowerCase()] = Array.isArray(value) ? value.join(', ') : String(value);
+      resolve({ status: response.statusCode ?? 0, headers, ms: Date.now() - started });
+    });
+    request.setTimeout(TIMEOUT_MS, () => request.destroy(new Error('PROBE_TIMEOUT')));
+    request.once('error', reject);
+    request.end();
+  });
+}

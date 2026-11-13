@@ -976,6 +976,9 @@ model SitePublication {
   monitorAlertedAt  DateTime?             @map("monitor_alerted_at") @db.Timestamptz(3)
   monitorLastMs     Int?                  @map("monitor_last_ms")
   monitorLastError  String?               @map("monitor_last_error") @db.VarChar(40)
+  /// Last check of the published address: HTTPS, protective headers, http→https, robots.txt (on request).
+  liveCheck        Json?     @map("live_check")
+  liveCheckedAt    DateTime? @map("live_checked_at") @db.Timestamptz(3)
   /// Monday e-mail with the week's visits, actions and outages; the week it was last sent for (YYYY-MM-DD of Monday).
   weeklyReport      Boolean               @default(true) @map("weekly_report")
   weeklyReportWeek  String?               @map("weekly_report_week") @db.VarChar(10)
@@ -1592,6 +1595,12 @@ model DisputeMessage {
   authorUserId String?  @map("author_user_id") @db.Uuid
   staffId      String?  @map("staff_id") @db.Uuid
   text         String   @db.VarChar(2000)
+  /// A screenshot (re-encoded to WebP without metadata) or a PDF attached to the message; scanned before it is stored.
+  fileName     String?  @map("file_name") @db.VarChar(200)
+  fileMime     String?  @map("file_mime") @db.VarChar(40)
+  fileBytes    Int?     @map("file_bytes")
+  fileSha256   String?  @map("file_sha256") @db.VarChar(64)
+  fileData     Bytes?   @map("file_data")
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   dispute      Dispute  @relation(fields: [disputeId], references: [id], onDelete: Cascade)
 

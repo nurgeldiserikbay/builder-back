@@ -1,4 +1,12 @@
-import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { attachment } from '../analysis/analysis.controller.js';
+
+type Download = { set(headers: Record<string, string>): unknown; send(body: Buffer): unknown };
+const sendFile = (response: Download, file: { name: string; mime: string; data: Buffer; etag: string }) => {
+  response.set({ 'Content-Type': file.mime, 'Content-Disposition': attachment(file.name), 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox", 'Cache-Control': 'private, no-store', ETag: `"${file.etag}"` });
+  response.send(file.data);
+};
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { StaffAuthGuard, type StaffRequest } from '../admin/staff-auth.guard.js';
@@ -36,6 +44,19 @@ export class DisputesController {
     return this.disputes.message(request.user.id, disputeId, body(raw, ['text']).text);
   }
 
+  /** Multipart: file (screenshot JPG/PNG/WebP or PDF, up to 5 MB) and an optional text. */
+  @Post('disputes/:disputeId/attachments')
+  @HttpCode(200)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 1, fieldSize: 4000 } }))
+  attach(@Req() request: AuthenticatedRequest, @Param('disputeId') disputeId: string, @UploadedFile() file: { buffer: Buffer; size: number; originalname?: string } | undefined, @Body() raw: Record<string, unknown> | undefined) {
+    return this.disputes.attach(request.user.id, disputeId, file, raw?.text);
+  }
+
+  @Get('disputes/:disputeId/files/:messageId')
+  async file(@Req() request: AuthenticatedRequest, @Param('disputeId') disputeId: string, @Param('messageId') messageId: string, @Res() response: Download) {
+    sendFile(response, await this.disputes.file(request.user.id, disputeId, messageId));
+  }
+
   @Post('disputes/:disputeId/withdraw')
   @HttpCode(200)
   withdraw(@Req() request: AuthenticatedRequest, @Param('disputeId') disputeId: string) {
@@ -66,6 +87,12 @@ export class AdminDisputesController {
   @StaffRoles('super_admin', 'operations_auditor')
   detail(@Param('disputeId') disputeId: string, @Req() request: StaffRequest) {
     return this.disputes.staffDetail(request.staff.id, disputeId);
+  }
+
+  @Get(':disputeId/files/:messageId')
+  @StaffRoles('super_admin', 'operations_auditor')
+  async file(@Param('disputeId') disputeId: string, @Param('messageId') messageId: string, @Res() response: Download) {
+    sendFile(response, await this.disputes.file(null, disputeId, messageId));
   }
 
   @Post(':disputeId/messages')

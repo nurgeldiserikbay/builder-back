@@ -1,9 +1,18 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { scanRequired, scanWithClamAv } from '../security/clamav.js';
+import { processImage } from '../images/image-processing.js';
+import { cleanFileName, detectStageFile } from '../analysis/file-types.js';
+
 import { PrismaService } from '../database/prisma.service.js';
 import { tr, type Message } from '../i18n/i18n.js';
 import { notifyUser } from '../notifications/user-notifier.js';
 import { stageDefinitions, type StageKey } from '../journey/catalog.js';
-import { ANSWER_DAYS, REVOKED_WINDOW_DAYS, canOpen, checkClaim, checkMessage, checkResolution, kindsBySide, sideOf, waitingFor, type Side } from './dispute-rules.js';
+import { ANSWER_DAYS, MAX_MESSAGES, REVOKED_WINDOW_DAYS, canOpen, checkClaim, checkMessage, checkResolution, kindsBySide, sideOf, waitingFor, type Side } from './dispute-rules.js';
+
+/** Evidence files in a dispute: screenshots and PDFs, 5 MB each, 10 per dispute. */
+const DISPUTE_FILE_BYTES = 5 * 1024 * 1024;
+const DISPUTE_FILES = 10;
 
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const tenge = (tiyn: number | null) => (tiyn === null ? null : tiyn / 100);
@@ -20,10 +29,10 @@ const assignmentSelect = {
 const disputeSelect = {
   id: true, assignmentId: true, projectId: true, openedBySide: true, kind: true, claim: true, claimAmountTiyn: true, status: true, outcome: true,
   resolutionNote: true, resolvedAt: true, resultPaymentId: true, createdAt: true,
-  messages: { orderBy: { createdAt: 'asc' as const }, select: { id: true, side: true, text: true, createdAt: true } },
+  messages: { orderBy: { createdAt: 'asc' as const }, select: { id: true, side: true, text: true, createdAt: true, fileName: true, fileMime: true, fileBytes: true } },
 } as const;
 
-type DisputeRow = { id: string; assignmentId: string; projectId: string; openedBySide: string; kind: string; claim: string; claimAmountTiyn: number | null; status: string; outcome: string | null; resolutionNote: string | null; resolvedAt: Date | null; resultPaymentId: string | null; createdAt: Date; messages: Array<{ id: string; side: string; text: string; createdAt: Date }> };
+type DisputeRow = { id: string; assignmentId: string; projectId: string; openedBySide: string; kind: string; claim: string; claimAmountTiyn: number | null; status: string; outcome: string | null; resolutionNote: string | null; resolvedAt: Date | null; resultPaymentId: string | null; createdAt: Date; messages: Array<{ id: string; side: string; text: string; createdAt: Date; fileName: string | null; fileMime: string | null; fileBytes: number | null }> };
 
 /**
  * Disputes between a project owner and a specialist. Both sides see the same thread; neither sees the other's account
@@ -62,7 +71,7 @@ export class DisputesService {
     return {
       id: row.id, kind: row.kind, openedBySide: row.openedBySide, mine: row.openedBySide === side, claim: row.claim, claimAmount: tenge(row.claimAmountTiyn),
       status: row.status, outcome: row.outcome, resolutionNote: row.resolutionNote, resolvedAt: row.resolvedAt, createdAt: row.createdAt, paymentCreated: Boolean(row.resultPaymentId),
-      messages: row.messages.map((message) => ({ id: message.id, side: message.side, mine: message.side === side, text: message.text, createdAt: message.createdAt })),
+      messages: row.messages.map((message) => ({ id: message.id, side: message.side, mine: message.side === side, text: message.text, createdAt: message.createdAt, file: message.fileName ? { name: message.fileName, mime: message.fileMime, bytes: message.fileBytes } : null })),
       canWrite: row.status === 'open', canWithdraw: row.status === 'open' && row.openedBySide === side,
     };
   }
@@ -111,6 +120,50 @@ export class DisputesService {
     await this.prisma.disputeMessage.create({ data: { disputeId, side, authorUserId: userId, text: checked.text } });
     await this.notify(this.otherSide(side, assignment), () => tr('Новое сообщение в споре по этапу «{0}» проекта «{1}».', [tr(stageTitle(assignment.stage.stageKey)), assignment.project.name]), false);
     return this.forAssignment(userId, dispute.assignmentId);
+  }
+
+  /**
+   * A screenshot or a PDF as evidence. Scanned first (fail closed); a photo is decoded and re-encoded to WebP, which
+   * drops metadata such as location. At most 10 files per dispute, counted with the messages.
+   */
+  async attach(userId: string, disputeId: string, file: { buffer: Buffer; size: number; originalname?: string } | undefined, text: unknown) {
+    const { dispute, assignment, side } = await this.disputeFor(userId, disputeId);
+    if (dispute.status !== 'open') throw new ConflictException('DISPUTE_CLOSED');
+    if (!file?.buffer?.length) throw new BadRequestException('FILE_REQUIRED');
+    if (file.size > DISPUTE_FILE_BYTES) throw new UnprocessableEntityException('FILE_TOO_LARGE');
+    const name = cleanFileName(file.originalname) ?? 'file';
+    const type = detectStageFile(file.buffer, name);
+    if (!type || (type.kind !== 'image' && type.kind !== 'pdf')) throw new UnprocessableEntityException('DISPUTE_FILE_TYPE');
+    const files = await this.prisma.disputeMessage.count({ where: { disputeId, fileName: { not: null } } });
+    if (files >= DISPUTE_FILES) throw new ConflictException('DISPUTE_TOO_MANY_FILES');
+    const caption = text === undefined || text === null || text === '' ? null : checkMessage(text, dispute._count.messages);
+    if (caption && !caption.ok) throw new BadRequestException(caption.code);
+    if (!caption && dispute._count.messages >= MAX_MESSAGES) throw new BadRequestException('DISPUTE_TOO_MANY_MESSAGES');
+    if (scanRequired()) {
+      const scan = await scanWithClamAv(file.buffer);
+      if (scan === 'infected') throw new UnprocessableEntityException('FILE_REJECTED_BY_SCAN');
+      if (scan === 'unavailable') throw new ServiceUnavailableException('FILE_SCAN_UNAVAILABLE');
+    }
+    let data = file.buffer; let mime = type.mime; let fileName = name;
+    if (type.kind === 'image') {
+      try { data = (await processImage(file.buffer)).data; } catch { throw new UnprocessableEntityException('IMAGE_UNREADABLE'); }
+      mime = 'image/webp'; fileName = name.replace(/\.[a-z0-9]+$/i, '') + '.webp';
+    }
+    await this.prisma.disputeMessage.create({ data: {
+      disputeId, side, authorUserId: userId, text: caption?.ok ? caption.text : `📎 ${fileName}`.slice(0, 2000),
+      fileName, fileMime: mime, fileBytes: data.length, fileSha256: createHash('sha256').update(data).digest('hex'), fileData: new Uint8Array(data),
+    } });
+    await this.notify(this.otherSide(side, assignment), () => tr('Новое сообщение в споре по этапу «{0}» проекта «{1}».', [tr(stageTitle(assignment.stage.stageKey)), assignment.project.name]), false);
+    return this.forAssignment(userId, dispute.assignmentId);
+  }
+
+  /** A file of a dispute message for its sides (or staff, with staff = true). */
+  async file(userId: string | null, disputeId: string, messageId: string) {
+    if (!isUuid(disputeId) || !isUuid(messageId)) throw new NotFoundException('FILE_NOT_FOUND');
+    if (userId) await this.disputeFor(userId, disputeId);
+    const row = await this.prisma.disputeMessage.findFirst({ where: { id: messageId, disputeId, fileName: { not: null } }, select: { fileName: true, fileMime: true, fileData: true, fileSha256: true } });
+    if (!row?.fileData) throw new NotFoundException('FILE_NOT_FOUND');
+    return { name: row.fileName!, mime: row.fileMime ?? 'application/octet-stream', data: Buffer.from(row.fileData), etag: row.fileSha256 ?? '' };
   }
 
   async withdraw(userId: string, disputeId: string) {
