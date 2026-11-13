@@ -6,6 +6,8 @@ import { acceptRoles, isUuid, JourneyCore, writeRoles } from '../journey/journey
 import { allowLocalRepos, AnalysisRunner } from './analysis-runner.js';
 import { ANALYSIS_PROFILE, type AnalysisReport } from './code-analysis.js';
 import { reportMarkdown, reportView, sourceKindLabels } from './report-view.js';
+import { CommentsService } from '../journey/comments.service.js';
+import { stageDefinitions, type StageKey } from '../journey/catalog.js';
 
 /** Archives get the code analysis; PDF, Word and text get the document check. */
 export const ANALYSABLE_KINDS = ['zip', 'pdf', 'docx', 'text'] as const;
@@ -42,7 +44,7 @@ const errorLabels: Record<string, string> = {
  */
 @Injectable()
 export class AnalysisService implements OnApplicationBootstrap {
-  constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore, private readonly runner: AnalysisRunner) {}
+  constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore, private readonly runner: AnalysisRunner, private readonly comments: CommentsService) {}
 
   /** Runs left queued (or stuck by a restart) are picked up when the API starts, unless a separate worker handles them. */
   onApplicationBootstrap(): void {
@@ -99,6 +101,9 @@ export class AnalysisService implements OnApplicationBootstrap {
           canUpload: canWrite,
         },
         canRun: canWrite, profile: ANALYSIS_PROFILE,
+        // Where findings can go: stages of the route (none for «Только анализ»), and whether the owner may add a route.
+        stages: project.projectType && canWrite ? (await this.prisma.projectStage.findMany({ where: { projectId }, orderBy: { position: 'asc' }, select: { stageKey: true } })).filter((row) => row.stageKey in stageDefinitions).map((row) => ({ key: row.stageKey, title: tr(stageDefinitions[row.stageKey as StageKey].title) })) : [],
+        canAddRoute: !project.projectType && role === 'owner' && canWrite,
       },
     };
   }
@@ -157,6 +162,32 @@ export class AnalysisService implements OnApplicationBootstrap {
     const { run } = await this.load(userId, projectId, runId);
     const people = await this.people([run.requestedByUserId]);
     return { data: { ...this.runView(run, people), report: run.report ? reportView(run.report as unknown as AnalysisReport) : null } };
+  }
+
+  /**
+   * A finding becomes a remark on a stage of the project: the person who picks it decides where the work belongs.
+   * The remark carries the explanation, what to do and where, and names the report; it follows the usual remark rules
+   * (who may write, notifications). The report itself does not change.
+   */
+  async toRemark(userId: string, projectId: string, runId: string, findingId: string, stageKey: string) {
+    const { ctx, run } = await this.load(userId, projectId, runId);
+    if (!ctx.project.projectType) throw new ConflictException('PROJECT_HAS_NO_ROUTE');
+    if (!run.report) throw new ConflictException('ANALYSIS_NOT_READY');
+    const view = reportView(run.report as unknown as AnalysisReport);
+    const finding = view.findings.find((item) => item.id === findingId);
+    if (!finding) throw new NotFoundException('FINDING_NOT_FOUND');
+    if (!(stageKey in stageDefinitions)) throw new BadRequestException('INVALID_STAGE_KEY');
+    const where = finding.evidence.slice(0, 5).map((item) => (view.type === 'document' ? (item.line ? tr('абзац {0}', [item.line]) : item.path) : `${item.path}${item.line ? `:${item.line}` : ''}`)).join(', ');
+    const text = [
+      `${finding.severityLabel}: ${finding.title}`, finding.explanation, `${tr('Что сделать')}: ${finding.remediation}`, `${tr('Где')}: ${where}`,
+      tr('Из разбора «{0}» от {1}.', [run.sourceLabel, run.createdAt.toISOString().slice(0, 10)]),
+    ].join('\n').slice(0, 2000);
+    const stage = await this.prisma.projectStage.findFirst({ where: { projectId, stageKey }, select: { id: true } });
+    if (!stage) throw new NotFoundException('STAGE_NOT_FOUND');
+    const sourceOnStage = run.sourceFileId ? await this.prisma.stageFile.count({ where: { id: run.sourceFileId, stageId: stage.id } }) : 0;
+    const result = await this.comments.add(userId, projectId, stageKey, { text, targetKey: null, blocking: false, parentId: null, fileIds: sourceOnStage ? [run.sourceFileId!] : [] });
+    await this.core.event(this.prisma, projectId, userId, 'analysis_finding_to_remark', stageKey, { runId: run.id, findingId, commentId: result.data.createdId });
+    return { data: { commentId: result.data.createdId, stageKey, stageTitle: tr(stageDefinitions[stageKey as StageKey].title) } };
   }
 
   async export(userId: string, projectId: string, runId: string, format: string) {

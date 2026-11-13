@@ -3510,7 +3510,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       responses:
-        '200': { description: 'runs[] (id, status, statusLabel, sourceKind, sourceKindLabel, sourceLabel, sourceRef, sourceSha256, errorCode, error, createdAt, startedAt, finishedAt, requestedBy), project (name, analysisOnly, startMode), sources (files[] with stageKey null for uploaded sources and canDelete, repository, publicRepo, canUpload), canRun, profile' }
+        '200': { description: 'runs[] (id, status, statusLabel, sourceKind, sourceKindLabel, sourceLabel, sourceRef, sourceSha256, errorCode, error, createdAt, startedAt, finishedAt, requestedBy), project (name, analysisOnly, startMode), stages[] (where findings can go), canAddRoute, sources (files[] with stageKey null for uploaded sources and canDelete, repository, publicRepo, canUpload), canRun, profile' }
         '404': { description: PROJECT_NOT_FOUND }
     post:
       tags: [Analysis]
@@ -3562,6 +3562,47 @@ paths:
       responses:
         '200': { description: 'Run fields plus report (profile, status, source with sha256, summary with languages, stack, routes and readmeExcerpt, findings[] with id, code, category, severity, confidence, title, explanation, remediation and evidence[path, line], counts, checks[], skipped, unverified[], disclaimer) or null while queued' }
         '404': { description: ANALYSIS_NOT_FOUND }
+  /projects/{projectId}/route:
+    post:
+      tags: [Projects]
+      operationId: addProjectRoute
+      summary: Give a project started as «Только анализ» a development route (owner); reports, files and team stay
+      description: The project now counts on the owner's plan (PLAN_LIMIT_PROJECTS); startMode becomes improve, status active.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [projectType], properties: { projectType: { type: string }, startStageKey: { type: string }, locale: { type: string, enum: [en, ru, kk] } } }
+      responses:
+        '200': { description: The project }
+        '400': { description: 'INVALID_PROJECT_TYPE, INVALID_START_STAGE' }
+        '403': { description: 'ROUTE_OWNER_ONLY, PLAN_LIMIT_PROJECTS' }
+        '409': { description: 'PROJECT_HAS_ROUTE, PROJECT_NOT_ACTIVE' }
+  /projects/{projectId}/analysis-runs/{runId}/findings/{findingId}/remark:
+    post:
+      tags: [Analysis]
+      operationId: analysisFindingToRemark
+      summary: Turn a finding into a remark on a stage (the usual remark rules apply); the report does not change
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: findingId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [stageKey], properties: { stageKey: { type: string } } }
+      responses:
+        '201': { description: 'commentId, stageKey, stageTitle' }
+        '403': { description: COMMENT_FORBIDDEN }
+        '404': { description: 'FINDING_NOT_FOUND, STAGE_NOT_FOUND' }
+        '409': { description: 'PROJECT_HAS_NO_ROUTE, ANALYSIS_NOT_READY' }
   /projects/{projectId}/analysis-runs/{runId}/export:
     get:
       tags: [Analysis]
