@@ -1590,6 +1590,8 @@ model SpecialistProfile {
   stageKeys      String[] @default([]) @map("stage_keys")
   hourlyRateTiyn Int?     @map("hourly_rate_tiyn")
   city           String?  @db.VarChar(80)
+  /// Examples of work: [{ title, description, url, stageKey }], up to 12, checked in catalog-rules.
+  portfolio      Json     @default("[]")
   published      Boolean  @default(false)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)

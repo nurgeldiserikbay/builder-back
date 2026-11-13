@@ -44,7 +44,14 @@ describe('specialist catalog and reviews (database)', async () => {
     assert.ok(!(await catalog!.list('content')).data.specialists.some((card) => card.id === profileId));
     await assert.rejects(catalog!.emailForInvite(profileId), /PROFILE_NOT_FOUND/);
 
+    await catalog!.saveMine(specialist.id, { displayName: 'Айгерим', headline: 'Тексты для сайтов услуг', about: null, stageKeys: ['content'], hourlyRate: 5000, city: null, published: true },
+      [{ title: 'Сайт кондитерской', description: 'Тексты и структура', url: 'https://www.tort.kz/', stageKey: 'content' }]);
+    await assert.rejects(catalog!.saveMine(specialist.id, { displayName: 'Айгерим', headline: 'Тексты для сайтов услуг', about: null, stageKeys: ['content'], hourlyRate: 5000, city: null, published: true }, [{ title: 'Ссылка', url: 'javascript:alert(1)' }]), /PORTFOLIO_URL_INVALID/);
+    // Saving without the portfolio field (an older client) keeps it.
     await catalog!.saveMine(specialist.id, { displayName: 'Айгерим', headline: 'Тексты для сайтов услуг', about: null, stageKeys: ['content'], hourlyRate: 5000, city: null, published: true });
+    const withWorks = await catalog!.get(profileId, owner.id);
+    assert.deepEqual(withWorks.data.portfolio, [{ title: 'Сайт кондитерской', description: 'Тексты и структура', url: 'https://www.tort.kz/', stageKey: 'content', stageTitle: 'Структура и тексты', host: 'tort.kz' }]);
+    assert.equal((await catalog!.list('content')).data.specialists.find((card) => card.id === profileId)?.works, 1);
     const listed = (await catalog!.list('content')).data.specialists.find((card) => card.id === profileId);
     assert.ok(listed);
     assert.equal(listed.hourlyRate, 5000);

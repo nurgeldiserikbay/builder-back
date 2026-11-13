@@ -55,3 +55,27 @@ describe('review moderation', () => {
     assert.deepEqual(checkModeration('keep', 'Отзыв по существу'), { ok: true, decision: 'keep', note: 'Отзыв по существу' });
   });
 });
+
+describe('portfolio', () => {
+  it('keeps only links a visitor can open safely', async () => {
+    const { portfolioUrl } = await import('./catalog-rules.js');
+    assert.equal(portfolioUrl(' https://tort.kz/menu '), 'https://tort.kz/menu');
+    assert.equal(portfolioUrl('javascript:alert(1)'), null);
+    assert.equal(portfolioUrl('data:text/html,hi'), null);
+    assert.equal(portfolioUrl('https://user:pass@tort.kz'), null);
+    assert.equal(portfolioUrl('http://192.168.0.1/admin'), null);
+    assert.equal(portfolioUrl('http://localhost:3000'), null);
+    assert.equal(portfolioUrl('не ссылка'), null);
+  });
+  it('checks items, keeps their order and refuses too many or duplicates', async () => {
+    const { checkPortfolio } = await import('./catalog-rules.js');
+    const ok = checkPortfolio([{ title: ' Сайт кондитерской ', description: '', url: 'https://tort.kz', stageKey: 'content' }, { title: 'Меню кафе', description: 'Тексты и структура', url: null, stageKey: null }]);
+    assert.deepEqual(ok, { ok: true, items: [{ title: 'Сайт кондитерской', description: null, url: 'https://tort.kz/', stageKey: 'content' }, { title: 'Меню кафе', description: 'Тексты и структура', url: null, stageKey: null }] });
+    assert.deepEqual(checkPortfolio([{ title: 'ab' }]), { ok: false, code: 'PORTFOLIO_TITLE_INVALID:0' });
+    assert.deepEqual(checkPortfolio([{ title: 'Сайт', url: 'ftp://x.kz' }]), { ok: false, code: 'PORTFOLIO_URL_INVALID:0' });
+    assert.deepEqual(checkPortfolio([{ title: 'Сайт', url: 'https://a.kz' }, { title: 'Ещё', url: 'https://a.kz/' }]), { ok: false, code: 'PORTFOLIO_URL_DUPLICATE:1' });
+    assert.deepEqual(checkPortfolio([{ title: 'Сайт', stageKey: 'build' }]), { ok: false, code: 'PORTFOLIO_STAGE_INVALID:0' });
+    assert.deepEqual(checkPortfolio(Array.from({ length: 13 }, (_, i) => ({ title: `Работа ${i}` }))), { ok: false, code: 'PORTFOLIO_TOO_MANY' });
+    assert.deepEqual(checkPortfolio([{ title: 'Сайт', price: 1 }]), { ok: false, code: 'PORTFOLIO_INVALID:0' });
+  });
+});

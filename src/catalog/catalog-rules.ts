@@ -82,3 +82,48 @@ export function checkModeration(decision: unknown, note: unknown): { ok: true; d
   if (value.length < 5 || value.length > 500) return { ok: false, code: 'MODERATION_NOTE_REQUIRED' };
   return { ok: true, decision, note: value };
 }
+
+export const MAX_PORTFOLIO = 12;
+export interface PortfolioItem { title: string; description: string | null; url: string | null; stageKey: string | null }
+
+/**
+ * A link a person can open safely: http(s) only, no user name or password in it, a real host name. The platform
+ * never opens it itself, so it is not a server-side request — the check is about what visitors are sent to.
+ */
+export function portfolioUrl(raw: string): string | null {
+  let url: URL;
+  try { url = new URL(raw.trim()); } catch { return null; }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  if (url.username || url.password) return null;
+  const host = url.hostname;
+  if (!host.includes('.') || /^[\d.]+$/.test(host) || host.startsWith('[')) return null;
+  return url.href.length <= 300 ? url.href : null;
+}
+
+export function checkPortfolio(raw: unknown): { ok: true; items: PortfolioItem[] } | { ok: false; code: string } {
+  if (!Array.isArray(raw)) return { ok: false, code: 'PORTFOLIO_INVALID' };
+  if (raw.length > MAX_PORTFOLIO) return { ok: false, code: 'PORTFOLIO_TOO_MANY' };
+  const items: PortfolioItem[] = [];
+  const seen = new Set<string>();
+  for (const [index, entry] of raw.entries()) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return { ok: false, code: `PORTFOLIO_INVALID:${index}` };
+    const item = entry as Record<string, unknown>;
+    if (Object.keys(item).some((key) => !['title', 'description', 'url', 'stageKey'].includes(key))) return { ok: false, code: `PORTFOLIO_INVALID:${index}` };
+    const title = typeof item.title === 'string' ? item.title.replace(/\s+/g, ' ').trim() : '';
+    if (title.length < 3 || title.length > 80) return { ok: false, code: `PORTFOLIO_TITLE_INVALID:${index}` };
+    const description = typeof item.description === 'string' && item.description.trim() ? item.description.trim() : null;
+    if (item.description !== null && item.description !== undefined && typeof item.description !== 'string') return { ok: false, code: `PORTFOLIO_INVALID:${index}` };
+    if (description && description.length > 500) return { ok: false, code: `PORTFOLIO_DESCRIPTION_TOO_LONG:${index}` };
+    let url: string | null = null;
+    if (typeof item.url === 'string' && item.url.trim()) {
+      url = portfolioUrl(item.url);
+      if (!url) return { ok: false, code: `PORTFOLIO_URL_INVALID:${index}` };
+      if (seen.has(url)) return { ok: false, code: `PORTFOLIO_URL_DUPLICATE:${index}` };
+      seen.add(url);
+    } else if (item.url !== null && item.url !== undefined && item.url !== '') return { ok: false, code: `PORTFOLIO_URL_INVALID:${index}` };
+    const stageKey = item.stageKey ?? null;
+    if (stageKey !== null && (typeof stageKey !== 'string' || !(catalogStageKeys as string[]).includes(stageKey))) return { ok: false, code: `PORTFOLIO_STAGE_INVALID:${index}` };
+    items.push({ title, description, url, stageKey: stageKey as string | null });
+  }
+  return { ok: true, items };
+}
