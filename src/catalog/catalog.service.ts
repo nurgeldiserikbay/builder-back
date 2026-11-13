@@ -103,15 +103,17 @@ export class CatalogService {
     }
     const data = { ...checked.value, ...(works ? { portfolio: works as unknown as object } : {}) };
     await this.prisma.specialistProfile.upsert({ where: { userId }, create: { userId, ...data }, update: data });
+    // Photos no saved work shows any more (taken off a work, or uploaded and never saved) are removed with the save.
+    if (works) await this.prisma.specialistPhoto.deleteMany({ where: { userId, id: { notIn: works.flatMap((item) => (item.photoId ? [item.photoId] : [])) } } });
     return this.mine(userId);
   }
 
-  /** Photos are uploaded first, then put on a work; scanned and re-encoded like project photos. Up to 12. */
+  /** Photos are uploaded first, then put on a work; scanned and re-encoded like project photos. Up to 24 kept between saves. */
   async uploadPhoto(userId: string, file: { buffer: Buffer; size: number } | undefined) {
     if (!file?.buffer?.length) throw new BadRequestException('IMAGE_FILE_REQUIRED');
     if (file.size > MAX_UPLOAD_BYTES) throw new UnprocessableEntityException('IMAGE_TOO_LARGE');
     if (!detectImageType(file.buffer)) throw new UnprocessableEntityException('IMAGE_TYPE_NOT_SUPPORTED');
-    if ((await this.prisma.specialistPhoto.count({ where: { userId } })) >= MAX_PORTFOLIO) throw new ConflictException('PORTFOLIO_PHOTO_LIMIT');
+    if ((await this.prisma.specialistPhoto.count({ where: { userId } })) >= MAX_PORTFOLIO * 2) throw new ConflictException('PORTFOLIO_PHOTO_LIMIT');
     if (scanRequired()) {
       const scan = await scanWithClamAv(file.buffer);
       if (scan === 'infected') throw new UnprocessableEntityException('IMAGE_REJECTED_BY_SCAN');

@@ -141,8 +141,15 @@ describe('specialist catalog and reviews (database)', async () => {
 
     await assert.rejects(catalog!.deletePhoto(author.id, uploaded.id), /PORTFOLIO_PHOTO_IN_USE/);
     await assert.rejects(catalog!.deletePhoto(author.id, other.id), /PHOTO_NOT_FOUND/);
+    // An uploaded photo left off every work is removed on the next save; one still shown stays.
+    const spare = (await catalog!.uploadPhoto(author.id, { buffer: png, size: png.length })).data;
+    await catalog!.saveMine(author.id, { ...base, published: true }, [{ title: 'Кафе', photoId: uploaded.id }]);
+    assert.deepEqual((await prisma!.specialistPhoto.findMany({ where: { userId: author.id }, select: { id: true } })).map((row) => row.id), [uploaded.id]);
+    assert.ok(spare.id);
+    // Saving without the portfolio field leaves photos alone.
+    await catalog!.saveMine(author.id, { ...base, published: true });
+    assert.equal(await prisma!.specialistPhoto.count({ where: { userId: author.id } }), 1);
     await catalog!.saveMine(author.id, { ...base, published: true }, [{ title: 'Кафе' }]);
-    await catalog!.deletePhoto(author.id, uploaded.id);
     assert.equal(await prisma!.specialistPhoto.count({ where: { userId: author.id } }), 0);
   });
 });

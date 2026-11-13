@@ -2439,8 +2439,8 @@ paths:
     post:
       tags: [Specialists]
       operationId: uploadPortfolioPhoto
-      summary: Upload a photo for a portfolio work (JPEG, PNG or WebP, up to 12 per specialist)
-      description: The file is checked by its bytes, scanned for malware when scanning is on (fail-closed), re-encoded to WebP without metadata. Put it on a work with portfolio[].photoId.
+      summary: Upload a photo for a portfolio work (JPEG, PNG or WebP)
+      description: The file is checked by its bytes, scanned for malware when scanning is on (fail-closed), re-encoded to WebP without metadata. Put it on a work with portfolio[].photoId; a save with a portfolio removes the own photos that no work shows. At most 24 kept at once.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       requestBody:
