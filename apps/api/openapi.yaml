@@ -3423,6 +3423,41 @@ paths:
         '200': { description: Same as GET of the list }
         '403': { description: 'STAGE_WRITE_FORBIDDEN, FILE_DELETE_FORBIDDEN' }
         '404': { description: FILE_NOT_FOUND }
+  /projects/{projectId}/analysis-sources:
+    post:
+      tags: [Analysis]
+      operationId: uploadAnalysisSource
+      summary: Upload a ZIP straight to code analysis, without a stage (projects started as «Только анализ» have no stages)
+      description: Same checks and limits as stage files (type from bytes, malware scan before storing, 15 MB, 150 MB per project); only ZIP archives. Owner, manager or contributor of an open project.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [file], properties: { file: { type: string, format: binary }, name: { type: string, maxLength: 200 }, note: { type: string, maxLength: 500 } } }
+      responses:
+        '201': { description: createdId }
+        '403': { description: STAGE_WRITE_FORBIDDEN }
+        '409': { description: 'FILE_LIMIT_REACHED, FILE_STORAGE_FULL, PROJECT_NOT_ACTIVE' }
+        '422': { description: 'FILE_TOO_LARGE, ANALYSIS_NEEDS_ZIP, FILE_REJECTED_BY_SCAN' }
+        '503': { description: FILE_SCAN_UNAVAILABLE }
+  /projects/{projectId}/analysis-sources/{fileId}:
+    delete:
+      tags: [Analysis]
+      operationId: deleteAnalysisSource
+      summary: Delete an uploaded source (its uploader, the owner or a manager); reports made from it stay
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: fileId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: deleted }
+        '403': { description: FILE_DELETE_FORBIDDEN }
+        '404': { description: FILE_NOT_FOUND }
   /projects/{projectId}/analysis-runs:
     get:
       tags: [Analysis]
@@ -3433,7 +3468,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       responses:
-        '200': { description: 'runs[] (id, status, statusLabel, sourceKind, sourceKindLabel, sourceLabel, sourceRef, sourceSha256, errorCode, error, createdAt, startedAt, finishedAt, requestedBy), sources (files[], repository, publicRepo), canRun, profile' }
+        '200': { description: 'runs[] (id, status, statusLabel, sourceKind, sourceKindLabel, sourceLabel, sourceRef, sourceSha256, errorCode, error, createdAt, startedAt, finishedAt, requestedBy), project (name, analysisOnly, startMode), sources (files[] with stageKey null for uploaded sources and canDelete, repository, publicRepo, canUpload), canRun, profile' }
         '404': { description: PROJECT_NOT_FOUND }
     post:
       tags: [Analysis]

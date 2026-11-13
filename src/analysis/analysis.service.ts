@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { PrismaService } from '../database/prisma.service.js';
 import { tr } from '../i18n/i18n.js';
 import { GitProviderError, parseRepoUrl } from '../choices/git-providers.js';
-import { acceptRoles, isUuid, JourneyCore } from '../journey/journey-core.js';
+import { acceptRoles, isUuid, JourneyCore, writeRoles } from '../journey/journey-core.js';
 import { allowLocalRepos, AnalysisRunner } from './analysis-runner.js';
 import { ANALYSIS_PROFILE, type AnalysisReport } from './code-analysis.js';
 import { reportMarkdown, reportView, sourceKindLabels } from './report-view.js';
@@ -44,10 +44,27 @@ export class AnalysisService implements OnApplicationBootstrap {
     if (process.env.ANALYSIS_WORKER !== 'external' && process.env.NODE_ENV !== 'test') this.runner.kick();
   }
 
-  private async member(userId: string, projectId: string) {
-    const ctx = await this.core.load(userId, projectId, 'read');
-    if (ctx.viewer.kind !== 'member') throw new NotFoundException('PROJECT_NOT_FOUND');
-    return ctx;
+  /**
+   * Project members only (not specialists). Works for projects without a route too — a project started as «Только анализ»
+   * has no stages. Writing (starting a run, uploading a source) needs owner, manager or contributor in an open project.
+   */
+  private async member(userId: string, projectId: string, write = false) {
+    if (!isUuid(projectId)) throw new NotFoundException('PROJECT_NOT_FOUND');
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, members: { some: { userId, status: 'active' } } },
+      select: { id: true, name: true, status: true, projectType: true, startMode: true, members: { where: { userId, status: 'active' }, select: { role: true } } },
+    });
+    if (!project) throw new NotFoundException('PROJECT_NOT_FOUND');
+    const role = project.members[0]!.role;
+    const canWrite = writeRoles.has(role) && ['draft', 'active', 'live'].includes(project.status);
+    if (write && !writeRoles.has(role)) throw new ForbiddenException('STAGE_WRITE_FORBIDDEN');
+    if (write && !canWrite) throw new ConflictException('PROJECT_NOT_ACTIVE');
+    return { project, role, canWrite };
+  }
+
+  private async people(ids: string[]): Promise<Map<string, { name: string }>> {
+    const rows = ids.length ? await this.prisma.user.findMany({ where: { id: { in: [...new Set(ids)] } }, select: { id: true, name: true, email: true } }) : [];
+    return new Map(rows.map((row) => [row.id, { name: row.name || row.email.split('@')[0] || tr('Участник') }]));
   }
 
   private runView(run: { id: string; status: string; sourceKind: string; sourceLabel: string; sourceRef: string | null; sourceSha256: string | null; errorCode: string | null; createdAt: Date; startedAt: Date | null; finishedAt: Date | null; requestedByUserId: string }, people: Map<string, { name: string }>) {
@@ -59,30 +76,30 @@ export class AnalysisService implements OnApplicationBootstrap {
   }
 
   async list(userId: string, projectId: string) {
-    const ctx = await this.member(userId, projectId);
-    const readable = ctx.stages.filter((stage) => this.core.canRead(ctx, stage.stageKey)).map((stage) => stage.id);
-    const [runs, files, repo, people] = await Promise.all([
+    const { project, role, canWrite } = await this.member(userId, projectId);
+    const [runs, files, repo] = await Promise.all([
       this.prisma.analysisRun.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' }, take: ANALYSIS_RUN_LIMITS.list, select: { id: true, status: true, sourceKind: true, sourceLabel: true, sourceRef: true, sourceSha256: true, errorCode: true, createdAt: true, startedAt: true, finishedAt: true, requestedByUserId: true } }),
-      this.prisma.stageFile.findMany({ where: { projectId, kind: 'zip', stageId: { in: readable } }, orderBy: { createdAt: 'desc' }, select: { id: true, name: true, sizeBytes: true, createdAt: true, stage: { select: { stageKey: true } } } }),
+      this.prisma.stageFile.findMany({ where: { projectId, kind: 'zip' }, orderBy: { createdAt: 'desc' }, select: { id: true, name: true, sizeBytes: true, createdAt: true, createdByUserId: true, stage: { select: { stageKey: true } } } }),
       this.prisma.codeRepository.findUnique({ where: { projectId }, select: { provider: true, repoPath: true, defaultBranch: true } }),
-      this.core.historyPeople(ctx, projectId, userId),
     ]);
-    const canRun = ctx.role !== 'viewer';
+    const people = await this.people(runs.map((run) => run.requestedByUserId));
     return {
       data: {
+        project: { name: project.name, analysisOnly: !project.projectType, startMode: project.startMode },
         runs: runs.map((run) => this.runView(run, people)),
         sources: {
-          files: files.map((file) => ({ id: file.id, name: file.name, sizeBytes: file.sizeBytes, stageKey: file.stage.stageKey, createdAt: file.createdAt })),
-          repository: repo ? { provider: repo.provider, repoPath: repo.repoPath, defaultBranch: repo.defaultBranch, canUse: canRun && acceptRoles.has(ctx.role) } : null,
-          publicRepo: canRun,
+          files: files.map((file) => ({ id: file.id, name: file.name, sizeBytes: file.sizeBytes, stageKey: file.stage?.stageKey ?? null, createdAt: file.createdAt, canDelete: canWrite && !file.stage && (acceptRoles.has(role) || file.createdByUserId === userId) })),
+          repository: repo ? { provider: repo.provider, repoPath: repo.repoPath, defaultBranch: repo.defaultBranch, canUse: canWrite && acceptRoles.has(role) } : null,
+          publicRepo: canWrite,
+          canUpload: canWrite,
         },
-        canRun, profile: ANALYSIS_PROFILE,
+        canRun: canWrite, profile: ANALYSIS_PROFILE,
       },
     };
   }
 
   async create(userId: string, projectId: string, input: { source: string; fileId: string | null; url: string | null; ref: string | null; idempotencyKey: string | null }) {
-    const ctx = await this.core.load(userId, projectId, 'write');
+    const { role } = await this.member(userId, projectId, true);
     if (input.idempotencyKey) {
       const existing = await this.prisma.analysisRun.findUnique({ where: { projectId_idempotencyKey: { projectId, idempotencyKey: input.idempotencyKey } }, select: { id: true } });
       if (existing) return this.get(userId, projectId, existing.id);
@@ -91,12 +108,12 @@ export class AnalysisService implements OnApplicationBootstrap {
     let data: { sourceKind: string; sourceFileId: string | null; sourceLabel: string; sourceRef: string | null };
     if (input.source === 'file') {
       if (!input.fileId || !isUuid(input.fileId)) throw new NotFoundException('FILE_NOT_FOUND');
-      const file = await this.prisma.stageFile.findFirst({ where: { id: input.fileId, projectId }, select: { id: true, name: true, kind: true, sha256: true, stage: { select: { stageKey: true } } } });
-      if (!file || !this.core.canRead(ctx, file.stage.stageKey)) throw new NotFoundException('FILE_NOT_FOUND');
+      const file = await this.prisma.stageFile.findFirst({ where: { id: input.fileId, projectId }, select: { id: true, name: true, kind: true } });
+      if (!file) throw new NotFoundException('FILE_NOT_FOUND');
       if (file.kind !== 'zip') throw new BadRequestException('ANALYSIS_NEEDS_ZIP');
       data = { sourceKind: 'stage_file', sourceFileId: file.id, sourceLabel: file.name, sourceRef: null };
     } else if (input.source === 'repository') {
-      if (!acceptRoles.has(ctx.role)) throw new ForbiddenException('ANALYSIS_REPOSITORY_FORBIDDEN');
+      if (!acceptRoles.has(role)) throw new ForbiddenException('ANALYSIS_REPOSITORY_FORBIDDEN');
       const repo = await this.prisma.codeRepository.findUnique({ where: { projectId }, select: { repoPath: true, defaultBranch: true } });
       if (!repo) throw new NotFoundException('REPO_NOT_CONNECTED');
       data = { sourceKind: 'repository', sourceFileId: null, sourceLabel: repo.repoPath, sourceRef: input.ref ?? repo.defaultBranch };
@@ -132,8 +149,8 @@ export class AnalysisService implements OnApplicationBootstrap {
   }
 
   async get(userId: string, projectId: string, runId: string) {
-    const { ctx, run } = await this.load(userId, projectId, runId);
-    const people = await this.core.historyPeople(ctx, projectId, userId);
+    const { run } = await this.load(userId, projectId, runId);
+    const people = await this.people([run.requestedByUserId]);
     return { data: { ...this.runView(run, people), report: run.report ? reportView(run.report as unknown as AnalysisReport) : null } };
   }
 
