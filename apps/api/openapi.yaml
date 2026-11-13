@@ -3102,6 +3102,34 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/handoff:
+    post:
+      tags: [Journey]
+      operationId: buildHandoffPackage
+      summary: Web application route — build the package for developers from the accepted stages
+      description: 'Deterministic, no AI and no code is run. The new version of «Пакет для разработки» holds files (README.md, spec.md with acceptance criteria, permissions.md, data-model.md, user-stories.md, api.yaml — an OpenAPI 3.1 draft, prototype/*.html) and completeness checks. Accepting it needs every required check passed and the same accepted inputs (BUILD_OUTDATED otherwise). The files come with GET /result under handoff/. BuildPath does not write, run or publish the application code.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '201': { description: 'versionId, versionNumber, checks[]' }
+        '404': { description: 'STAGE_NOT_FOUND — not a web application project' }
+        '409': { description: 'STAGE_INPUTS_NOT_ACCEPTED, STAGE_ACCEPTED_REOPEN_FIRST' }
+  /projects/{projectId}/prototype:
+    get:
+      tags: [Journey]
+      operationId: getAppPrototype
+      summary: Web application route — clickable prototype of the current «Экраны и прототип» draft
+      description: Script-free HTML of one screen (screen=key, the first one otherwise) with links to the others by file name, and the list of screens. Shown in a sandboxed frame; the same pages go into the package.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: screen, in: query, required: false, schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,23}$' } }
+      responses:
+        '200': { description: 'html, screen, versionNumber, screens[] (key, title)' }
+        '404': { description: PREVIEW_NOT_AVAILABLE }
   /projects/{projectId}/build:
     post:
       tags: [Journey]
@@ -5524,7 +5552,7 @@ components:
         locale: { type: string, enum: [en, ru, kk] }
         projectType:
           type: string
-          enum: [landing, company_site, multipage, store, booking]
+          enum: [landing, company_site, multipage, store, booking, web_app]
           description: Creates the stage route from the versioned journey catalog and makes the project active.
         startStageKey:
           type: string
@@ -5542,7 +5570,7 @@ components:
         startMode: { type: string, enum: [build, improve, design_implementation, analysis_only] }
         status: { type: string, enum: [draft, active, paused, completed, archived, live] }
         locale: { type: string, enum: [en, ru, kk] }
-        projectType: { type: [string, 'null'], enum: [landing, company_site, multipage, store, booking, null] }
+        projectType: { type: [string, 'null'], enum: [landing, company_site, multipage, store, booking, web_app, null] }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
     ProjectResponse:
@@ -5745,7 +5773,7 @@ components:
                 type: object
                 required: [key, title, description, stages]
                 properties:
-                  key: { type: string, enum: [landing, company_site, multipage, store, booking] }
+                  key: { type: string, enum: [landing, company_site, multipage, store, booking, web_app] }
                   title: { type: string }
                   description: { type: string }
                   goodFor: { type: string }

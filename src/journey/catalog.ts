@@ -1,12 +1,12 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.6.0';
+export const ROUTE_CATALOG_VERSION = '1.7.0';
 
-export type StageKey = 'goal' | 'process' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'techplan' | 'content' | 'design' | 'build';
-export type ArtifactType = 'brief' | 'process' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'techplan' | 'content' | 'design' | 'site';
+export type StageKey = 'goal' | 'process' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'build' | 'handoff';
+export type ArtifactType = 'brief' | 'process' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'site' | 'handoff';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
-export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking';
+export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking' | 'web_app';
 
 export interface FieldOption { value: string; label: string; hint: string }
 
@@ -234,6 +234,60 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
       ],
     },
   },
+  features: {
+    key: 'features',
+    version: '1.0.0',
+    title: 'Функции и роли',
+    purpose: 'Запишем, кто будет пользоваться приложением и что каждый должен уметь в нём делать. У каждой функции — критерии приёмки: по ним вы и разработчик поймёте, что она готова.',
+    outcome: 'Роли, функции с приоритетом и критериями приёмки, требования к данным и интеграции.',
+    artifactType: 'features',
+    inputs: ['goal', 'process'],
+    ai: {
+      level: 'ai_full',
+      whatItDoes: 'ИИ предложит роли и функции по бизнес-процессу и напишет критерии приёмки. Проверьте, что ничего лишнего, и отметьте, что нужно в первой версии.',
+      instructionExamples: ['Добавь роль бухгалтера, который видит только счета', 'Оплата — позже, не в первой версии', 'Клиент должен видеть историю своих заявок'],
+    },
+    acceptance: ['Роли такие, как на самом деле', 'Обязательные функции первой версии отмечены', 'У каждой функции есть понятный критерий приёмки'],
+    acceptExplanation: 'Функции станут основой экранов и архитектуры. Если позже их изменить, экраны и архитектура получат уведомление.',
+    importHint: null,
+    contract: { explanation: 'Функции и роли — договорённость о том, что делает приложение. Экраны и архитектура строятся по ним.' },
+    playbook: {
+      version: '1.0.0',
+      instructions: [
+        'Describe the web application from the brief and the business process, in plain words, in the project language.',
+        'Roles: the people who sign in (clients, staff, the owner as administrator). 1–6. Keys: short latin snake_case.',
+        'Features: 3–20 concrete things a role does in the app; each with the roles that use it, priority must/should/later and 1–5 acceptance criteria a non-technical owner can check.',
+        'Mark as must only what the first version cannot work without. Payments, integrations and analytics are should or later unless the user asked for them.',
+        'sensitivity: personal when the app keeps people\'s contacts; payments or health only when stated. integrations: only services the user named.',
+      ],
+    },
+  },
+  screens: {
+    key: 'screens',
+    version: '1.0.0',
+    title: 'Экраны и прототип',
+    purpose: 'Опишем экраны приложения для каждой роли: что на них видно и куда с них можно перейти. По описанию сразу строится кликабельный прототип — его можно пройти на телефоне до начала разработки.',
+    outcome: 'Список экранов по ролям с блоками и переходами и кликабельный прототип.',
+    artifactType: 'screens',
+    inputs: ['features'],
+    ai: {
+      level: 'ai_full',
+      whatItDoes: 'ИИ предложит экраны для каждой роли по функциям: блоки (списки, формы, карточки) и переходы. Пройдите прототип и поправьте, что неудобно.',
+      instructionExamples: ['На главной клиента сразу покажи его активные заявки', 'Добавь экран профиля', 'Объедини два экрана настроек в один'],
+    },
+    acceptance: ['У каждой роли есть свои экраны', 'Обязательные функции видны на экранах', 'Вы прошли прототип и переходы понятны'],
+    acceptExplanation: 'Экраны и прототип войдут в пакет для разработки.',
+    importHint: null,
+    playbook: {
+      version: '1.0.0',
+      instructions: [
+        'Design the screens of the web application from the accepted features, for each role; plain words in the project language.',
+        'Each role starts on a home screen. 2–6 screens per role, at most 20 in total. Keys: short latin snake_case, unique.',
+        'Each screen: role key, a short purpose, the feature keys it serves, 1–6 blocks (kind list, table, form, details, text, actions, stats, search; title; field names) and links to other screen keys.',
+        'Every must feature must appear on at least one screen. Do not invent features that are not in the list.',
+      ],
+    },
+  },
   techplan: {
     key: 'techplan',
     version: '1.0.0',
@@ -241,7 +295,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     purpose: 'Покажем, как будет устроено то, что мы соберём: из чего состоит система, какие данные хранятся, как идёт каждый сценарий по шагам и какие шаги вашего процесса сделает сайт. Для разработчиков здесь же — точное описание (контракт API).',
     outcome: 'Схема данных, сценарии по шагам, что покрывает сайт из вашего процесса, страницы, ограничения и контракт API.',
     artifactType: 'techplan',
-    inputs: ['goal', 'process', 'schedule', 'sitemap', 'products'],
+    inputs: ['goal', 'process', 'schedule', 'sitemap', 'products', 'features', 'screens'],
     ai: {
       level: 'none',
       whatItDoes: 'Архитектуру составляет платформа по принятым этапам, без ИИ: так она всегда совпадает с тем, что будет собрано. Вы можете добавить заметки для разработчиков.',
@@ -322,6 +376,24 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     importHint: null,
     playbook: { version: '1.0.0', instructions: [] },
   },
+  handoff: {
+    key: 'handoff',
+    version: '1.0.0',
+    title: 'Пакет для разработки',
+    purpose: 'Соберём всё, что нужно разработчику: техническое задание с критериями приёмки, права по ролям, схему данных, черновик контракта API и прототип экранов. Код приложения BuildPath не пишет — его делает разработчик по этому пакету.',
+    outcome: 'Архив с ТЗ, правами, схемой данных, контрактом API и прототипом; проверка полноты.',
+    artifactType: 'handoff',
+    inputs: ['goal', 'process', 'features', 'screens', 'techplan'],
+    ai: {
+      level: 'none',
+      whatItDoes: 'Пакет собирает платформа по принятым этапам, без ИИ: он всегда совпадает с тем, о чём вы договорились.',
+      instructionExamples: [],
+    },
+    acceptance: ['Обязательные проверки полноты пройдены', 'Вы посмотрели ТЗ и прототип'],
+    acceptExplanation: 'Принятый пакет можно скачать и передать разработчику. Пригласите разработчика на этот этап, если хотите вести работу в BuildPath.',
+    importHint: null,
+    playbook: { version: '1.0.0', instructions: [] },
+  },
 };
 
 export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
@@ -370,9 +442,20 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     stages: ['goal', 'process', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт с онлайн-записью, список услуг, расписание и все тексты проекта. Запись работает, когда сайт опубликован на BuildPath.',
   },
+  web_app: {
+    key: 'web_app',
+    title: 'Веб-приложение',
+    description: 'Приложение со входом, ролями и своей логикой: кабинет клиента, учёт заявок, внутренняя система. BuildPath доведёт его до полного пакета для разработчика — функции, экраны с прототипом, архитектуру и контракт API.',
+    goodFor: 'Тем, кому нужен личный кабинет, учёт или внутренний сервис, и кто будет заказывать разработку.',
+    examples: ['Кабинет клиента сервиса', 'Учёт заявок и выездов', 'Запись на курсы с кабинетом ученика', 'Внутренняя система для сотрудников'],
+    stages: ['goal', 'process', 'features', 'screens', 'techplan', 'handoff'],
+    resultExplanation: 'Пакет для разработки: техническое задание, права по ролям, схема данных, контракт API и кликабельный прототип. Код приложения пишет разработчик — BuildPath его не создаёт и не публикует.',
+  },
 };
 
-export function projectTypeOf(key: string | null | undefined): ProjectTypeDefinition | null {
+export function projectTypeOf
+
+(key: string | null | undefined): ProjectTypeDefinition | null {
   return key && key in projectTypes ? projectTypes[key as ProjectTypeKey] : null;
 }
 

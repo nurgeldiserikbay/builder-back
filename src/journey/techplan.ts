@@ -19,7 +19,7 @@ export interface Sequence { title: string; participants: string[]; messages: Arr
 export interface CoverageStep { scenario: string; actor: string; action: string; capability: Capability; status: 'built' | 'manual' | 'not_built'; how: string }
 export interface TechPlan {
   planVersion: string;
-  kind: 'booking' | 'site' | 'store';
+  kind: 'booking' | 'site' | 'store' | 'app';
   summary: string;
   /** Parts of the system and what each does. */
   components: TechPlanItem[];

@@ -19,6 +19,8 @@ import { ChangeNoticesService } from './change-notices.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { APPROVER_ROLES, approvalState, approveBlocker, checkPolicy, policyText, readPolicy, type ApprovalPolicy } from '../team/team-rules.js';
 import { qualityReport } from '../quality/quality.js';
+import { buildHandoff as buildHandoffPackage, renderPrototype, type AppFeatures, type AppScreens, type HandoffArtifact } from './webapp.js';
+import type { BusinessProcess } from './process.js';
 import { inProject, acceptRoles, editableProject, notEditableCode, normalizedOrRaw, SPECIALIST_READ_GRACE_MS, isUuid, validationError } from './journey-core.js';
 
 @Injectable()
@@ -218,9 +220,10 @@ export class JourneyService {
         })),
         current: current ? {
           id: current.id, versionNumber: current.versionNumber, origin: current.origin, note: current.note, createdAt: current.createdAt,
-          content: site ? { checks: site.checks, quality: site.quality ?? null, compiledAt: site.compiledAt, sourceVersionIds: site.sourceVersionIds } : current.content,
+          content: site ? { checks: site.checks, quality: site.quality ?? null, compiledAt: site.compiledAt, sourceVersionIds: site.sourceVersionIds }
+            : definition.artifactType === 'handoff' ? handoffView(current.content as unknown as HandoffArtifact) : current.content,
         } : null,
-        issues: current && definition.artifactType !== 'site' ? completenessIssues(definition.artifactType, current.content, await this.core.checkContext(ctx, stageKey)) : [],
+        issues: current && definition.artifactType !== 'site' && definition.artifactType !== 'handoff' ? completenessIssues(definition.artifactType, current.content, await this.core.checkContext(ctx, stageKey)) : [],
         versions: versions.map((version) => {
           const run = runs.find((item) => item.id === version.generationRunId);
           return {
@@ -235,7 +238,7 @@ export class JourneyService {
           configured: Boolean(ai), remainingToday: ai ? await this.core.remainingAiRuns(projectId) : 0,
           budget: assignment ? { limit: assignment.aiBudget, used: assignment.aiUsed } : null,
           month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null,
-          templateAvailable: !ai && (stageKey === 'content' || stageKey === 'design' || stageKey === 'process' || stageKey === 'sitemap'),
+          templateAvailable: !ai && (['content', 'design', 'process', 'sitemap', 'features', 'screens'] as string[]).includes(stageKey),
         },
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
@@ -255,7 +258,7 @@ export class JourneyService {
     const ctx = await this.core.load(userId, projectId, 'write', key);
     const stage = this.core.stageOf(ctx, key);
     const definition = stageDefinitions[key as StageKey];
-    if (definition.artifactType === 'site') throw new BadRequestException('STAGE_NOT_EDITABLE');
+    if (definition.artifactType === 'site' || definition.artifactType === 'handoff') throw new BadRequestException('STAGE_NOT_EDITABLE');
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     if ((input.baseVersionId ?? null) !== (stage.currentVersionId ?? null)) throw new ConflictException('STAGE_VERSION_CONFLICT');
     let content: unknown;
@@ -321,7 +324,7 @@ export class JourneyService {
     const ctx = await this.core.load(userId, projectId, 'write', key);
     const stage = this.core.stageOf(ctx, key);
     const definition = stageDefinitions[key as StageKey];
-    if (definition.artifactType === 'site') throw new BadRequestException('STAGE_NOT_EDITABLE');
+    if (definition.artifactType === 'site' || definition.artifactType === 'handoff') throw new BadRequestException('STAGE_NOT_EDITABLE');
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     if (!isUuid(versionId)) throw new NotFoundException('VERSION_NOT_FOUND');
     const source = await this.prisma.stageArtifactVersion.findFirst({ where: { id: versionId, stageId: stage.id }, select: { content: true, versionNumber: true } });
@@ -394,6 +397,45 @@ export class JourneyService {
     return { projectId: ctx.project.id, ownerUserId: ctx.project.ownerUserId };
   }
 
+  /**
+   * Clickable prototype of the web application: the current screens draft (or a given version of «Экраны») with the
+   * accepted functions. Pages link to each other by file name, so the same HTML works inside the app and in the package.
+   */
+  async prototype(userId: string, projectId: string, screenKey: string | null) {
+    const ctx = await this.core.load(userId, projectId, 'read', 'screens');
+    if (ctx.type.key !== 'web_app') throw new NotFoundException('PREVIEW_NOT_AVAILABLE');
+    const stage = this.core.stageOf(ctx, 'screens');
+    const current = await this.core.versionContent(stage.currentVersionId);
+    if (!current) throw new NotFoundException('PREVIEW_NOT_AVAILABLE');
+    const inputs = await this.core.acceptedInputs(ctx, 'screens');
+    const goal = this.core.stageOf(ctx, 'goal');
+    const brief = (await this.core.versionContent(goal.approvedVersionId ?? goal.currentVersionId))?.content as Brief | undefined;
+    const pages = renderPrototype({ brief: brief ?? null, features: (inputs.features?.content as AppFeatures | undefined) ?? null, screens: current.content as AppScreens, locale: ctx.project.locale });
+    const page = pages.find((item) => item.path === `${screenKey}.html`) ?? pages[0];
+    return { data: { html: page?.html ?? '', screen: page ? page.path.replace(/\.html$/, '') : null, versionNumber: current.versionNumber, screens: pages.map((item) => ({ key: item.path.replace(/\.html$/, ''), title: item.title })) } };
+  }
+
+  /** «Пакет для разработки»: everything a developer needs, built from the accepted stages; no AI and no code is run. */
+  async buildHandoff(userId: string, projectId: string) {
+    const ctx = await this.core.load(userId, projectId, 'write', 'handoff');
+    if (ctx.type.key !== 'web_app') throw new NotFoundException('STAGE_NOT_FOUND');
+    const stage = this.core.stageOf(ctx, 'handoff');
+    if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
+    if (!inputsSatisfied(ctx.route, ctx.dep, 'handoff')) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+    const inputs = await this.core.acceptedInputs(ctx, 'handoff');
+    const artifact = buildHandoffPackage({
+      brief: (inputs.goal?.content as Brief | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
+      features: inputs.features!.content as AppFeatures, screens: inputs.screens!.content as AppScreens, plan: inputs.techplan!.content as TechPlan,
+      locale: ctx.project.locale, sourceVersionIds: Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.versionId])),
+    });
+    const version = await this.prisma.$transaction(async (tx) => {
+      const created = await this.core.createVersion(tx, { projectId, stage, artifactType: 'handoff', content: artifact, origin: 'compiled', note: 'Пакет из принятых этапов', userId });
+      await this.core.event(tx, projectId, userId, 'handoff_built', 'handoff', { versionNumber: created.versionNumber, failed: artifact.checks.filter((check) => check.status === 'failed').map((check) => check.id), files: artifact.files.length });
+      return created;
+    });
+    return { data: { versionId: version.id, versionNumber: version.versionNumber, checks: artifact.checks } };
+  }
+
   async preview(userId: string, projectId: string, versionId: string | null, pagePath: string | null = null) {
     const ctx = await this.core.load(userId, projectId, 'read');
     const own = ctx.viewer.kind === 'specialist' ? ctx.viewer.assignments.map((item) => item.stageKey) : undefined;
@@ -439,7 +481,13 @@ export class JourneyService {
     const version = await this.core.versionContent(versionId);
     if (!version) throw new NotFoundException('VERSION_NOT_FOUND');
     if (definition.artifactType === 'techplan' && !sameTechPlan(await this.core.techPlanFor(ctx, stageKey, null), version.content as unknown as TechPlan)) throw new ConflictException('TECHPLAN_OUTDATED');
-    if (definition.artifactType === 'site') {
+    if (definition.artifactType === 'handoff') {
+      const pack = version.content as unknown as HandoffArtifact;
+      if (pack.checks.some((check) => check.required && check.status === 'failed')) throw new UnprocessableEntityException('REQUIRED_CHECKS_FAILED');
+      const inputs = await this.core.acceptedInputs(ctx, stageKey);
+      const current = Object.fromEntries(Object.entries(inputs).map(([inputKey, value]) => [inputKey, value.versionId]));
+      if (stableStringify(current) !== stableStringify(pack.sourceVersionIds)) throw new ConflictException('BUILD_OUTDATED');
+    } else if (definition.artifactType === 'site') {
       const site = version.content as unknown as SiteArtifact;
       if (site.checks.some((check) => check.required && check.status === 'failed')) throw new UnprocessableEntityException('REQUIRED_CHECKS_FAILED');
       // Builds made before the release gate have no quality report: they are built again rather than let through unchecked.
@@ -612,7 +660,7 @@ export class JourneyService {
     if (!inputsSatisfied(ctx.route, ctx.dep, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const version = await this.core.versionContent(versionId);
     const definition = stageDefinitions[stageKey];
-    if (version && definition.artifactType !== 'site') {
+    if (version && definition.artifactType !== 'site' && definition.artifactType !== 'handoff') {
       const issues = completenessIssues(definition.artifactType, version.content, await this.core.checkContext(ctx, key as StageKey));
       if (issues.length) throw new UnprocessableEntityException(`STAGE_INCOMPLETE:${issues.map((issue) => issue.key).join(',')}`);
     }
@@ -787,8 +835,10 @@ export class JourneyService {
     if (site) files.push({ name: 'site.html', mimeType: 'text/html', content: await this.core.inline(projectId, site.html) });
     // Other pages of a multi-page site, laid out as on a static host: /services → pages/services/index.html.
     for (const page of site?.pages ?? []) if (page.path !== '/') files.push({ name: `pages${page.path}/index.html`, mimeType: 'text/html', content: await this.core.inline(projectId, page.html) });
+    const pack = get<HandoffArtifact>('handoff');
+    for (const file of pack?.files ?? []) files.push({ name: `handoff/${file.name}`, mimeType: file.mimeType, content: file.content });
     const plan = get<TechPlan>('techplan');
-    if (plan) {
+    if (plan && !pack) {
       files.push({ name: 'architecture.md', mimeType: 'text/markdown', content: inProject(ctx, () => techPlanMarkdown(plan)) });
       if (plan.api || plan.kind === 'booking') files.push({ name: plan.kind === 'site' ? 'lead-api.yaml' : 'booking-api.yaml', mimeType: 'text/yaml', content: plan.api || inProject(ctx, () => bookingApiContract()) });
     }
@@ -796,7 +846,7 @@ export class JourneyService {
       name: 'project.json', mimeType: 'application/json',
       content: JSON.stringify({
         catalogVersion: ROUTE_CATALOG_VERSION, project: { name: ctx.project.name, type: ctx.type.key },
-        stages: stages.map((stage) => ({ key: stage.key, status: stage.status, acceptedVersion: stage.accepted?.versionNumber ?? null, content: stage.key === 'build' ? undefined : stage.accepted?.content ?? null })),
+        stages: stages.map((stage) => ({ key: stage.key, status: stage.status, acceptedVersion: stage.accepted?.versionNumber ?? null, content: stage.key === 'build' || stage.key === 'handoff' ? undefined : stage.accepted?.content ?? null })),
         openItems,
       }, null, 2),
     });
@@ -815,4 +865,9 @@ export class JourneyService {
   actOnChange(...args: Parameters<ChangeNoticesService['actOnChange']>) { return this.changes.actOnChange(...args); }
   setChangeResponseDays(...args: Parameters<ChangeNoticesService['setChangeResponseDays']>) { return this.changes.setChangeResponseDays(...args); }
   processChangeDeadlines(...args: Parameters<ChangeNoticesService['processChangeDeadlines']>) { return this.changes.processChangeDeadlines(...args); }
+}
+
+/** What the stage screen shows of a package: checks and the file list with sizes; the files themselves come with the result. */
+function handoffView(pack: HandoffArtifact) {
+  return { checks: pack.checks, compiledAt: pack.compiledAt, packageVersion: pack.packageVersion, sourceVersionIds: pack.sourceVersionIds, files: pack.files.map((file) => ({ name: file.name, bytes: Buffer.byteLength(file.content, 'utf8') })) };
 }

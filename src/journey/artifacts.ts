@@ -1,3 +1,4 @@
+import { featuresIssues, normalizeFeatures, normalizeScreens, screensIssues, type AppFeatures, type AppScreens } from './webapp.js';
 import type { QualityReport } from '../quality/gate.js';
 // Typed artifact schemas, deterministic validation, locking/merge rules, templates and text import.
 import { tr } from '../i18n/i18n.js';
@@ -209,6 +210,8 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown): unknown {
     case 'process': return normalizeProcess(raw);
     case 'sitemap': return normalizeSitemap(raw);
     case 'catalog': return normalizeCatalog(raw);
+    case 'features': return normalizeFeatures(raw);
+    case 'screens': return normalizeScreens(raw);
     default: throw new ArtifactValidationError('ARTIFACT_NOT_EDITABLE');
   }
 }
@@ -224,6 +227,8 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'process') return ['actors', 'scenarios', 'rules', 'data'];
   if (type === 'sitemap') return ['pages'];
   if (type === 'catalog') return ['products', 'delivery', 'payment', 'minOrder'];
+  if (type === 'features') return ['roles', 'features', 'sensitivity', 'integrations'];
+  if (type === 'screens') return ['screens'];
   return [];
 }
 
@@ -295,8 +300,10 @@ export function mergeProposal(type: ArtifactType, base: unknown | null, proposal
 export interface CompletenessIssue { key: string; message: string }
 
 /** context.sitemap: the accepted «Карта сайта», so texts of a multi-page site are checked page by page. */
-export function completenessIssues(type: ArtifactType, content: unknown, context: { sitemap?: Sitemap | null } = {}): CompletenessIssue[] {
+export function completenessIssues(type: ArtifactType, content: unknown, context: { sitemap?: Sitemap | null; features?: AppFeatures | null } = {}): CompletenessIssue[] {
   const issues: CompletenessIssue[] = [];
+  if (type === 'features') issues.push(...featuresIssues(content as AppFeatures));
+  if (type === 'screens') issues.push(...screensIssues(content as AppScreens, context.features ?? null));
   if (type === 'brief') {
     const brief = content as Brief;
     if (!brief.businessName) issues.push({ key: 'businessName', message: 'Укажите название.' });
