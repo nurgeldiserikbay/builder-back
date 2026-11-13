@@ -4,7 +4,7 @@ import { tr } from '../i18n/i18n.js';
 import { readPolicy } from '../team/team-rules.js';
 import { lockableKeys } from './artifacts.js';
 import { stageDefinitions, type StageKey } from './catalog.js';
-import { acceptRoles, isUuid, JourneyCore } from './journey-core.js';
+import { acceptRoles, editableProject, isUuid, JourneyCore } from './journey-core.js';
 
 export const COMMENT_LIMITS = { text: 2000, perStage: 300, files: 5, mentions: 10 };
 
@@ -67,7 +67,7 @@ export class CommentsService {
     return {
       data: {
         comments: top, openBlocking: top.filter((item) => item.blocking && !item.resolved).length, open: top.filter((item) => !item.resolved).length,
-        canWrite, canBlock, currentVersion: current?.versionNumber ?? null, files: stageFiles, people: mentionable, limits: { files: COMMENT_LIMITS.files, mentions: COMMENT_LIMITS.mentions },
+        canWrite, canBlock, canUpload: canWrite && this.core.canWrite(ctx, key) && editableProject(ctx.project.status), currentVersion: current?.versionNumber ?? null, files: stageFiles, people: mentionable, limits: { files: COMMENT_LIMITS.files, mentions: COMMENT_LIMITS.mentions },
         targets: current ? lockableKeys(stageDefinitions[key as StageKey].artifactType, current.content) : [],
       },
     };

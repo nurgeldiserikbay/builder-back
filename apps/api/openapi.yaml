@@ -2895,7 +2895,7 @@ paths:
         - $ref: '#/components/parameters/ProjectId'
         - $ref: '#/components/parameters/StageKey'
       responses:
-        '200': { description: 'comments[] (id, text, attachments[] (id, name, kind, sizeBytes or deleted), mentions[] (names), targetKey, versionNumber, blocking, author, mine, createdAt, resolved, resolvedAt, resolvedBy, canResolve, replies[] with attachments and mentions), openBlocking, open, canWrite, canBlock, currentVersion, targets[], files[] (stage files that can be attached), people[] (who can be mentioned; members only), limits' }
+        '200': { description: 'comments[] (id, text, attachments[] (id, name, kind, sizeBytes or deleted), mentions[] (names), targetKey, versionNumber, blocking, author, mine, createdAt, resolved, resolvedAt, resolvedBy, canResolve, replies[] with attachments and mentions), openBlocking, open, canWrite, canBlock, currentVersion, targets[], canUpload, files[] (stage files that can be attached), people[] (who can be mentioned; members only), limits' }
     post:
       tags: [Journey]
       operationId: addStageComment
