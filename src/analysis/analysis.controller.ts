@@ -89,6 +89,14 @@ export class AnalysisController {
     return this.analysis.get(request.user.id, projectId, runId);
   }
 
+  @Post('analysis-runs/:runId/findings/:findingId/remark')
+  toRemark(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('runId') runId: string, @Param('findingId') findingId: string, @Body() body: unknown) {
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => key !== 'stageKey')) throw new BadRequestException('INVALID_REQUEST_BODY');
+    const key = (body as { stageKey?: unknown }).stageKey;
+    if (typeof key !== 'string' || !/^[a-z]{2,20}$/.test(key) || !/^[A-Z_]{3,40}-[0-9a-f]{8}$/.test(findingId)) throw new BadRequestException('INVALID_STAGE_KEY');
+    return this.analysis.toRemark(request.user.id, projectId, runId, findingId, key);
+  }
+
   @Get('analysis-runs/:runId/export')
   async exportRun(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('runId') runId: string, @Query('format') format: string | undefined, @Res() response: Download) {
     const file = await this.analysis.export(request.user.id, projectId, runId, format ?? 'md');

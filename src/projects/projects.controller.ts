@@ -30,6 +30,15 @@ function optionalString(body: Record<string, unknown>, field: string, max: numbe
 export class ProjectsController {
   constructor(private readonly projects: ProjectsService) {}
 
+  @Post(':projectId/route')
+  addRoute(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const body = parseBody(raw);
+    rejectUnknown(body, ['projectType', 'startStageKey', 'locale']);
+    const locale = body.locale === undefined ? undefined : body.locale;
+    if (locale !== undefined && !locales.includes(locale as (typeof locales)[number])) throw new BadRequestException('INVALID_LOCALE');
+    return this.projects.addRoute(request.user.id, projectId, { projectType: requiredString(body, 'projectType', 2, 40), startStageKey: optionalString(body, 'startStageKey', 40), locale: locale as 'en' | 'ru' | 'kk' | undefined });
+  }
+
   @Get()
   async list(
     @Req() request: AuthenticatedRequest,

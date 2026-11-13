@@ -1997,4 +1997,5 @@ export const en: Record<string, string> = {
   "Документ не удалось прочитать: он повреждён или защищён паролем.": "The document could not be read: it is damaged or password-protected.",
   "Документ слишком большой для разбора (больше 200 страниц).": "The document is too large to analyse (more than 200 pages).",
   "Такой файл не разбирается: подойдут ZIP, PDF, Word и текст.": "This file cannot be analysed: ZIP, PDF, Word and text are supported.",
+  "Из разбора «{0}» от {1}.": "From the review of «{0}» on {1}.",
 };

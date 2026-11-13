@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { ROUTE_CATALOG_VERSION, projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
 import { initialStatuses } from '../journey/stage-state.js';
 import { BillingService } from '../billing/billing.service.js';
@@ -100,6 +100,36 @@ export class ProjectsService {
       return created;
     });
     return { data: project };
+  }
+
+  /**
+   * A project started as «Только анализ» gets a development route: the owner picks the type (and a later starting
+   * stage). Reports, files and the team stay; from now on it counts as a project on the owner's plan.
+   */
+  async addRoute(userId: string, projectId: string, input: { projectType: string; startStageKey?: string; locale?: 'en' | 'ru' | 'kk' }) {
+    if (!this.isUuid(projectId)) throw new NotFoundException('PROJECT_NOT_FOUND');
+    const project = await this.prisma.project.findFirst({ where: { id: projectId, members: { some: { userId, status: 'active' } } }, select: { id: true, ownerUserId: true, projectType: true, status: true } });
+    if (!project) throw new NotFoundException('PROJECT_NOT_FOUND');
+    if (project.ownerUserId !== userId) throw new ForbiddenException('ROUTE_OWNER_ONLY');
+    if (project.projectType) throw new ConflictException('PROJECT_HAS_ROUTE');
+    if (project.status === 'archived') throw new ConflictException('PROJECT_NOT_ACTIVE');
+    const type = projectTypeOf(input.projectType);
+    if (!type) throw new BadRequestException('INVALID_PROJECT_TYPE');
+    if (input.startStageKey && !type.stages.includes(input.startStageKey as StageKey)) throw new BadRequestException('INVALID_START_STAGE');
+    await this.billing.assertCanCreateProject(userId);
+    await this.prisma.$transaction(async (tx) => {
+      const changed = await tx.project.updateMany({
+        where: { id: projectId, projectType: null },
+        data: { projectType: type.key, routeVersion: ROUTE_CATALOG_VERSION, startStageKey: input.startStageKey ?? null, status: 'active', startMode: 'improve', ...(input.locale ? { locale: input.locale } : {}) },
+      });
+      if (changed.count !== 1) throw new ConflictException('PROJECT_HAS_ROUTE');
+      const statuses = initialStatuses(type.stages, (input.startStageKey as StageKey | undefined) ?? null);
+      await tx.projectStage.createMany({
+        data: type.stages.map((key, position) => ({ projectId, stageKey: key, position, status: statuses[key] ?? 'locked', definitionVersion: stageDefinitions[key].version })),
+      });
+      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'route_created', details: { projectType: type.key, routeVersion: ROUTE_CATALOG_VERSION, startStageKey: input.startStageKey ?? null, from: 'analysis_only' } } });
+    });
+    return this.get(userId, projectId);
   }
 
   async get(userId: string, projectId: string) {

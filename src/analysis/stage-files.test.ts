@@ -8,6 +8,8 @@ import { JourneyCore } from '../journey/journey-core.js';
 import { AnalysisRunner } from './analysis-runner.js';
 import { AnalysisService } from './analysis.service.js';
 import { StageFilesService } from './stage-files.service.js';
+import { CommentsService } from '../journey/comments.service.js';
+import { ProjectsService } from '../projects/projects.service.js';
 import { buildZip } from './zip-fixture.js';
 
 /** Stage files and read-only analysis runs — against DATABASE_URL; skipped without it. */
@@ -37,7 +39,7 @@ describe('stage files and code analysis (database)', async () => {
     core.provider = null;
     const files = new StageFilesService(prisma!, core);
     const runner = new AnalysisRunner(prisma!);
-    const analysis = new AnalysisService(prisma!, core, runner);
+    const analysis = new AnalysisService(prisma!, core, runner, new CommentsService(prisma!, core));
 
     const owner = await user('owner');
     const writer = await user('writer');
@@ -119,7 +121,7 @@ describe('stage files and code analysis (database)', async () => {
     const core = new JourneyCore(prisma!, billing);
     const files = new StageFilesService(prisma!, core);
     const runner = new AnalysisRunner(prisma!);
-    const analysis = new AnalysisService(prisma!, core, runner);
+    const analysis = new AnalysisService(prisma!, core, runner, new CommentsService(prisma!, core));
     const owner = await user('analyst');
     const watcher = await user('reader');
     const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
@@ -150,6 +152,25 @@ describe('stage files and code analysis (database)', async () => {
     assert.ok(docReport.findings.some((finding) => finding.code === 'DOC_TOO_SHORT'));
     await assert.rejects(files.removeSource(watcher.id, project.id, source.data.createdId), /FILE_DELETE_FORBIDDEN/);
     await files.removeSource(owner.id, project.id, source.data.createdId);
+
+    // A finding cannot become a remark until the project has stages; the owner adds a route, the reports stay.
+    const finding = (await analysis.get(owner.id, project.id, docRun.data.id)).data.report!.findings[0]!;
+    await assert.rejects(analysis.toRemark(owner.id, project.id, docRun.data.id, finding.id, 'goal'), /PROJECT_HAS_NO_ROUTE/);
+    const projects = new ProjectsService(prisma!, billing);
+    await assert.rejects(projects.addRoute(watcher.id, project.id, { projectType: 'landing' }), /ROUTE_OWNER_ONLY/);
+    await projects.addRoute(owner.id, project.id, { projectType: 'landing', locale: 'ru' });
+    await assert.rejects(projects.addRoute(owner.id, project.id, { projectType: 'landing' }), /PROJECT_HAS_ROUTE/);
+    const routed = await prisma!.project.findUniqueOrThrow({ where: { id: project.id }, select: { projectType: true, status: true, startMode: true, _count: { select: { stages: true, analysisRuns: true } } } });
+    assert.deepEqual([routed.projectType, routed.status, routed.startMode, routed._count.analysisRuns], ['landing', 'active', 'improve', 2]);
+    assert.ok(routed._count.stages >= 5);
+    assert.ok((await analysis.list(owner.id, project.id)).data.stages.some((stage) => stage.key === 'goal'));
+    const remark = await analysis.toRemark(owner.id, project.id, docRun.data.id, finding.id, 'goal');
+    const row = await prisma!.stageComment.findUniqueOrThrow({ where: { id: remark.data.commentId! } });
+    assert.ok(row.text.startsWith(`${finding.severityLabel}: ${finding.title}`));
+    assert.match(row.text, /Что сделать:/);
+    assert.match(row.text, /Из разбора «ТЗ.docx»/);
+    await assert.rejects(analysis.toRemark(watcher.id, project.id, docRun.data.id, finding.id, 'goal'), /COMMENT_FORBIDDEN/);
+    await assert.rejects(analysis.toRemark(owner.id, project.id, docRun.data.id, 'NOPE-00000000', 'goal'), /FINDING_NOT_FOUND/);
     assert.equal((await analysis.get(owner.id, project.id, run.data.id)).data.status, 'succeeded');
   });
 });
