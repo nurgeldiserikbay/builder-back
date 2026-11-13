@@ -162,10 +162,11 @@ export class QuickEditService {
     for (const notice of notices) await this.journey.actOnChange(userId, projectId, notice.id, { action: 'accept', text: null, resolution: null });
     if ((await this.prisma.projectStage.findUniqueOrThrow({ where: { id: build.id }, select: { status: true } })).status === 'approved') await this.journey.reopen(userId, projectId, 'build');
     const built = await this.journey.build(userId, projectId);
-    const failed = built.data.checks.filter((check) => check.required && check.status === 'failed');
-    if (failed.length) {
+    const failed = [...built.data.checks.filter((check) => check.required && check.status === 'failed').map((check) => check.id),
+      ...built.data.quality.findings.filter((finding) => finding.blocking).map((finding) => `quality:${finding.id}`)];
+    if (failed.length || built.data.quality.status === 'failed') {
       // The change is accepted, but the new build does not pass: the live site keeps the old version until it is fixed.
-      await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'quick_edit_checks_failed', stageKey: 'build', details: { source, checks: failed.map((check) => check.id) } } });
+      await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'quick_edit_checks_failed', stageKey: 'build', details: { source, checks: failed } } });
       throw new UnprocessableEntityException('QUICK_EDIT_CHECKS_FAILED');
     }
     await this.journey.accept(userId, projectId, 'build', built.data.versionId);

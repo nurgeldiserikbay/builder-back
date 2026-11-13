@@ -140,7 +140,8 @@ export class TelegramBotService {
         case 'B': {
           const result = await this.journey.build(userId, projectId);
           const failed = localizeDeep(result.data.checks, currentLocale()).filter((check) => check.required && check.status === 'failed');
-          await this.send(ctx, failed.length ? tr("Сайт собран, но не пройдены проверки: {0}.", [failed.map((check) => check.title).join(', ')]) : tr("Сайт собран, все обязательные проверки пройдены."));
+          const blocking = result.data.quality.findings.filter((finding) => finding.blocking);
+          await this.send(ctx, failed.length || blocking.length ? tr("Сайт собран, но не пройдены проверки: {0}.", [[...failed.map((check) => check.title), ...blocking.map((finding) => finding.title)].join(', ')]) : tr("Сайт собран, все обязательные проверки пройдены."));
           return this.showStage(ctx, projectId, stageKey);
         }
         case 'A': {

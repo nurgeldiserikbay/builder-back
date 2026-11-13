@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import type { SiteArtifact } from '../journey/artifacts.js';
 import { emailConfig } from '../notifications/email.js';
@@ -55,7 +55,7 @@ export class PublishingService {
     const version = await this.prisma.stageArtifactVersion.findUnique({ where: { id: stage.approvedVersionId }, select: { id: true, versionNumber: true, content: true } });
     if (!version) return null;
     const site = version.content as unknown as SiteArtifact;
-    return { versionId: version.id, versionNumber: version.versionNumber, hasForm: Boolean(site.meta?.hasForm), businessName: site.meta?.businessName ?? null };
+    return { versionId: version.id, versionNumber: version.versionNumber, hasForm: Boolean(site.meta?.hasForm), businessName: site.meta?.businessName ?? null, quality: site.quality ?? null };
   }
 
   async status(userId: string, projectId: string) {
@@ -75,7 +75,10 @@ export class PublishingService {
           domain: this.domainView(publication),
         } : null,
         domainsAvailable: Boolean(domainTarget()),
-        acceptedBuild: build ? { versionId: build.versionId, versionNumber: build.versionNumber, hasForm: build.hasForm } : null,
+        acceptedBuild: build ? {
+          versionId: build.versionId, versionNumber: build.versionNumber, hasForm: build.hasForm,
+          quality: build.quality ? { status: build.quality.status, summary: build.quality.summary, categories: build.quality.categories, profile: build.quality.profile } : null,
+        } : null,
         outdated: Boolean(publication && publication.status === 'live' && build && build.versionId !== publication.buildVersionId),
         // The live site shows an older build than the accepted one because the owner put it back.
         rolledBack: Boolean(publication && publication.status === 'live' && build && publishedVersion && publishedVersion.versionNumber < build.versionNumber),
@@ -106,6 +109,9 @@ export class PublishingService {
     if (!['active', 'live'].includes(project.status)) throw new ConflictException('PROJECT_NOT_ACTIVE');
     const build = await this.acceptedBuild(project);
     if (!build) throw new ConflictException('BUILD_NOT_ACCEPTED');
+    // The release gate: a build without a passed quality report does not go live (an earlier published build can still be put back).
+    if (!build.quality) throw new ConflictException('BUILD_NOT_QUALITY_CHECKED');
+    if (build.quality.status !== 'passed') throw new UnprocessableEntityException('QUALITY_GATE_FAILED');
     const problem = slugProblem(input.slug);
     if (problem) throw new BadRequestException('INVALID_SLUG');
     await this.billing.assertCanPublish(projectId);

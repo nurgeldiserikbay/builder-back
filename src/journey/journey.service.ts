@@ -18,6 +18,7 @@ import { StageAiService } from './stage-ai.service.js';
 import { ChangeNoticesService } from './change-notices.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { APPROVER_ROLES, approvalState, approveBlocker, checkPolicy, policyText, readPolicy, type ApprovalPolicy } from '../team/team-rules.js';
+import { qualityReport } from '../quality/quality.js';
 import { inProject, acceptRoles, editableProject, notEditableCode, normalizedOrRaw, SPECIALIST_READ_GRACE_MS, isUuid, validationError } from './journey-core.js';
 
 @Injectable()
@@ -217,7 +218,7 @@ export class JourneyService {
         })),
         current: current ? {
           id: current.id, versionNumber: current.versionNumber, origin: current.origin, note: current.note, createdAt: current.createdAt,
-          content: site ? { checks: site.checks, compiledAt: site.compiledAt, sourceVersionIds: site.sourceVersionIds } : current.content,
+          content: site ? { checks: site.checks, quality: site.quality ?? null, compiledAt: site.compiledAt, sourceVersionIds: site.sourceVersionIds } : current.content,
         } : null,
         issues: current && definition.artifactType !== 'site' ? completenessIssues(definition.artifactType, current.content, await this.core.checkContext(ctx, stageKey)) : [],
         versions: versions.map((version) => {
@@ -371,16 +372,20 @@ export class JourneyService {
     const sources = await this.core.renderSources(ctx, true);
     const renderInput = { ...sources.input, draft: false };
     const pages = renderPages(renderInput);
+    const quality = await inProject(ctx, () => qualityReport(this.prisma, projectId, pages));
     const site: SiteArtifact = {
-      html: pages[0]!.html, ...(renderInput.sitemap ? { pages } : {}), meta: siteMeta(renderInput), checks: checkSite(renderInput),
+      html: pages[0]!.html, ...(renderInput.sitemap ? { pages } : {}), meta: siteMeta(renderInput), checks: checkSite(renderInput), quality,
       sourceVersionIds: sources.versionIds, compiledAt: new Date().toISOString(),
     };
     const version = await this.prisma.$transaction(async (tx) => {
       const created = await this.core.createVersion(tx, { projectId, stage, artifactType: 'site', content: site, origin: 'compiled', note: 'Сборка из принятых этапов', userId });
-      await this.core.event(tx, projectId, userId, 'site_built', 'build', { versionNumber: created.versionNumber, failed: site.checks.filter((check) => check.status === 'failed').map((check) => check.id) });
+      await this.core.event(tx, projectId, userId, 'site_built', 'build', {
+        versionNumber: created.versionNumber, failed: site.checks.filter((check) => check.status === 'failed').map((check) => check.id),
+        quality: { status: quality.status, profile: quality.profile, auditVersion: quality.auditVersion, blocking: quality.findings.filter((finding) => finding.blocking).map((finding) => finding.id) },
+      });
       return created;
     });
-    return { data: { versionId: version.id, versionNumber: version.versionNumber, checks: site.checks } };
+    return { data: { versionId: version.id, versionNumber: version.versionNumber, checks: site.checks, quality } };
   }
 
   /** Photos belong to the «Структура и тексты» stage: whoever may read or edit that stage may see or change the photo library. */
@@ -437,6 +442,9 @@ export class JourneyService {
     if (definition.artifactType === 'site') {
       const site = version.content as unknown as SiteArtifact;
       if (site.checks.some((check) => check.required && check.status === 'failed')) throw new UnprocessableEntityException('REQUIRED_CHECKS_FAILED');
+      // Builds made before the release gate have no quality report: they are built again rather than let through unchecked.
+      if (!site.quality) throw new ConflictException('BUILD_NOT_QUALITY_CHECKED');
+      if (site.quality.status === 'failed') throw new UnprocessableEntityException('QUALITY_GATE_FAILED');
       const sources = await this.core.renderSources(ctx, true);
       if (stableStringify(sources.versionIds) !== stableStringify(site.sourceVersionIds)) throw new ConflictException('BUILD_OUTDATED');
     } else {
