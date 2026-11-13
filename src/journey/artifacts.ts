@@ -23,7 +23,9 @@ export const sectionTypes = ['hero', 'about', 'services', 'benefits', 'steps', '
 export type SectionType = (typeof sectionTypes)[number];
 export interface ContentItem { title: string; text: string }
 /** page: key of the «Карта сайта» page the block is on (multi-page sites only; absent means the single page). */
-export interface ContentSection { key: string; type: SectionType; title: string; text: string; items: ContentItem[]; buttonLabel: string | null; imageId: string | null; page?: string }
+/** gallery — up to 12 more photos shown as a grid under the text (absent when empty). */
+export interface ContentSection { key: string; type: SectionType; title: string; text: string; items: ContentItem[]; buttonLabel: string | null; imageId: string | null; gallery?: string[]; page?: string }
+export const GALLERY_LIMIT = 12;
 export interface PageSeo { page: string; title: string; description: string }
 /** seo is for the home page; pageSeo holds the other pages of a multi-page site. */
 export interface ContentArtifact { sections: ContentSection[]; seo: { title: string; description: string }; pageSeo?: PageSeo[] }
@@ -131,7 +133,15 @@ function imageIdOf(value: unknown, field: string): string | null {
 /** Photo ids used by a content artifact (for rendering and delete protection). */
 export function contentImageIds(content: unknown): string[] {
   const sections = (content as Partial<ContentArtifact> | null)?.sections ?? [];
-  return [...new Set(sections.map((section) => section.imageId).filter((id): id is string => Boolean(id)))];
+  return [...new Set(sections.flatMap((section) => [section.imageId, ...(section.gallery ?? [])]).filter((id): id is string => Boolean(id)))];
+}
+
+function galleryOf(value: unknown, field: string): string[] | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length > GALLERY_LIMIT) throw new ArtifactValidationError(`FIELD_INVALID:${field}`);
+  const ids = value.map((item, index) => imageIdOf(item, `${field}.${index}`)).filter((id): id is string => Boolean(id));
+  if (new Set(ids).size !== ids.length) throw new ArtifactValidationError(`FIELD_INVALID:${field}`);
+  return ids.length ? ids : null;
 }
 
 export function normalizeContent(raw: unknown): ContentArtifact {
@@ -158,6 +168,7 @@ export function normalizeContent(raw: unknown): ContentArtifact {
       }),
       buttonLabel: str(section.buttonLabel, `sections.${index}.buttonLabel`, 40, false),
       imageId: imageIdOf(section.imageId, `sections.${index}.imageId`),
+      ...((gallery) => (gallery ? { gallery } : {}))(galleryOf(section.gallery, `sections.${index}.gallery`)),
       ...(paged ? { page: typeof section.page === 'string' && /^[a-z][a-z0-9-]{0,23}$/.test(section.page) ? section.page : 'home' } : {}),
     };
   });
@@ -231,7 +242,7 @@ export function changedKeys(type: ArtifactType, before: unknown, after: unknown)
   // Choosing a photo is not a text edit: AI rewrites keep photos anyway, so a photo change must not lock the section's text.
   const comparable = (value: unknown) => {
     if (type !== 'content' || !value || typeof value !== 'object' || Array.isArray(value)) return value ?? null;
-    const { imageId: _photo, ...rest } = value as Record<string, unknown>;
+    const { imageId: _photo, gallery: _gallery, ...rest } = value as Record<string, unknown>;
     return rest;
   };
   return [...keys].filter((key) => stableStringify(comparable(valueAt(type, before, key))) !== stableStringify(comparable(valueAt(type, after, key)))
@@ -249,17 +260,19 @@ export function mergeProposal(type: ArtifactType, base: unknown | null, proposal
     const baseContent = base as ContentArtifact;
     const next = proposal as ContentArtifact;
     const photoOf = (key: string) => baseContent.sections.find((section) => section.key === key)?.imageId ?? null;
+    // Photos are chosen by people: an AI rewrite keeps the section's gallery as it was.
+    const galleryFrom = (key: string, proposed?: string[]) => { const kept = proposed ?? baseContent.sections.find((section) => section.key === key)?.gallery; return kept?.length ? { gallery: kept } : {}; };
     if (targetKey) {
       if (targetKey === 'seo') return { ...baseContent, seo: next.seo, ...(next.pageSeo ? { pageSeo: next.pageSeo } : {}) };
       const replacement = next.sections.find((section) => section.key === targetKey) ?? next.sections[0];
       if (!replacement) return baseContent;
-      return { ...baseContent, sections: baseContent.sections.map((section) => (section.key === targetKey ? { ...replacement, key: targetKey, imageId: replacement.imageId ?? section.imageId ?? null, ...(section.page ? { page: section.page } : {}) } : section)) };
+      return { ...baseContent, sections: baseContent.sections.map((section) => (section.key === targetKey ? { ...replacement, key: targetKey, imageId: replacement.imageId ?? section.imageId ?? null, ...galleryFrom(targetKey, replacement.gallery), ...(section.page ? { page: section.page } : {}) } : section)) };
     }
     const proposedByKey = new Map(next.sections.map((section) => [section.key, section]));
     const sections: ContentSection[] = [];
     for (const section of next.sections) {
       const locked = baseContent.sections.find((item) => item.key === section.key && keep.has(item.key));
-      sections.push(locked ?? { ...section, imageId: section.imageId ?? photoOf(section.key) });
+      sections.push(locked ?? { ...section, imageId: section.imageId ?? photoOf(section.key), ...galleryFrom(section.key, section.gallery) });
     }
     // Locked sections are never dropped by a full regeneration.
     for (const section of baseContent.sections) {

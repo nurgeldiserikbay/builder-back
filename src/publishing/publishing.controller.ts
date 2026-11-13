@@ -67,9 +67,10 @@ export class PublishingController {
   @HttpCode(200)
   @UseGuards(AuthGuard)
   settings(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
-    const input = body(raw, ['notifyTelegram', 'notifyEmail']);
+    const input = body(raw, ['notifyTelegram', 'notifyEmail', 'formQuestion']);
     if (typeof input.notifyTelegram !== 'boolean' || typeof input.notifyEmail !== 'boolean') throw new BadRequestException('INVALID_SETTINGS');
-    return this.publishing.settings(request.user.id, projectId, { notifyTelegram: input.notifyTelegram, notifyEmail: input.notifyEmail });
+    if (input.formQuestion !== undefined && typeof input.formQuestion !== 'boolean') throw new BadRequestException('INVALID_SETTINGS');
+    return this.publishing.settings(request.user.id, projectId, { notifyTelegram: input.notifyTelegram, notifyEmail: input.notifyEmail, ...(input.formQuestion !== undefined ? { formQuestion: input.formQuestion } : {}) });
   }
 
   @Post('projects/:projectId/publication/domain')

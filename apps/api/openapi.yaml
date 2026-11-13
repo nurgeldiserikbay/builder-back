@@ -3304,6 +3304,35 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/images/{imageId}/crop:
+    post:
+      tags: [Images]
+      operationId: cropProjectImage
+      summary: Add a cropped copy of a photo to the library (the original stays)
+      description: The rectangle is in fractions of the stored photo (0–1); at least 64 px each side. The copy is re-encoded like an upload, keeps the description and counts toward the 30-photo limit. Sections can also show a gallery — content sections take an optional gallery of up to 12 photo ids, rendered as a grid; AI rewrites keep photos and galleries as they were.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: imageId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [x, y, width, height]
+              properties:
+                x: { type: number, minimum: 0, maximum: 1 }
+                y: { type: number, minimum: 0, maximum: 1 }
+                width: { type: number, minimum: 0, maximum: 1 }
+                height: { type: number, minimum: 0, maximum: 1 }
+      responses:
+        '201': { description: 'The new photo: id, width, height, sizeBytes, alt, createdAt, inUse' }
+        '400': { description: 'CROP_INVALID, CROP_TOO_SMALL' }
+        '404': { description: IMAGE_NOT_FOUND }
+        '409': { description: IMAGE_LIMIT_REACHED }
   /projects/{projectId}/images/{imageId}/alt:
     post:
       tags: [Images]
@@ -6023,6 +6052,7 @@ components:
       properties:
         notifyTelegram: { type: boolean }
         notifyEmail: { type: boolean }
+        formQuestion: { type: boolean, description: 'Ask a short arithmetic question in forms on the site (lead, booking, order). Every form already carries a signed time token: a form sent within 3 seconds of opening the page is answered like a success but not saved; older than 24 hours, forged or missing on a page built with it — «reload the page». Works without scripts or third-party captchas.' }
     PublicationResponse:
       type: object
       required: [data]

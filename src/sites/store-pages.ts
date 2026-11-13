@@ -1,3 +1,4 @@
+import { guardFields } from './form-guard.js';
 // Script-free pages of a published store: cart (kept in the address) → order form → «Ваш заказ».
 import type { SiteMeta } from '../journey/artifacts.js';
 import { escapeHtml } from '../journey/site-renderer.js';
@@ -58,6 +59,7 @@ ${short ? '' : `<form method="post" action="${ORDER_FORM_PATH}"><input type="hid
 ${needsAddress ? `<label>${tr('Адрес доставки')}<small>${tr('Нужен, если выбрали доставку.')}</small><textarea name="address" maxlength="300" autocomplete="street-address">${escapeHtml(values.address ?? '')}</textarea></label>` : ''}
 <label>${tr('Комментарий (необязательно)')}<textarea name="comment" maxlength="300">${escapeHtml(values.comment ?? '')}</textarea></label>
 <div class="hp" aria-hidden="true"><label>${tr('Сайт')}<input name="website" tabindex="-1" autocomplete="off"></label></div>
+${guardFields()}
 <label class="consent"><input type="checkbox" name="consent" value="yes" required><span>${tr('Согласен(на) на обработку моих данных для заказа.')} <a href="/privacy">${tr('Как используются данные')}</a></span></label>
 <button type="submit">${tr('Оформить заказ')}</button></form>`}<a class="back" href="/#catalog">← ${tr('Продолжить покупки')}</a>`);
 }

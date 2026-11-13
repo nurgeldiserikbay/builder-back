@@ -173,6 +173,8 @@ model User {
   emailVerifiedAt          DateTime?                 @map("email_verified_at") @db.Timestamptz(3)
   /// Set when the owner deletes the account. Data is kept for the retention period from PrivacySettings, then purged.
   deletionRequestedAt      DateTime?                 @map("deletion_requested_at") @db.Timestamptz(3)
+  /// The person allowed sending voice messages to the speech recognition provider (asked in the bot before the first one).
+  voiceConsentAt           DateTime?                 @map("voice_consent_at") @db.Timestamptz(3)
   createdAt                DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt                DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
   sessions                 UserSession[]
@@ -984,6 +986,8 @@ model SitePublication {
   orders            StoreOrder[]
 
   @@map("site_publications")
+  /// Owner turned on the arithmetic question in forms (spam protection without scripts).
+  formQuestion      Boolean               @default(false) @map("form_question")
 }
 
 model SiteLead {
@@ -1083,6 +1087,8 @@ model TelegramChatState {
   stageKey     String?   @map("stage_key") @db.VarChar(40)
   pending      String?   @db.VarChar(40)
   pendingUntil DateTime? @map("pending_until") @db.Timestamptz(3)
+  /// Recognised text of a voice message waiting for «Выполнить», or the voice file id waiting for consent.
+  pendingText  String?   @map("pending_text") @db.VarChar(1000)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   project      Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)

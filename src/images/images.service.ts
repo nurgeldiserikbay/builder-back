@@ -3,7 +3,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { contentImageIds } from '../journey/artifacts.js';
 import { scanRequired, scanWithClamAv } from '../security/clamav.js';
-import { ImageRejectedError, MAX_UPLOAD_BYTES, detectImageType, processImage } from './image-processing.js';
+import { ImageRejectedError, MAX_UPLOAD_BYTES, cropBox, cropImage, detectImageType, processImage } from './image-processing.js';
 
 export const MAX_IMAGES_PER_PROJECT = 30;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -63,6 +63,28 @@ export class ImagesService {
     const image = await this.prisma.projectImage.findFirst({ where: { id: imageId, projectId }, select: { data: true, sha256: true } });
     if (!image) throw new NotFoundException('IMAGE_NOT_FOUND');
     return { data: Buffer.from(image.data), etag: image.sha256 };
+  }
+
+  /**
+   * A cropped copy of a photo in the library: the original stays as it is (it may be used elsewhere on the site),
+   * the copy keeps its description and counts toward the library limit.
+   */
+  async crop(userId: string, projectId: string, imageId: string, rect: unknown) {
+    await this.journey.assertImageAccess(userId, projectId, 'write');
+    if (!uuid.test(imageId)) throw new NotFoundException('IMAGE_NOT_FOUND');
+    const image = await this.prisma.projectImage.findFirst({ where: { id: imageId, projectId }, select: { data: true, width: true, height: true, alt: true } });
+    if (!image) throw new NotFoundException('IMAGE_NOT_FOUND');
+    const box = cropBox(rect, image);
+    if (typeof box === 'string') throw new BadRequestException(box);
+    const count = await this.prisma.projectImage.count({ where: { projectId } });
+    if (count >= MAX_IMAGES_PER_PROJECT) throw new ConflictException('IMAGE_LIMIT_REACHED');
+    let processed;
+    try { processed = await cropImage(Buffer.from(image.data), box); } catch { throw new UnprocessableEntityException('IMAGE_UNREADABLE'); }
+    const created = await this.prisma.projectImage.create({
+      data: { projectId, data: new Uint8Array(processed.data), width: processed.width, height: processed.height, sizeBytes: processed.data.length, sha256: processed.sha256, alt: image.alt, createdByUserId: userId },
+      select: listFields,
+    });
+    return { data: { ...created, inUse: false } };
   }
 
   async setAlt(userId: string, projectId: string, imageId: string, alt: unknown) {

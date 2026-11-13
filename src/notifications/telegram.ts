@@ -65,3 +65,21 @@ export function verifyWebAppInitData(initData: string, botToken: string, maxAgeS
     return null;
   }
 }
+
+/** Downloads a file a user sent (voice message) through getFile; null when it is missing or larger than maxBytes. */
+export async function downloadTelegramFile(config: TelegramConfig, fileId: string, maxBytes: number, fetchImpl: typeof fetch = fetch): Promise<Buffer | null> {
+  try {
+    const info = await fetchImpl(`${config.apiBase}/bot${config.token}/getFile`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file_id: fileId }), signal: AbortSignal.timeout(8000) });
+    if (!info.ok) return null;
+    const body = await info.json() as { ok?: boolean; result?: { file_path?: string; file_size?: number } };
+    const path = body.result?.file_path;
+    if (!body.ok || typeof path !== 'string' || !/^[\w./-]{1,200}$/.test(path) || path.includes('..')) return null;
+    if ((body.result?.file_size ?? 0) > maxBytes) return null;
+    const file = await fetchImpl(`${config.apiBase}/file/bot${config.token}/${path}`, { signal: AbortSignal.timeout(20_000) });
+    if (!file.ok) return null;
+    const data = Buffer.from(await file.arrayBuffer());
+    return data.length <= maxBytes ? data : null;
+  } catch {
+    return null;
+  }
+}

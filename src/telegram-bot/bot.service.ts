@@ -3,12 +3,17 @@ import { HttpException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { SpecialistsService } from '../journey/specialists.service.js';
-import { answerCallbackQuery, sendTelegramMessage, telegramConfig, type InlineKeyboard, type TelegramConfig } from '../notifications/telegram.js';
+import { answerCallbackQuery, downloadTelegramFile, sendTelegramMessage, telegramConfig, type InlineKeyboard, type TelegramConfig } from '../notifications/telegram.js';
+import { transcribe, transcribeConfig, VOICE_LIMITS } from './transcribe.js';
 import { artifactSummary, errorText, helpText, statusEmoji } from './bot-texts.js';
 
 const PENDING_TTL_MS = 15 * 60 * 1000;
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 type Pending = 'instruction' | 'changes_note' | 'suggestion';
+const PENDING_KINDS: Pending[] = ['instruction', 'changes_note', 'suggestion'];
+/** «voice:<kind>» — recognised text waits for «Выполнить»; «voice_consent:<kind>» — a voice file waits for consent. */
+type VoicePending = `voice:${Pending}` | `voice_consent:${Pending}`;
+export type VoiceMessage = { fileId: string; duration: number; size: number | null };
 type Ctx = { config: TelegramConfig; chatId: string; userId: string };
 
 /**
@@ -36,16 +41,16 @@ export class TelegramBotService {
     return this.prisma.telegramChatState.findUnique({ where: { chatId } });
   }
 
-  private async setState(ctx: Ctx, data: { projectId?: string | null; stageKey?: string | null; pending?: Pending | null }) {
+  private async setState(ctx: Ctx, data: { projectId?: string | null; stageKey?: string | null; pending?: Pending | VoicePending | null; pendingText?: string | null }) {
     const pending = data.pending === undefined ? undefined : data.pending;
     await this.prisma.telegramChatState.upsert({
       where: { chatId: ctx.chatId },
-      create: { chatId: ctx.chatId, userId: ctx.userId, projectId: data.projectId ?? null, stageKey: data.stageKey ?? null, pending: pending ?? null, pendingUntil: pending ? new Date(Date.now() + PENDING_TTL_MS) : null },
+      create: { chatId: ctx.chatId, userId: ctx.userId, projectId: data.projectId ?? null, stageKey: data.stageKey ?? null, pending: pending ?? null, pendingUntil: pending ? new Date(Date.now() + PENDING_TTL_MS) : null, pendingText: data.pendingText ?? null },
       update: {
         userId: ctx.userId,
         ...(data.projectId !== undefined ? { projectId: data.projectId } : {}),
         ...(data.stageKey !== undefined ? { stageKey: data.stageKey } : {}),
-        ...(pending !== undefined ? { pending, pendingUntil: pending ? new Date(Date.now() + PENDING_TTL_MS) : null } : {}),
+        ...(pending !== undefined ? { pending, pendingUntil: pending ? new Date(Date.now() + PENDING_TTL_MS) : null, pendingText: data.pendingText ?? null } : {}),
       },
     });
   }
@@ -65,29 +70,75 @@ export class TelegramBotService {
     return runWithLocale(contentLocale(user?.locale), work);
   }
 
-  async onMessage(userId: string, chatId: string, text: string | null, kind: 'text' | 'voice' | 'other') {
-    return this.inUserLocale(userId, () => this.handleMessage(userId, chatId, text, kind));
+  async onMessage(userId: string, chatId: string, text: string | null, kind: 'text' | 'voice' | 'other', voice?: VoiceMessage) {
+    return this.inUserLocale(userId, () => this.handleMessage(userId, chatId, text, kind, voice));
   }
 
-  private async handleMessage(userId: string, chatId: string, text: string | null, kind: 'text' | 'voice' | 'other') {
+  /** What the bot is waiting for in this chat, if anything: the kind of text and whether a voice step is in between. */
+  private async waiting(chatId: string, userId: string) {
+    const state = await this.state(chatId);
+    if (!state || state.userId !== userId || !state.pending || !state.pendingUntil || state.pendingUntil <= new Date() || !state.projectId || !state.stageKey) return null;
+    const [step, kind] = state.pending.includes(':') ? state.pending.split(':') as [string, Pending] : [null, state.pending as Pending];
+    if (!PENDING_KINDS.includes(kind)) return null;
+    return { state, projectId: state.projectId, stageKey: state.stageKey, kind, step: step as 'voice' | 'voice_consent' | null };
+  }
+
+  private async handleVoice(ctx: Ctx, voice: VoiceMessage | undefined) {
+    if (!transcribeConfig() || !voice) return void this.send(ctx, tr("Голосовые сообщения пока не поддерживаются — напишите, пожалуйста, текстом."));
+    const waiting = await this.waiting(ctx.chatId, ctx.userId);
+    // Voice is only recognised when the bot waits for a text, so nothing is sent to the provider by accident.
+    if (!waiting) return void this.send(ctx, tr("Голосом можно ответить, когда бот ждёт ваш текст: откройте этап и нажмите «Попросить ИИ». Наберите /projects, чтобы выбрать проект."), [[{ text: tr("📂 Мои проекты"), callback_data: 'L' }]]);
+    if (voice.duration > VOICE_LIMITS.seconds || (voice.size ?? 0) > VOICE_LIMITS.bytes) return void this.send(ctx, tr("Голосовое длиннее {0} секунд — скажите короче или напишите текстом.", [VOICE_LIMITS.seconds]));
+    const user = await this.prisma.user.findUnique({ where: { id: ctx.userId }, select: { voiceConsentAt: true } });
+    if (!user?.voiceConsentAt) {
+      await this.setState(ctx, { pending: `voice_consent:${waiting.kind}`, pendingText: voice.fileId });
+      return void this.send(ctx, tr("Чтобы понять голосовое, бот отправит запись в сервис распознавания речи OpenAI (США). Запись не хранится: остаётся только текст, который вы увидите и подтвердите. Разрешить?"),
+        [[{ text: tr("✅ Разрешить"), callback_data: 'VC' }, { text: tr("Отмена"), callback_data: `S:${waiting.stageKey}` }]]);
+    }
+    return this.recognise(ctx, waiting.projectId, waiting.stageKey, waiting.kind, voice.fileId);
+  }
+
+  private async recognise(ctx: Ctx, projectId: string, stageKey: string, kind: Pending, fileId: string) {
+    const config = transcribeConfig();
+    if (!config) return void this.send(ctx, tr("Голосовые сообщения пока не поддерживаются — напишите, пожалуйста, текстом."));
+    const today = await this.prisma.projectEvent.count({ where: { actorUserId: ctx.userId, type: 'voice_transcribed', createdAt: { gte: new Date(Date.now() - 86_400_000) } } });
+    if (today >= VOICE_LIMITS.perDay) return void this.send(ctx, tr("На сегодня лимит голосовых исчерпан — напишите, пожалуйста, текстом."));
+    await this.send(ctx, tr("🎙 Слушаю…"));
+    const audio = await downloadTelegramFile(ctx.config, fileId, VOICE_LIMITS.bytes);
+    const user = await this.prisma.user.findUnique({ where: { id: ctx.userId }, select: { locale: true } });
+    const text = audio ? await transcribe(config, audio, user?.locale === 'en' ? 'en' : user?.locale === 'kk' ? 'kk' : 'ru') : null;
+    if (!text) { await this.setState(ctx, { pending: kind }); return void this.send(ctx, tr("Не получилось разобрать голосовое. Скажите ещё раз или напишите текстом.")); }
+    await this.prisma.projectEvent.create({ data: { projectId, actorUserId: ctx.userId, type: 'voice_transcribed', stageKey, details: { kind, characters: text.length } } });
+    const clipped = text.slice(0, 1000);
+    await this.setState(ctx, { pending: `voice:${kind}`, pendingText: clipped });
+    return void this.send(ctx, tr("Я услышал:\n«{0}»\n\nВыполнить?", [clipped]),
+      [[{ text: tr("✅ Выполнить"), callback_data: 'VY' }, { text: tr("✏️ Написать текстом"), callback_data: 'VE' }], [{ text: tr("Отмена"), callback_data: `S:${stageKey}` }]]);
+  }
+
+  private async handleMessage(userId: string, chatId: string, text: string | null, kind: 'text' | 'voice' | 'other', voice?: VoiceMessage) {
     const config = telegramConfig();
     if (!config) return;
     const ctx: Ctx = { config, chatId, userId };
-    if (kind === 'voice') return void this.send(ctx, tr("Голосовые сообщения пока не поддерживаются — напишите, пожалуйста, текстом."));
+    if (kind === 'voice') return this.guarded(ctx, () => this.handleVoice(ctx, voice));
     if (kind !== 'text' || !text) return void this.send(ctx, tr("Я понимаю только текст. Наберите /projects, чтобы открыть проекты."));
     const trimmed = text.trim();
     if (/^\/(projects|menu)(@\w+)?$/i.test(trimmed) || /^(проекты|projects)$/i.test(trimmed)) { await this.setState(ctx, { pending: null }); return this.guarded(ctx, () => this.showProjects(ctx)); }
     if (/^\/(help|start)(@\w+)?$/i.test(trimmed)) return void this.send(ctx, helpText(), [[{ text: tr("📂 Мои проекты"), callback_data: 'L' }]]);
     if (/^\/cancel(@\w+)?$/i.test(trimmed) || /^(отмена|cancel)$/i.test(trimmed)) { await this.setState(ctx, { pending: null }); return void this.send(ctx, tr("Хорошо, отменил.")); }
 
-    const state = await this.state(chatId);
-    const pending = state && state.userId === userId && state.pending && state.pendingUntil && state.pendingUntil > new Date() ? state.pending as Pending : null;
-    if (!pending || !state?.projectId || !state.stageKey) {
+    // A typed message answers what the bot waits for, also instead of a recognised voice message.
+    const waiting = await this.waiting(chatId, userId);
+    if (!waiting) {
       return void this.send(ctx, tr("Чтобы что-то изменить, откройте этап и нажмите «Попросить ИИ». Наберите /projects, чтобы выбрать проект."), [[{ text: tr("📂 Мои проекты"), callback_data: 'L' }]]);
     }
     if (trimmed.length < 2 || trimmed.length > 1000) return void this.send(ctx, tr("Напишите от 2 до 1000 символов или /cancel, чтобы отменить."));
     await this.setState(ctx, { pending: null });
-    const { projectId, stageKey } = state;
+    await this.act(ctx, waiting.projectId, waiting.stageKey, waiting.kind, trimmed);
+  }
+
+  /** Does what the person asked for with the text they typed or confirmed after a voice message. */
+  private async act(ctx: Ctx, projectId: string, stageKey: string, pending: Pending, trimmed: string) {
+    const userId = ctx.userId;
     await this.guarded(ctx, async () => {
       if (pending === 'instruction') {
         await this.send(ctx, tr("✨ ИИ работает — обычно это занимает до минуты…"));
@@ -115,6 +166,7 @@ export class TelegramBotService {
     await answerCallbackQuery(config, callbackId);
     const [action, arg] = [data.slice(0, data.indexOf(':') >= 0 ? data.indexOf(':') : data.length), data.includes(':') ? data.slice(data.indexOf(':') + 1) : ''];
     if (action === 'L') return this.guarded(ctx, () => this.showProjects(ctx));
+    if (action === 'VC' || action === 'VY' || action === 'VE') return this.guarded(ctx, () => this.voiceCallback(ctx, action));
     // Access is checked by JourneyService before the chat context is saved.
     if (action === 'P' && isUuid(arg)) return this.guarded(ctx, async () => { await this.showProject(ctx, arg); await this.setState(ctx, { projectId: arg, stageKey: null, pending: null }); });
     const state = await this.state(chatId);
@@ -180,6 +232,22 @@ export class TelegramBotService {
           return this.showStage(ctx, projectId, stageKey);
       }
     });
+  }
+
+  private async voiceCallback(ctx: Ctx, action: 'VC' | 'VY' | 'VE') {
+    const waiting = await this.waiting(ctx.chatId, ctx.userId);
+    if (!waiting || !waiting.step) return void this.send(ctx, tr("Это голосовое уже неактуально. Наберите /projects, чтобы продолжить."));
+    if (action === 'VE') { await this.setState(ctx, { pending: waiting.kind }); return void this.send(ctx, tr("Хорошо, напишите текстом.\n\nОтменить — /cancel")); }
+    if (action === 'VC' && waiting.step === 'voice_consent' && waiting.state.pendingText) {
+      await this.prisma.user.update({ where: { id: ctx.userId }, data: { voiceConsentAt: new Date() } });
+      await this.prisma.projectEvent.create({ data: { projectId: waiting.projectId, actorUserId: ctx.userId, type: 'voice_consent_given', stageKey: waiting.stageKey, details: {} } });
+      return this.recognise(ctx, waiting.projectId, waiting.stageKey, waiting.kind, waiting.state.pendingText);
+    }
+    if (action === 'VY' && waiting.step === 'voice' && waiting.state.pendingText) {
+      await this.setState(ctx, { pending: null });
+      return this.act(ctx, waiting.projectId, waiting.stageKey, waiting.kind, waiting.state.pendingText);
+    }
+    return void this.send(ctx, tr("Это голосовое уже неактуально. Наберите /projects, чтобы продолжить."));
   }
 
   private async showProjects(ctx: Ctx) {

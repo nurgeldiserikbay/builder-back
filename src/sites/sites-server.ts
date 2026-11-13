@@ -3,6 +3,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import type { PrismaClient } from '../generated/prisma/client.js';
+import { checkGuard, guardHtml, TOKEN_PLACEHOLDER } from './form-guard.js';
 import type { SiteArtifact, SiteMeta } from '../journey/artifacts.js';
 import { LEAD_FORM_PATH, pageCsp } from '../journey/site-renderer.js';
 import { notifyLead } from '../notifications/lead-notifier.js';
@@ -27,6 +28,8 @@ export interface SitesServerOptions {
   urlFor: (slug: string) => string;
   trustProxy: boolean;
   ipSalt: string;
+  /** Signs form tokens; SITES_FORM_SECRET, or the address salt when it is not set. */
+  formSecret: string;
   retentionDays: number;
   /** Mail is configured, so the booking form offers an e-mail reminder. */
   remindersByEmail: boolean;
@@ -43,9 +46,11 @@ export interface SitesServerOptions {
 export function sitesOptionsFromEnv(prisma: PrismaClient, env: NodeJS.ProcessEnv = process.env): SitesServerOptions {
   const config = sitesConfig(env);
   const retention = Number(env.LEAD_RETENTION_DAYS ?? 365);
+  const ipSalt = env.SITES_IP_HASH_SALT || randomBytes(16).toString('hex');
   return {
     baseDomain: config.baseDomain, urlFor: config.urlFor, trustProxy: env.SITES_TRUST_PROXY === 'true',
-    ipSalt: env.SITES_IP_HASH_SALT || randomBytes(16).toString('hex'),
+    ipSalt,
+    formSecret: env.SITES_FORM_SECRET || ipSalt,
     retentionDays: Number.isInteger(retention) && retention > 0 ? retention : 365,
     remindersByEmail: Boolean(emailConfig(env)) && env.BOOKING_EMAIL_REMINDERS !== 'off',
     https: config.urlTemplate.startsWith('https://'), perIpPerHour: 5, perSitePerDay: 200,
@@ -63,7 +68,8 @@ function validTimeZone(value: string | undefined): string | null {
 
 /** `hosts` are the addresses this site answers on: its BuildPath subdomain and, once DNS was checked, the owner's own domain. */
 /** pages: other pages of a multi-page site by path («/services»); the home page is html. */
-type Site = { publicationId: string; projectId: string; html: string; pages: Map<string, string>; meta: SiteMeta | null; hasForm: boolean; canonical: string; hosts: string[] };
+/** guarded — the build writes a form token placeholder (builds since the form guard); formQuestion — the owner's setting. */
+type Site = { publicationId: string; projectId: string; html: string; pages: Map<string, string>; meta: SiteMeta | null; hasForm: boolean; canonical: string; hosts: string[]; guarded: boolean; formQuestion: boolean };
 
 export function createSitesServer(prisma: PrismaClient, options: SitesServerOptions) {
   const cache = new Map<string, { site: Site | null; expires: number }>();
@@ -73,7 +79,7 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     const cached = cache.get(key);
     if (cached && cached.expires > Date.now()) return cached.site;
     const publication = await prisma.sitePublication.findUnique({
-      where, select: { id: true, projectId: true, status: true, buildVersionId: true, slug: true, customDomain: true, domainStatus: true },
+      where, select: { id: true, projectId: true, status: true, buildVersionId: true, slug: true, customDomain: true, domainStatus: true, formQuestion: true },
     });
     let site: Site | null = null;
     const ownDomain = publication?.domainStatus === 'active' ? publication.customDomain : null;
@@ -87,6 +93,7 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
           publicationId: publication.id, projectId: publication.projectId, html: artifact.html,
           pages: new Map((artifact.pages ?? []).filter((page) => page.path !== '/').map((page) => [page.path, page.html])), meta: artifact.meta ?? null, hasForm: Boolean(artifact.meta?.hasForm),
           canonical, hosts: [new URL(platformUrl).host, ...(ownDomain ? [ownDomain] : [])],
+          guarded: artifact.html.includes(TOKEN_PLACEHOLDER), formQuestion: publication.formQuestion,
         };
       }
     }
@@ -115,6 +122,11 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     });
     response.end(body);
   }
+
+  /** Every page with a form gets a fresh signed token (and the question, when the owner turned it on). */
+  const guard = (site: Site, html: string) => guardHtml(html, { secret: options.formSecret, siteId: site.publicationId, question: site.formQuestion });
+  /** dynamic — booking and cart pages are rendered by this server, so their forms always carry a token. */
+  const guardCheck = (site: Site, raw: string, dynamic: boolean) => checkGuard(new URLSearchParams(raw), { secret: options.formSecret, siteId: site.publicationId, question: site.formQuestion, required: dynamic || site.guarded });
 
   /** Serves only photos that the published page itself shows, so unpublished photos in the project library stay private. */
   async function sendImage(response: ServerResponse, site: Site, id: string, head: boolean) {
@@ -159,6 +171,9 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     }
     const raw = await readBody(request, 10_000);
     if (raw === null) return send(response, 413, messagePage(site.meta, 'Заявка не отправлена', 'Заявка слишком большая. Сократите сообщение.'), 'text/html');
+    const guarded = guardCheck(site, raw, false);
+    if (!guarded.ok && guarded.reason === 'spam') return send(response, 303, '', 'text/plain', false, { Location: '/thanks' });
+    if (!guarded.ok) return send(response, 400, messagePage(site.meta, 'Заявка не отправлена', guarded.message), 'text/html');
     const parsed = parseLeadForm(raw);
     if (!parsed.ok && parsed.spam) return send(response, 303, '', 'text/plain', false, { Location: '/thanks' });
     if (!parsed.ok) return send(response, 400, messagePage(site.meta, 'Проверьте заявку', parsed.error), 'text/html');
@@ -208,7 +223,7 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     const masterKey = master === 'any' ? null : master;
     if (query.start) {
       const free = slotsFor(config.schedule, service.name, masterKey, localDayOf(query.start, config.schedule.timezone), busy, now).some((slot) => slot.startsAt.getTime() === query.start!.getTime());
-      if (free) return html(confirmPage(meta, config, { service: query.service!, master, start: query.start }, null, {}, options.remindersByEmail));
+      if (free) return html(guard(site, confirmPage(meta, config, { service: query.service!, master, start: query.start }, null, {}, options.remindersByEmail)));
     }
     const days = openDays(config.schedule, service.name, masterKey, busy, now);
     const day = query.day && days.some((item) => item.day === query.day) ? query.day : days[0]?.day ?? null;
@@ -223,9 +238,12 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     if (!String(request.headers['content-type'] ?? '').startsWith('application/x-www-form-urlencoded')) return send(response, 415, messagePage(meta, 'Заказ не отправлен', 'Неподдерживаемый формат формы.'), 'text/html');
     const raw = await readBody(request, 10_000);
     if (raw === null) return send(response, 413, messagePage(meta, 'Заказ не отправлен', 'Слишком большой запрос.'), 'text/html');
+    const guarded = guardCheck(site, raw, true);
+    if (!guarded.ok && guarded.reason === 'spam') return send(response, 303, '', 'text/plain', false, { Location: '/cart' });
+    if (!guarded.ok) return send(response, 400, messagePage(meta, 'Заказ не отправлен', guarded.message), 'text/html');
     const parsed = parseOrderForm(raw, store);
     if (!parsed.ok && parsed.spam) return send(response, 303, '', 'text/plain', false, { Location: '/cart' });
-    if (!parsed.ok) return send(response, 400, cartPage(meta, store, parsed.cart, parsed.error, parsed.values), 'text/html', true);
+    if (!parsed.ok) return send(response, 400, guard(site, cartPage(meta, store, parsed.cart, parsed.error, parsed.values)), 'text/html', true);
     const ipHash = createHash('sha256').update(`${options.ipSalt}:${clientIp(request)}`).digest('hex');
     const [perIp, perSite] = await Promise.all([
       prisma.storeOrder.count({ where: { publicationId: site.publicationId, ipHash, createdAt: { gte: new Date(Date.now() - 3_600_000) } } }),
@@ -273,12 +291,15 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     if (!String(request.headers['content-type'] ?? '').startsWith('application/x-www-form-urlencoded')) return send(response, 415, messagePage(meta, 'Запись не отправлена', 'Неподдерживаемый формат формы.'), 'text/html');
     const raw = await readBody(request, 10_000);
     if (raw === null) return send(response, 413, messagePage(meta, 'Запись не отправлена', 'Слишком большой запрос.'), 'text/html');
+    const guarded = guardCheck(site, raw, true);
+    if (!guarded.ok && guarded.reason === 'spam') return send(response, 303, '', 'text/plain', false, { Location: '/book' });
+    if (!guarded.ok) return send(response, 400, messagePage(meta, 'Запись не отправлена', guarded.message), 'text/html');
     const parsed = parseBookingForm(raw);
     if (!parsed.ok && parsed.spam) return send(response, 303, '', 'text/plain', false, { Location: '/book' });
     if (!parsed.ok) {
       const { query } = parsed;
       if (query.service === null || !query.master || !query.start || !config.schedule.services[query.service]) return send(response, 303, '', 'text/plain', false, { Location: '/book' });
-      return send(response, 400, confirmPage(meta, config, { service: query.service, master: query.master, start: query.start }, parsed.error, parsed.values, options.remindersByEmail), 'text/html', true);
+      return send(response, 400, guard(site, confirmPage(meta, config, { service: query.service, master: query.master, start: query.start }, parsed.error, parsed.values, options.remindersByEmail)), 'text/html', true);
     }
     const ipHash = createHash('sha256').update(`${options.ipSalt}:${clientIp(request)}`).digest('hex');
     const [perIp, perSite] = await Promise.all([
@@ -373,17 +394,19 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
     if (request.method === 'POST' && path === BOOKING_CANCEL_PATH) return booking ? handleBookingCancel(request, response, site) : send(response, 404, messagePage(site.meta, 'Страница не найдена', 'На этом сайте нет онлайн-записи.'), 'text/html');
     if (request.method !== 'GET' && request.method !== 'HEAD') return send(response, 405, '', 'text/plain', false, { Allow: 'GET, HEAD' });
     const cacheHeaders = { 'Cache-Control': 'public, max-age=60' };
+    // A page with a form carries a token made for this response: browsers may keep it briefly, shared caches may not.
+    const noStoreForms = { 'Cache-Control': 'private, max-age=60' };
     const image = /^\/img\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.webp$/.exec(path);
     if (image) return sendImage(response, site, image[1]!, request.method === 'HEAD');
     if (booking && path === '/book') return handleBookingPage(url, response, site);
-    if (store && path === '/cart') return send(response, 200, cartPage(site.meta!, site.meta!.store!, url.searchParams.get('i')), 'text/html', true, { 'Cache-Control': 'no-store' });
+    if (store && path === '/cart') return send(response, 200, guard(site, cartPage(site.meta!, site.meta!.store!, url.searchParams.get('i'))), 'text/html', true, { 'Cache-Control': 'no-store' });
     const orderLink = /^\/order\/([A-Za-z0-9_-]{32})$/.exec(path);
     if (store && orderLink) return handleOrderView(url, response, site, orderLink[1]!);
     const manage = /^\/book\/b\/([A-Za-z0-9_-]{32})$/.exec(path);
     if (booking && manage) return handleBookingView(url, response, site, manage[1]!);
     const view = (page: string) => { if (options.visits && countable(request)) options.visits.add(site.projectId, page, sourceOf(request.headers.referer, site.hosts)); };
     switch (path) {
-      case '/': view('/'); return send(response, 200, site.html, 'text/html', site.hasForm, cacheHeaders);
+      case '/': view('/'); return send(response, 200, guard(site, site.html), 'text/html', site.hasForm, site.guarded ? noStoreForms : cacheHeaders);
       case '/privacy': return send(response, 200, privacyPage(site.meta, options.retentionDays, options.remindersByEmail), 'text/html', false, cacheHeaders);
       case '/thanks': return send(response, 200, thanksPage(site.meta), 'text/html', false, { 'Cache-Control': 'no-store' });
       case '/robots.txt': return send(response, 200, `User-agent: *\nAllow: /\nDisallow: /thanks\nDisallow: /book\nDisallow: /cart\nDisallow: /order\nSitemap: ${site.canonical}/sitemap.xml\n`, 'text/plain', false, cacheHeaders);
@@ -392,7 +415,7 @@ export function createSitesServer(prisma: PrismaClient, options: SitesServerOpti
         // Other pages of a multi-page site; «/services/» also works, as on static hosts.
         const key = path.length > 1 ? path.replace(/\/$/, '') : path;
         const page = site.pages.get(key);
-        if (page) { view(key); return send(response, 200, page, 'text/html', site.hasForm, cacheHeaders); }
+        if (page) { view(key); return send(response, 200, guard(site, page), 'text/html', site.hasForm, site.guarded && page.includes(TOKEN_PLACEHOLDER) ? noStoreForms : cacheHeaders); }
         return send(response, 404, messagePage(site.meta, 'Страница не найдена', 'Такой страницы на сайте нет.'), 'text/html');
       }
     }

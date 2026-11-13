@@ -127,7 +127,10 @@ export class TelegramLinkService {
     }
     if (identity) {
       const kind = typeof message.text === 'string' ? 'text' : message.voice || message.audio ? 'voice' : 'other';
-      void this.bot.onMessage(identity.userId, String(chatId), typeof message.text === 'string' ? message.text : null, kind).catch(() => undefined);
+      const audio = (message.voice ?? message.audio) as { file_id?: unknown; duration?: unknown; file_size?: unknown } | undefined;
+      const voice = audio && typeof audio.file_id === 'string' && audio.file_id.length <= 200 && typeof audio.duration === 'number'
+        ? { fileId: audio.file_id, duration: audio.duration, size: typeof audio.file_size === 'number' ? audio.file_size : null } : undefined;
+      void this.bot.onMessage(identity.userId, String(chatId), typeof message.text === 'string' ? message.text : null, kind, voice).catch(() => undefined);
       return true;
     }
     await reply(tr("Это бот BuildPath. Здесь можно вести проекты и получать заявки с сайтов. Чтобы подключиться, откройте проект в BuildPath и нажмите «Подключить Telegram»."));
