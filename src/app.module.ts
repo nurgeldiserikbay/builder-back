@@ -19,9 +19,10 @@ import { DisputesModule } from './disputes/disputes.module.js';
 import { CatalogModule } from './catalog/catalog.module.js';
 import { InsightsModule } from './insights/insights.module.js';
 import { MonitoringModule } from './monitoring/monitoring.module.js';
+import { TeamModule } from './team/team.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule, MonitoringModule],
+  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule, MonitoringModule, TeamModule],
   controllers: [HealthController, WorkspacesController],
 })
 export class AppModule {}

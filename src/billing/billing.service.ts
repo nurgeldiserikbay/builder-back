@@ -94,6 +94,14 @@ export class BillingService {
     if (!plan.specialists) throw new PlanLimitException('PLAN_NO_SPECIALISTS');
   }
 
+  /** A team (members beyond the owner) is part of the same paid plans as specialists. */
+  async assertCanInviteTeam(projectId: string) {
+    const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { ownerUserId: true } });
+    if (!project) throw new NotFoundException('PROJECT_NOT_FOUND');
+    const { plan } = await this.planFor(project.ownerUserId);
+    if (!plan.specialists) throw new PlanLimitException('PLAN_NO_TEAM');
+  }
+
   /** AI requests left this month on the project owner's plan. */
   async remainingAi(projectId: string): Promise<{ left: number; limit: number; planTitle: string }> {
     const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { ownerUserId: true } });

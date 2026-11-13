@@ -2882,12 +2882,180 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/approve:
+    post:
+      tags: [Journey]
+      operationId: approveStage
+      summary: A reviewer named in the stage approval policy approves the current version; the stage is accepted when the policy is met
+      description: Only while the stage is in review (in_review). The author of the version cannot approve it unless the policy allows it. Approvals are counted under a per-stage lock, so the stage is accepted exactly once; approvals count only for this version and approval round (a request for changes or a policy change starts a new round). All acceptance checks of /accept apply.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [versionId], properties: { versionId: { type: string, format: uuid }, comment: { type: [string, 'null'], maxLength: 1000 } } }
+      responses:
+        '200': { description: 'Stage detail (as GET stage), with stage.approval: policy, policyText, reviewers[] (name, approved, active, author), approvals[], approved, required, broken, canApprove, approveBlocker' }
+        '403': { description: NOT_A_REVIEWER }
+        '409': { description: 'STAGE_NOT_IN_REVIEW, STAGE_VERSION_CONFLICT, NO_APPROVAL_POLICY, AUTHOR_CANNOT_APPROVE, NOT_A_REVIEWER, ALREADY_APPROVED, APPROVAL_POLICY_BROKEN' }
+  /projects/{projectId}/stages/{stageKey}/approval-policy:
+    put:
+      tags: [Journey]
+      operationId: setStageApprovalPolicy
+      summary: Who must approve the stage (owner or manager); null returns to «the owner or a manager accepts alone»
+      description: 'mode one — any one reviewer; all — every reviewer; quorum — the given number. Reviewers (1–10) must be active project members other than observers. With a policy, /accept is refused (APPROVAL_POLICY_ACTIVE), anyone working on the stage can send it for review and the reviewers are notified. Changing the policy starts a new approval round.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [policy]
+              properties:
+                policy:
+                  oneOf:
+                    - type: 'null'
+                    - type: object
+                      additionalProperties: false
+                      required: [mode, reviewers]
+                      properties:
+                        mode: { type: string, enum: [one, all, quorum] }
+                        reviewers: { type: array, minItems: 1, maxItems: 10, items: { type: string, format: uuid } }
+                        quorum: { type: [integer, 'null'], minimum: 1 }
+                        authorMayApprove: { type: boolean }
+      responses:
+        '200': { description: 'Stage detail, as GET stage' }
+        '400': { description: 'POLICY_MODE_INVALID, POLICY_REVIEWERS_INVALID, POLICY_REVIEWERS_COUNT, POLICY_REVIEWER_NOT_MEMBER, POLICY_QUORUM_INVALID, POLICY_AUTHOR_INVALID' }
+        '403': { description: STAGE_ACCEPT_FORBIDDEN }
+  /projects/{projectId}/team:
+    get:
+      tags: [Projects]
+      operationId: getProjectTeam
+      summary: Project team — members and roles; managers also see addresses and open invitations
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'viewerRole, canManage, limit, roles[] (key, title, explanation, invitable), members[] (id, userId, role, roleTitle, you, name, email or null, since, canChange), invitations[] (id, email, role, roleTitle, expiresAt, expired)' }
+        '404': { description: PROJECT_NOT_FOUND }
+  /projects/{projectId}/team/invitations:
+    post:
+      tags: [Projects]
+      operationId: inviteToProjectTeam
+      summary: Invite someone to the whole project by e-mail (owner or manager; a manager cannot invite managers)
+      description: Roles manager, contributor, reviewer, observer (viewer). The link is valid 7 days and works only for the address it was sent to. Part of paid plans (PLAN_NO_TEAM); up to 20 members and open invitations.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [email, role], properties: { email: { type: string, maxLength: 254 }, role: { type: string, enum: [manager, contributor, reviewer, viewer] } } }
+      responses:
+        '201': { description: 'invitation, inviteUrl, emailSent' }
+        '400': { description: 'EMAIL_INVALID, ROLE_INVALID' }
+        '402': { description: PLAN_NO_TEAM }
+        '403': { description: 'TEAM_MANAGE_FORBIDDEN, ROLE_NOT_ALLOWED' }
+        '409': { description: 'ALREADY_PROJECT_MEMBER, ALREADY_INVITED, TEAM_LIMIT_REACHED, PROJECT_NOT_ACTIVE' }
+  /projects/{projectId}/team/invitations/{invitationId}/revoke:
+    post:
+      tags: [Projects]
+      operationId: revokeProjectTeamInvitation
+      summary: Cancel an open invitation
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: invitationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Team, as GET' }
+        '404': { description: INVITATION_NOT_FOUND }
+  /projects/{projectId}/team/members/{memberId}/role:
+    post:
+      tags: [Projects]
+      operationId: changeProjectMemberRole
+      summary: Change a member's role (not the owner, not yourself; a manager cannot change managers)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: memberId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [role], properties: { role: { type: string, enum: [manager, contributor, reviewer, viewer] } } }
+      responses:
+        '200': { description: 'Team, as GET' }
+        '403': { description: ROLE_NOT_ALLOWED }
+        '409': { description: CANNOT_CHANGE_SELF }
+  /projects/{projectId}/team/members/{memberId}/remove:
+    post:
+      tags: [Projects]
+      operationId: removeProjectMember
+      summary: Remove a member — access stops now, their past actions stay in the history
+      description: affectedStages lists stages whose approval policy names this person; such a policy may no longer be met until it is changed.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: memberId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Team, as GET, plus affectedStages[]' }
+        '403': { description: ROLE_NOT_ALLOWED }
+  /me/team-projects:
+    get:
+      tags: [Projects]
+      operationId: listTeamProjects
+      summary: Other people's projects where you are in the team, with your role
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'id, name, status, projectType, updatedAt, ownerName, role, roleTitle' }
+  /team-invites/{token}:
+    get:
+      tags: [Projects]
+      operationId: getProjectTeamInvitation
+      summary: What the invitation page shows before signing in — project, role and what it allows
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'projectName, invitedBy, role, roleTitle, roleExplanation, expired, revoked, accepted' }
+        '404': { description: INVITE_NOT_FOUND }
+  /team-invites/{token}/accept:
+    post:
+      tags: [Projects]
+      operationId: acceptProjectTeamInvitation
+      summary: Join the project team (signed in with the invited address)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: projectId }
+        '403': { description: INVITE_EMAIL_MISMATCH }
+        '410': { description: 'INVITE_EXPIRED, INVITE_NOT_AVAILABLE' }
   /projects/{projectId}/stages/{stageKey}/accept:
     post:
       tags: [Journey]
       operationId: acceptStage
       summary: Accept the current version of a stage
-      description: Requires owner or manager, accepted inputs, a complete artifact and, for the build stage, no failed required checks on a build from the currently accepted versions.
+      description: Requires owner or manager, accepted inputs, a complete artifact and, for the build stage, no failed required checks on a build from the currently accepted versions. Refused with APPROVAL_POLICY_ACTIVE when the stage has an approval policy — then reviewers approve via /approve.
       x-implementation-status: implemented
       security:
         - sessionCookie: []

@@ -268,6 +268,21 @@ export class JourneyController {
     return this.journey.accept(request.user.id, projectId, stageKey(key), text(input.versionId, 'versionId', 36, 36)!);
   }
 
+  @Post('projects/:projectId/stages/:stageKey/approve')
+  @HttpCode(200)
+  approve(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw, ['versionId', 'comment']);
+    return this.journey.approve(request.user.id, projectId, stageKey(key), text(input.versionId, 'versionId', 36, 36)!, text(input.comment, 'comment', 1, 1000, true));
+  }
+
+  @Put('projects/:projectId/stages/:stageKey/approval-policy')
+  approvalPolicy(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw, ['policy']);
+    if (input.policy !== null && (typeof input.policy !== 'object' || Array.isArray(input.policy))) throw new BadRequestException('INVALID_POLICY');
+    const policy = input.policy === null ? null : body(input.policy, ['mode', 'reviewers', 'quorum', 'authorMayApprove']);
+    return this.journey.setApprovalPolicy(request.user.id, projectId, stageKey(key), policy ? { mode: policy.mode, reviewers: policy.reviewers, quorum: policy.quorum ?? null, authorMayApprove: policy.authorMayApprove ?? false } : null);
+  }
+
   @Post('projects/:projectId/stages/:stageKey/reopen')
   @HttpCode(200)
   reopen(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
