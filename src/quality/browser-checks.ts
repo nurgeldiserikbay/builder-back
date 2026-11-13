@@ -108,7 +108,8 @@ export class BrowserChecksService implements OnApplicationBootstrap, OnModuleDes
   }
 
   private view(check: { id: string; versionId: string; status: string; result: unknown; errorCode: string | null; createdAt: Date; finishedAt: Date | null; runs: number } | null, canRerun: boolean) {
-    if (!check) return { check: null, canRerun: false };
+    // A build made before checks existed can be checked on request.
+    if (!check) return { check: null, canRerun };
     const result = check.result as BrowserCheckResult | null;
     return {
       check: {
@@ -138,7 +139,7 @@ export class BrowserChecksService implements OnApplicationBootstrap, OnModuleDes
   async get(userId: string, projectId: string, versionId: string | null) {
     const { ctx, id } = await this.target(userId, projectId, versionId, 'read');
     const check = id ? await this.prisma.browserCheck.findUnique({ where: { versionId: id } }) : null;
-    return { data: this.view(check, this.core.canWrite(ctx, 'build')) };
+    return { data: this.view(check, Boolean(id) && this.core.canWrite(ctx, 'build')) };
   }
 
   /** Check the build again (or for the first time, for builds made before checks existed). */
