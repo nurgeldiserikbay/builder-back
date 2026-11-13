@@ -71,7 +71,7 @@ export class PublishingService {
         publication: publication ? {
           slug: publication.slug, url: config.urlFor(publication.slug), status: publication.status, publishedAt: publication.publishedAt,
           unpublishedAt: publication.unpublishedAt, publishedVersionNumber: publishedVersion?.versionNumber ?? null,
-          notifyTelegram: publication.notifyTelegram, notifyEmail: publication.notifyEmail,
+          notifyTelegram: publication.notifyTelegram, notifyEmail: publication.notifyEmail, formQuestion: publication.formQuestion,
           domain: this.domainView(publication),
         } : null,
         domainsAvailable: Boolean(domainTarget()),
@@ -271,7 +271,7 @@ export class PublishingService {
     return this.status(userId, projectId);
   }
 
-  async settings(userId: string, projectId: string, input: { notifyTelegram: boolean; notifyEmail: boolean }) {
+  async settings(userId: string, projectId: string, input: { notifyTelegram: boolean; notifyEmail: boolean; formQuestion?: boolean }) {
     const { project } = await this.load(userId, projectId, true);
     if (!project.publication) throw new ConflictException('SITE_NOT_PUBLISHED');
     await this.prisma.sitePublication.update({ where: { projectId }, data: input });

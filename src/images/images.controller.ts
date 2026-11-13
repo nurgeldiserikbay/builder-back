@@ -37,6 +37,12 @@ export class ImagesController {
     return this.images.setAlt(request.user.id, projectId, imageId, (body as { alt?: unknown }).alt);
   }
 
+  @Post(':imageId/crop')
+  crop(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('imageId') imageId: string, @Body() body: unknown) {
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some((key) => !['x', 'y', 'width', 'height'].includes(key))) throw new BadRequestException('INVALID_REQUEST_BODY');
+    return this.images.crop(request.user.id, projectId, imageId, body);
+  }
+
   @Delete(':imageId')
   remove(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('imageId') imageId: string) {
     return this.images.remove(request.user.id, projectId, imageId);

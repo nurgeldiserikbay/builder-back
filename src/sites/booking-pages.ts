@@ -1,3 +1,4 @@
+import { guardFields } from './form-guard.js';
 // Script-free booking pages of a published site: service → master → day and time → contacts → «Ваша запись».
 import type { SiteMeta } from '../journey/artifacts.js';
 import { escapeHtml } from '../journey/site-renderer.js';
@@ -97,6 +98,7 @@ ${error ? `<p role="alert"><strong>${escapeHtml(error)}</strong></p>` : ''}
 ${askEmail ? `<label>${tr('Почта для напоминания (необязательно)')}<input name="email" type="email" maxlength="254" autocomplete="email" inputmode="email" value="${escapeHtml(values.email ?? '')}"><small>${tr('Пришлём одно письмо перед визитом и удалим адрес.')}</small></label>` : ''}
 <label>${tr('Комментарий (необязательно)')}<textarea name="comment" maxlength="300">${escapeHtml(values.comment ?? '')}</textarea></label>
 <div class="hp" aria-hidden="true"><label>${tr('Сайт')}<input name="website" tabindex="-1" autocomplete="off"></label></div>
+${guardFields()}
 <label class="consent"><input type="checkbox" name="consent" value="yes" required><span>${tr('Согласен(на) на обработку моих данных для записи.')} <a href="/privacy">${tr('Как используются данные')}</a></span></label>
 <button type="submit">${tr('Записаться')}</button></form><a class="back" href="${link({ s: query.service, m: query.master, d: localDay(query.start, tz) })}">← ${tr('Другое время')}</a>`);
 }

@@ -49,3 +49,28 @@ export async function inlineImages(html: string, load: (ids: string[]) => Promis
     return data ? `data:image/webp;base64,${data.toString('base64')}` : whole;
   });
 }
+
+/** A crop as fractions of the stored photo (0–1), so the app can work on any preview size. */
+export type CropRect = { x: number; y: number; width: number; height: number };
+
+/** Checks a crop rectangle; returns the pixel box or an error code. At least 64 px on each side. */
+export function cropBox(rect: unknown, size: { width: number; height: number }): { left: number; top: number; width: number; height: number } | string {
+  if (!rect || typeof rect !== 'object' || Array.isArray(rect)) return 'CROP_INVALID';
+  const { x, y, width, height } = rect as Record<string, unknown>;
+  const values = [x, y, width, height];
+  if (values.some((value) => typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1)) return 'CROP_INVALID';
+  const [fx, fy, fw, fh] = values as number[];
+  if (fx! + fw! > 1.0001 || fy! + fh! > 1.0001) return 'CROP_INVALID';
+  const left = Math.round(fx! * size.width);
+  const top = Math.round(fy! * size.height);
+  const boxWidth = Math.min(size.width - left, Math.round(fw! * size.width));
+  const boxHeight = Math.min(size.height - top, Math.round(fh! * size.height));
+  if (boxWidth < 64 || boxHeight < 64) return 'CROP_TOO_SMALL';
+  return { left, top, width: boxWidth, height: boxHeight };
+}
+
+/** Cuts the box out of an already safe WebP and re-encodes it the same way as an upload. */
+export async function cropImage(bytes: Buffer, box: { left: number; top: number; width: number; height: number }) {
+  const cut = await sharp(bytes, { limitInputPixels: 50_000_000, failOn: 'error' }).extract(box).webp({ quality: 85 }).toBuffer();
+  return processImage(cut);
+}

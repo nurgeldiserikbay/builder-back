@@ -23,7 +23,7 @@ const fakePrisma = {
 
 const counted: Array<[string, string, string]> = [];
 const server = createSitesServer(fakePrisma, {
-  baseDomain: 'sites.example.kz', urlFor: (slug) => `https://${slug}.sites.example.kz`, trustProxy: true, ipSalt: 'salt', remindersByEmail: false, retentionDays: 365,
+  baseDomain: 'sites.example.kz', urlFor: (slug) => `https://${slug}.sites.example.kz`, trustProxy: true, ipSalt: 'salt', formSecret: 'secret', remindersByEmail: false, retentionDays: 365,
   https: true, perIpPerHour: 5, perSitePerDay: 200, notify: async () => undefined, notifyBooking: async () => undefined,
   visits: { add: (projectId: string, path: string, source: string) => { counted.push([projectId, path, source]); } } as never,
 }).server;

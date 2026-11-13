@@ -6,6 +6,7 @@ import type { Sitemap, SitemapPage } from './sitemap.js';
 import { catalogIssues, tenge, type Catalog } from './products.js';
 import { doable, scheduleIssues, type BookingConfig } from './schedule.js';
 import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
+import { guardFields } from '../sites/form-guard.js';
 
 export interface Palette { id: string; label: string; hint: string; background: string; surface: string; text: string; muted: string; accent: string; accentText: string }
 export interface FontPreset { id: string; label: string; hint: string; stack: string; headingWeight: number }
@@ -106,6 +107,13 @@ function photo(id: string | null, images: Record<string, ImageInfo> | undefined,
   return `<img class="photo" src="/img/${escapeHtml(id)}.webp" alt="${escapeHtml(image.alt)}" width="${image.width}" height="${image.height}"${eager ? ' fetchpriority="high"' : ' loading="lazy"'} decoding="async">`;
 }
 
+/** Extra photos of a section as a grid; missing photos are skipped. */
+function gallery(ids: string[] | undefined, images: Record<string, ImageInfo> | undefined): string {
+  const shown = (ids ?? []).filter((id) => images?.[id]);
+  if (!shown.length) return '';
+  return `<ul class="gallery">${shown.map((id) => `<li><img src="/img/${escapeHtml(id)}.webp" alt="${escapeHtml(images![id]!.alt)}" width="${images![id]!.width}" height="${images![id]!.height}" loading="lazy" decoding="async"></li>`).join('')}</ul>`;
+}
+
 /** Page of the site; fixed texts (contacts, form, booking) are in the project's language. */
 export function renderSite(input: RenderInput, pageKey: string | null = null): string {
   const page = input.sitemap ? input.sitemap.pages.find((item) => item.key === pageKey) ?? input.sitemap.pages[0]! : null;
@@ -157,7 +165,7 @@ function renderSiteIn(input: RenderInput, page: SitemapPage | null): string {
       ? `<ul class="items">${section.items.map((item) => `<li><h3>${escapeHtml(item.title)}</h3>${item.text ? paragraphs(item.text) : ''}</li>`).join('')}</ul>` : '';
     if (section.type === 'hero') {
       const brand = section.title.trim() === brief.businessName.trim() ? '' : `<p class="brand">${escapeHtml(brief.businessName)}</p>`;
-      return `<header class="hero" id="${escapeHtml(section.key)}"><div class="wrap">${brand}<h1>${escapeHtml(section.title)}</h1>${paragraphs(section.text)}${button}${photo(section.imageId, input.images, true)}</div></header>`;
+      return `<header class="hero" id="${escapeHtml(section.key)}"><div class="wrap">${brand}<h1>${escapeHtml(section.title)}</h1>${paragraphs(section.text)}${button}${photo(section.imageId, input.images, true)}${gallery(section.gallery, input.images)}</div></header>`;
     }
     if (section.type === 'contacts') {
       const rows: string[] = [];
@@ -169,7 +177,7 @@ function renderSiteIn(input: RenderInput, page: SitemapPage | null): string {
       const form = brief.mainAction === 'form' ? leadForm() : '';
       return `<section class="section contacts" id="contacts"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${paragraphs(section.text)}${form}${rows.length ? `<ul class="contact-list">${rows.join('')}</ul>` : ''}${form ? '' : button}</div></section>`;
     }
-    return `<section class="section ${escapeHtml(section.type)}" id="${escapeHtml(section.key)}"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${photo(section.imageId, input.images, false)}${paragraphs(section.text)}${items}${button}</div></section>`;
+    return `<section class="section ${escapeHtml(section.type)}" id="${escapeHtml(section.key)}"><div class="wrap"><h2>${escapeHtml(section.title)}</h2>${photo(section.imageId, input.images, false)}${paragraphs(section.text)}${gallery(section.gallery, input.images)}${items}${button}</div></section>`;
   }).join('\n');
   const bookingHtml = input.booking && home ? bookingSection(input.booking, input.draft) : input.store && home ? storeSection(input.store, input.draft, input.images) : '';
   // A page without a first screen still gets a heading with its name.
@@ -188,7 +196,8 @@ p{margin:0 0 12px;color:var(--muted)}.hero{padding:64px 0 56px;text-align:${alig
 .lead-form .consent{display:flex;gap:10px;align-items:flex-start;font-weight:400;font-size:14px;color:var(--muted)}.lead-form .consent input{width:22px;height:22px;flex:none;margin-top:2px}.lead-form .consent a{color:var(--accent)}
 .lead-form .hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}.lead-form button{border:0;cursor:pointer;font:inherit;font-weight:700}
 .contact-list{list-style:none;padding:0;margin:16px 0;display:grid;gap:10px}.contact-list li{display:flex;flex-direction:column}.contact-list span{font-size:14px;color:var(--muted)}.contact-list a{color:var(--accent);font-weight:700}
-.photo{display:block;width:100%;height:auto;border-radius:var(--radius);margin:18px 0 6px;background:var(--surface)}.hero .photo{margin-top:28px}
+.photo{display:block;width:100%;height:auto;border-radius:var(--radius);margin:18px 0 6px;background:var(--surface)}
+.gallery{list-style:none;padding:0;margin:18px 0;display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}.gallery img{display:block;width:100%;aspect-ratio:1;object-fit:cover;height:auto;border-radius:calc(var(--radius) / 2);background:var(--surface)}.hero .photo{margin-top:28px}
 .booking-list{list-style:none;padding:0;margin:16px 0;display:grid;gap:10px}.booking-list li{display:flex;justify-content:space-between;gap:12px;background:var(--surface);border:1px solid rgba(0,0,0,.08);border-radius:var(--radius);padding:14px 16px}.booking-list span{color:var(--muted);white-space:nowrap}.booking-note{font-size:14px}
 footer{padding:28px 0;color:var(--muted);font-size:14px;text-align:center}.draft{background:#fff3cd;color:#5c4400;text-align:center;font-size:14px;padding:8px}
 .menu{background:var(--surface);border-bottom:1px solid rgba(0,0,0,.08)}.menu .wrap{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;padding-top:10px;padding-bottom:10px}.menu .logo{font-weight:800;color:var(--text);text-decoration:none;margin-right:auto}.menu ul{list-style:none;margin:0;padding:0;display:flex;gap:4px;overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}.menu li a,.menu li span{display:block;padding:10px 12px;border-radius:var(--radius);color:var(--text);text-decoration:none;font-size:15px;white-space:nowrap;min-height:44px}.menu [aria-current="page"]{background:var(--accent);color:var(--accent-text)}.page-head{padding:40px 0 28px}
@@ -269,6 +278,7 @@ function leadForm(): string {
 <label>${tr('Телефон или мессенджер')}<input name="contact" required maxlength="120" autocomplete="tel"></label>
 <label>${tr('Сообщение (необязательно)')}<textarea name="message" maxlength="1000"></textarea></label>
 <div class="hp" aria-hidden="true"><label>${tr('Не заполняйте это поле')}<input name="website" tabindex="-1" autocomplete="off"></label></div>
+${guardFields()}
 <label class="consent"><input type="checkbox" name="consent" value="yes" required><span>${tr('Согласен(на) на обработку моих данных, чтобы со мной связались по заявке.')} <a href="/privacy">${tr('Как используются данные')}</a></span></label>
 <button class="button" type="submit">${tr('Отправить заявку')}</button>
 </form>`;
@@ -351,7 +361,7 @@ export function checkSite(input: RenderInput): SiteCheck[] {
   const buttonContrast = contrastRatio(palette.accentText, palette.accent);
   add('contrast', true, textContrast >= 4.5 && mutedContrast >= 4.5 && buttonContrast >= 4.5, 'Контраст текста',
     `Текст и кнопки читаются: контраст не ниже 4,5:1 (WCAG AA).`, 'Контраст ниже 4,5:1 — текст будет плохо читаться.');
-  const used = content.sections.map((section) => section.imageId).filter((id): id is string => Boolean(id));
+  const used = content.sections.flatMap((section) => [section.imageId, ...(section.gallery ?? [])]).filter((id): id is string => Boolean(id));
   if (used.length) {
     const missing = used.filter((id) => !input.images?.[id]);
     add('photos', true, missing.length === 0, 'Фото на месте', 'Все выбранные фото найдены.', 'Некоторые выбранные фото удалены. Выберите другие на этапе «Структура и тексты».');
