@@ -26,7 +26,8 @@ export const writeRoles = new Set(['owner', 'manager', 'contributor']);
 export const acceptRoles = new Set(['owner', 'manager']);
 export type Access = 'read' | 'write' | 'accept' | 'members';
 export type AssignmentRow = { id: string; stageId: string; stageKey: string; role: 'lead' | 'consultant'; status: string; aiBudget: number | null; aiUsed: number; readUntil: Date | null };
-export type Viewer = { kind: 'member'; role: string } | { kind: 'specialist'; assignments: AssignmentRow[] };
+/** stageKeys — a contributor limited to these stages; empty — every stage. */
+export type Viewer = { kind: 'member'; role: string; stageKeys: string[] } | { kind: 'specialist'; assignments: AssignmentRow[] };
 export const editableProject = (status: string) => status === 'active' || status === 'live';
 export const notEditableCode = (status: string) => (status === 'locked' ? 'STAGE_LOCKED' : status === 'in_review' ? 'STAGE_IN_REVIEW' : 'STAGE_ACCEPTED_REOPEN_FIRST');
 export const normalizedOrRaw = (type: ArtifactType, value: unknown) => { try { return normalizeArtifact(type, value); } catch { return value; } };
@@ -83,7 +84,7 @@ export class JourneyCore {
       where: { id: projectId, OR: [{ members: { some: { userId, status: 'active' } } }, { assignments: { some: { userId, status: { in: ['active', 'completed'] } } } }] },
       select: {
         id: true, name: true, status: true, locale: true, projectType: true, startStageKey: true, routeVersion: true, ownerUserId: true, changeResponseDays: true,
-        members: { where: { userId, status: 'active' }, select: { role: true } },
+        members: { where: { userId, status: 'active' }, select: { role: true, stageKeys: true } },
         assignments: { where: { userId, status: { in: ['active', 'completed'] } }, select: { id: true, stageId: true, role: true, status: true, aiBudget: true, aiUsed: true, readUntil: true } },
         stages: { orderBy: { position: 'asc' }, select: { id: true, stageKey: true, position: true, status: true, currentVersionId: true, approvedVersionId: true, lockedKeys: true, approvedAt: true, updatedAt: true, definitionVersion: true, reviewNote: true } },
       },
@@ -97,7 +98,7 @@ export class JourneyCore {
     const assignments: AssignmentRow[] = project.assignments
       .filter((item) => item.status === 'active' || (item.readUntil && item.readUntil.getTime() > now))
       .map((item) => ({ ...item, stageKey: stages.find((stage) => stage.id === item.stageId)?.stageKey ?? '' }));
-    const viewer: Viewer = member ? { kind: 'member', role: member.role } : { kind: 'specialist', assignments };
+    const viewer: Viewer = member ? { kind: 'member', role: member.role, stageKeys: member.role === 'contributor' ? member.stageKeys : [] } : { kind: 'specialist', assignments };
     if (viewer.kind === 'specialist' && assignments.length === 0) throw new NotFoundException('PROJECT_NOT_FOUND');
     const role = member?.role ?? 'specialist';
     const route = type.stages.filter((key) => stages.some((stage) => stage.stageKey === key));
@@ -132,7 +133,7 @@ export class JourneyCore {
   }
 
   viewerInfo(ctx: { viewer: Viewer; role: string }) {
-    if (ctx.viewer.kind === 'member') return { kind: 'member' as const, role: ctx.role, assignments: [] };
+    if (ctx.viewer.kind === 'member') return { kind: 'member' as const, role: ctx.role, assignments: [], stageKeys: ctx.viewer.stageKeys };
     return {
       kind: 'specialist' as const, role: 'specialist',
       assignments: ctx.viewer.assignments.map((item) => ({
@@ -142,7 +143,7 @@ export class JourneyCore {
   }
 
   canWrite(ctx: { viewer: Viewer }, key: string): boolean {
-    if (ctx.viewer.kind === 'member') return writeRoles.has(ctx.viewer.role);
+    if (ctx.viewer.kind === 'member') return writeRoles.has(ctx.viewer.role) && (ctx.viewer.stageKeys.length === 0 || ctx.viewer.stageKeys.includes(key));
     const assignment = this.assignmentFor(ctx, key);
     return assignment?.role === 'lead' && assignment.status === 'active';
   }

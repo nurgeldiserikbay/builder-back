@@ -6,6 +6,7 @@ import { emailConfig, sendEmail } from '../notifications/email.js';
 import { notifyUser } from '../notifications/user-notifier.js';
 import { escapeHtml } from '../journey/site-renderer.js';
 import { tr } from '../i18n/i18n.js';
+import { projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
 import { canManage, INVITABLE_ROLES, INVITE_DAYS, readPolicy, roleInfo, TEAM_LIMIT, type InvitableRole, type ProjectRole } from './team-rules.js';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -20,7 +21,7 @@ export class TeamService {
     if (!isUuid(projectId)) throw new NotFoundException('PROJECT_NOT_FOUND');
     const member = await this.prisma.projectMember.findFirst({
       where: { projectId, userId, status: 'active' },
-      select: { role: true, project: { select: { id: true, name: true, status: true, ownerUserId: true, owner: { select: { name: true, email: true } } } } },
+      select: { role: true, project: { select: { id: true, name: true, status: true, ownerUserId: true, projectType: true, owner: { select: { name: true, email: true } } } } },
     });
     if (!member) throw new NotFoundException('PROJECT_NOT_FOUND');
     return { role: member.role as ProjectRole, project: member.project };
@@ -32,18 +33,34 @@ export class TeamService {
     return found;
   }
 
+  /** Stage keys of the project route, for limiting a contributor to some stages. */
+  private routeStages(projectType: string | null) {
+    return (projectTypeOf(projectType)?.stages ?? []).map((key) => ({ key, title: stageDefinitions[key].title }));
+  }
+
+  /** Checks stage keys against the route; only contributors are limited to stages. */
+  private stageKeysFor(role: string, keys: unknown, projectType: string | null): string[] {
+    if (keys === undefined || keys === null) return [];
+    if (!Array.isArray(keys) || keys.some((key) => typeof key !== 'string')) throw new BadRequestException('STAGE_KEYS_INVALID');
+    if (role !== 'contributor' && keys.length) throw new BadRequestException('STAGE_KEYS_ONLY_FOR_CONTRIBUTORS');
+    const route = new Set(this.routeStages(projectType).map((stage) => stage.key as string));
+    const unique = [...new Set(keys as string[])];
+    if (unique.some((key) => !route.has(key))) throw new BadRequestException('STAGE_KEYS_INVALID');
+    return unique;
+  }
+
   /** The team as the viewer may see it: managers see addresses and invitations, everyone else names and roles. */
   async list(userId: string, projectId: string) {
-    const { role } = await this.membership(userId, projectId);
+    const { role, project } = await this.membership(userId, projectId);
     const managing = role === 'owner' || role === 'manager';
     const [members, invitations] = await Promise.all([
       this.prisma.projectMember.findMany({
         where: { projectId, status: 'active' }, orderBy: { createdAt: 'asc' },
-        select: { id: true, userId: true, role: true, createdAt: true, user: { select: { name: true, email: true } } },
+        select: { id: true, userId: true, role: true, stageKeys: true, createdAt: true, user: { select: { name: true, email: true } } },
       }),
       managing ? this.prisma.projectInvitation.findMany({
         where: { projectId, acceptedAt: null, revokedAt: null }, orderBy: { createdAt: 'desc' }, take: 50,
-        select: { id: true, email: true, role: true, expiresAt: true, createdAt: true },
+        select: { id: true, email: true, role: true, stageKeys: true, expiresAt: true, createdAt: true },
       }) : Promise.resolve([]),
     ]);
     const now = new Date();
@@ -52,9 +69,10 @@ export class TeamService {
         viewerRole: role,
         canManage: managing,
         limit: TEAM_LIMIT,
+        stages: this.routeStages(project.projectType),
         roles: (Object.keys(roleInfo) as ProjectRole[]).map((key) => ({ key, title: roleInfo[key].title, explanation: roleInfo[key].explanation, invitable: managing && (INVITABLE_ROLES as readonly string[]).includes(key) && canManage(role, key) })),
         members: members.map((row) => ({
-          id: row.id, userId: row.userId, role: row.role, roleTitle: roleInfo[row.role as ProjectRole].title, you: row.userId === userId,
+          id: row.id, userId: row.userId, role: row.role, roleTitle: roleInfo[row.role as ProjectRole].title, you: row.userId === userId, stageKeys: row.stageKeys,
           name: row.user.name || (managing ? row.user.email : tr('Участник')), email: managing ? row.user.email : null, since: row.createdAt,
           canChange: managing && row.userId !== userId && canManage(role, row.role),
         })),
@@ -72,10 +90,11 @@ export class TeamService {
     return { data: rows.map(({ role, project: { owner, ...project } }) => ({ ...project, ownerName: owner.name, role, roleTitle: roleInfo[role as ProjectRole].title })) };
   }
 
-  async invite(userId: string, projectId: string, input: { email: string; role: string }) {
+  async invite(userId: string, projectId: string, input: { email: string; role: string; stageKeys?: unknown }) {
     const { role, project } = await this.manager(userId, projectId);
     if (!(INVITABLE_ROLES as readonly string[]).includes(input.role)) throw new BadRequestException('ROLE_INVALID');
     const target = input.role as InvitableRole;
+    const stageKeys = this.stageKeysFor(target, input.stageKeys, project.projectType);
     if (!canManage(role, target)) throw new ForbiddenException('ROLE_NOT_ALLOWED');
     if (!['active', 'live', 'paused', 'draft'].includes(project.status)) throw new ConflictException('PROJECT_NOT_ACTIVE');
     await this.billing.assertCanInviteTeam(projectId);
@@ -92,8 +111,8 @@ export class TeamService {
     const token = randomBytes(24).toString('base64url');
     const invitation = await this.prisma.$transaction(async (tx) => {
       const created = await tx.projectInvitation.create({
-        data: { projectId, email: address, role: target, tokenHash: digest(token), expiresAt: new Date(Date.now() + INVITE_DAYS * 86_400_000), invitedByUserId: userId },
-        select: { id: true, email: true, role: true, expiresAt: true, createdAt: true },
+        data: { projectId, email: address, role: target, stageKeys, tokenHash: digest(token), expiresAt: new Date(Date.now() + INVITE_DAYS * 86_400_000), invitedByUserId: userId },
+        select: { id: true, email: true, role: true, stageKeys: true, expiresAt: true, createdAt: true },
       });
       await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'team_invited', details: { invitationId: created.id, role: target } } });
       return created;
@@ -125,7 +144,7 @@ export class TeamService {
     if (!/^[A-Za-z0-9_-]{20,64}$/.test(token)) throw new NotFoundException('INVITE_NOT_FOUND');
     const row = await this.prisma.projectInvitation.findUnique({
       where: { tokenHash: digest(token) },
-      select: { id: true, email: true, role: true, expiresAt: true, acceptedAt: true, acceptedUserId: true, revokedAt: true, projectId: true, invitedByUserId: true, project: { select: { name: true, status: true, ownerUserId: true } } },
+      select: { id: true, email: true, role: true, stageKeys: true, expiresAt: true, acceptedAt: true, acceptedUserId: true, revokedAt: true, projectId: true, invitedByUserId: true, project: { select: { name: true, status: true, ownerUserId: true, projectType: true } } },
     });
     if (!row) throw new NotFoundException('INVITE_NOT_FOUND');
     return row;
@@ -139,6 +158,7 @@ export class TeamService {
       data: {
         projectName: row.project.name, invitedBy: inviter?.name ?? null, role: row.role, roleTitle: roleInfo[row.role as ProjectRole].title,
         roleExplanation: roleInfo[row.role as ProjectRole].explanation, expired: row.expiresAt < new Date(), revoked: Boolean(row.revokedAt), accepted: Boolean(row.acceptedAt),
+        stages: row.stageKeys.map((key) => stageDefinitions[key as StageKey]?.title ?? key),
       },
     };
   }
@@ -157,8 +177,8 @@ export class TeamService {
       const existing = await tx.projectMember.findUnique({ where: { projectId_userId: { projectId: row.projectId, userId } }, select: { id: true, status: true } });
       if (existing?.status === 'active') throw new ConflictException('ALREADY_PROJECT_MEMBER');
       // Someone removed earlier comes back with the new role; their old actions stay in the history.
-      if (existing) await tx.projectMember.update({ where: { id: existing.id }, data: { role: row.role, status: 'active' } });
-      else await tx.projectMember.create({ data: { projectId: row.projectId, userId, role: row.role, status: 'active' } });
+      if (existing) await tx.projectMember.update({ where: { id: existing.id }, data: { role: row.role, status: 'active', stageKeys: row.stageKeys } });
+      else await tx.projectMember.create({ data: { projectId: row.projectId, userId, role: row.role, status: 'active', stageKeys: row.stageKeys } });
       await tx.projectEvent.create({ data: { projectId: row.projectId, actorUserId: userId, type: 'team_joined', details: { invitationId: row.id, role: row.role } } });
     });
     const joined = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
@@ -173,10 +193,24 @@ export class TeamService {
     if (!canManage(role, nextRole)) throw new ForbiddenException('ROLE_NOT_ALLOWED');
     if (member.role === nextRole) return this.list(userId, projectId);
     await this.prisma.$transaction(async (tx) => {
-      await tx.projectMember.update({ where: { id: member.id }, data: { role: nextRole as InvitableRole } });
+      await tx.projectMember.update({ where: { id: member.id }, data: { role: nextRole as InvitableRole, ...(nextRole === 'contributor' ? {} : { stageKeys: [] }) } });
       await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'team_role_changed', details: { memberUserId: member.userId, from: member.role, to: nextRole } } });
     });
     await notifyUser(this.prisma, member.userId, { text: () => tr('Ваша роль в проекте «{0}» теперь: {1}.', [project.name, tr(roleInfo[nextRole as ProjectRole].title).toLowerCase()]) });
+    return this.list(userId, projectId);
+  }
+
+  /** Limits a contributor to some stages, or (empty list) gives back every stage. */
+  async setStages(userId: string, projectId: string, memberId: string, keys: unknown) {
+    const { role, project } = await this.manager(userId, projectId);
+    const member = await this.target(userId, projectId, memberId, role);
+    const stageKeys = this.stageKeysFor(member.role, keys, project.projectType);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.projectMember.update({ where: { id: member.id }, data: { stageKeys } });
+      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'team_stages_changed', details: { memberUserId: member.userId, stageKeys } } });
+    });
+    const titles = stageKeys.map((key) => stageDefinitions[key as StageKey].title);
+    await notifyUser(this.prisma, member.userId, { text: () => (titles.length ? tr('В проекте «{0}» вы теперь работаете на этапах: {1}.', [project.name, titles.map((title) => tr(title)).join(', ')]) : tr('В проекте «{0}» вы теперь можете работать на всех этапах.', [project.name])) });
     return this.list(userId, projectId);
   }
 

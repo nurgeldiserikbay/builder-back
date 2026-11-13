@@ -19,6 +19,7 @@ import { ChangeNoticesService } from './change-notices.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { APPROVER_ROLES, approvalState, approveBlocker, checkPolicy, policyText, readPolicy, type ApprovalPolicy } from '../team/team-rules.js';
 import { qualityReport } from '../quality/quality.js';
+import { CommentsService } from './comments.service.js';
 import { buildHandoff as buildHandoffPackage, renderPrototype, type AppFeatures, type AppScreens, type HandoffArtifact } from './webapp.js';
 import type { BusinessProcess } from './process.js';
 import { inProject, acceptRoles, editableProject, notEditableCode, normalizedOrRaw, SPECIALIST_READ_GRACE_MS, isUuid, validationError } from './journey-core.js';
@@ -176,6 +177,7 @@ export class JourneyService {
     const writable = canEdit(stage.status) && this.core.canWrite(ctx, stageKey) && editableProject(ctx.project.status);
     const approval = await this.approvalView(ctx, userId, key, current);
     const policyActive = Boolean(approval.policy);
+    const blockingComments = await CommentsService.openBlocking(this.prisma, stage.id);
     const suggestions = await this.prisma.stageInstruction.findMany({
       where: { stageId: stage.id, kind: 'suggestion' }, orderBy: { createdAt: 'desc' }, take: 30,
       select: { id: true, text: true, targetKey: true, status: true, authorUserId: true, createdAt: true },
@@ -195,7 +197,8 @@ export class JourneyService {
           acceptance: definition.acceptance, acceptExplanation: definition.acceptExplanation, importHint: definition.importHint,
           fields: definition.fields ?? null, lockedKeys: stage.lockedKeys, acceptedVersionId: stage.approvedVersionId,
           canEdit: writable,
-          canAccept: owner && !policyActive && Boolean(stage.currentVersionId) && !changesPending && waiting.length === 0 && !techPlanOutdated
+          blockingComments,
+          canAccept: owner && !policyActive && blockingComments === 0 && Boolean(stage.currentVersionId) && !changesPending && waiting.length === 0 && !techPlanOutdated
             && ['in_progress', 'stale', 'changes_requested', 'in_review'].includes(stage.status) && inputsSatisfied(ctx.route, ctx.dep, stageKey),
           changesPending,
           contract: definition.contract ?? null,
@@ -208,7 +211,7 @@ export class JourneyService {
           canImport: Boolean(definition.importHint) && writable,
           canSubmit: (Boolean(assignment) || (policyActive && ctx.viewer.kind === 'member')) && writable && Boolean(stage.currentVersionId) && stage.status !== 'in_review' && !changesPending,
           canRequestChanges: (owner || Boolean(approval.isReviewer)) && stage.status === 'in_review' && editableProject(ctx.project.status),
-          approval,
+          approval: { ...approval, canApprove: Boolean(approval.canApprove) && blockingComments === 0 },
           canInvite: owner,
           canSuggest: assignment?.role === 'consultant' && assignment.status === 'active' && !['approved', 'imported'].includes(stage.status),
           reviewNote: stage.reviewNote,
@@ -488,6 +491,8 @@ export class JourneyService {
     if (ctx.openNotices.some((notice) => notice.targetKey === stageKey)) throw new ConflictException('CHANGE_NOTICE_OPEN');
     if (this.core.waitingBranches(ctx, stageKey).length) throw new ConflictException('BRANCHES_NOT_ALIGNED');
     if (!inputsSatisfied(ctx.route, ctx.dep, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+    // A blocking remark is resolved before the stage moves on.
+    if (await CommentsService.openBlocking(this.prisma, stage.id)) throw new ConflictException('BLOCKING_COMMENTS_OPEN');
     const version = await this.core.versionContent(versionId);
     if (!version) throw new NotFoundException('VERSION_NOT_FOUND');
     if (definition.artifactType === 'techplan' && !sameTechPlan(await this.core.techPlanFor(ctx, stageKey, null), version.content as unknown as TechPlan)) throw new ConflictException('TECHPLAN_OUTDATED');
@@ -565,20 +570,20 @@ export class JourneyService {
     if (!policy) return { policy: null, policyText: null, candidates, canEditPolicy: managing && editableProject(ctx.project.status) };
     const approvals = current ? await this.prisma.stageApproval.findMany({ where: { stageId: stage.id, versionId: current.id, round: row.approvalRound }, orderBy: { createdAt: 'asc' }, select: { userId: true, comment: true, createdAt: true } }) : [];
     const state = approvalState(policy, members, approvals.map((item) => item.userId), current?.createdByUserId ?? null);
-    const blocker = current ? approveBlocker(policy, members, userId, current.createdByUserId, approvals.some((item) => item.userId === userId)) : 'NO_VERSION';
+    const blocker = current ? approveBlocker(policy, members, userId, current.createdByUserId, approvals.map((item) => item.userId)) : 'NO_VERSION';
     const open = ['in_review'].includes(stage.status) && editableProject(ctx.project.status);
     return {
       policy, policyText: policyText(policy, nameOf), candidates, canEditPolicy: managing && editableProject(ctx.project.status),
       reviewers: policy.reviewers.map((id) => ({ userId: id, name: nameOf(id), approved: state.approvedBy.includes(id), active: state.eligible.includes(id), author: id === current?.createdByUserId })),
       approvals: approvals.filter((item) => state.approvedBy.includes(item.userId)).map((item) => ({ name: nameOf(item.userId), comment: item.comment, createdAt: item.createdAt })),
-      approved: state.approvedBy.length, required: state.required, broken: state.broken,
+      approved: state.approvedBy.length, required: state.required, broken: state.broken, next: state.next ? nameOf(state.next) : null,
       canApprove: open && !blocker && !state.broken, approveBlocker: open ? blocker : 'STAGE_NOT_IN_REVIEW',
       isReviewer: policy.reviewers.includes(userId),
     };
   }
 
   /** Owner or manager sets who approves this stage; any earlier approvals stop counting. Null — back to «I accept myself». */
-  async setApprovalPolicy(userId: string, projectId: string, key: string, input: { mode: unknown; reviewers: unknown; quorum: unknown; authorMayApprove: unknown } | null) {
+  async setApprovalPolicy(userId: string, projectId: string, key: string, input: { mode: unknown; reviewers: unknown; quorum: unknown; authorMayApprove: unknown; order?: unknown } | null) {
     const ctx = await this.core.load(userId, projectId, 'accept', key);
     if (!editableProject(ctx.project.status)) throw new ConflictException('PROJECT_NOT_ACTIVE');
     const stage = this.core.stageOf(ctx, key);
@@ -592,7 +597,7 @@ export class JourneyService {
       await tx.projectStage.update({ where: { id: stage.id }, data: { approvalPolicy: policy ?? Prisma.DbNull, approvalRound: { increment: 1 } } });
       await this.core.event(tx, projectId, userId, 'approval_policy_changed', key, { policy });
     });
-    if (policy && stage.status === 'in_review') await this.notifyReviewers(ctx, key, policy, userId);
+    if (policy && stage.status === 'in_review') await this.notifyReviewers(ctx, key, policy, userId, [], stage.currentVersionId ? (await this.prisma.stageArtifactVersion.findUnique({ where: { id: stage.currentVersionId }, select: { createdByUserId: true } }))?.createdByUserId ?? null : null);
     return this.stage(userId, projectId, key);
   }
 
@@ -615,7 +620,7 @@ export class JourneyService {
       if (row.status !== 'in_review' || row.currentVersionId !== versionId) throw new ConflictException('STAGE_VERSION_CONFLICT');
       const members = await this.teamRoles(projectId);
       const given = await tx.stageApproval.findMany({ where: { stageId: stage.id, versionId, round: row.approvalRound }, select: { userId: true } });
-      const blocker = approveBlocker(policy, members, userId, author.createdByUserId, given.some((item) => item.userId === userId));
+      const blocker = approveBlocker(policy, members, userId, author.createdByUserId, given.map((item) => item.userId));
       if (blocker) throw new ConflictException(blocker);
       await tx.stageApproval.create({ data: { projectId, stageId: stage.id, versionId, round: row.approvalRound, userId, comment, policy } });
       await this.core.event(tx, projectId, userId, 'stage_approval_given', key, { versionNumber: version.versionNumber });
@@ -631,19 +636,32 @@ export class JourneyService {
     if (accepted) {
       await this.afterAccept(ctx, key, notices);
       await this.core.notifyUser(ctx.project.ownerUserId, () => tr("Этап «{0}» в проекте «{1}» принят: набраны все нужные одобрения. {2}", [tr(title), ctx.project.name, this.core.stageLink(projectId, key)]).trim()).catch(() => undefined);
-    } else if (ctx.project.ownerUserId !== userId) {
+    } else {
+      const row = await this.approvalRow(stage.id);
+      const policy = readPolicy(row.approvalPolicy);
+      if (policy?.order === 'sequential') {
+        const given = await this.prisma.stageApproval.findMany({ where: { stageId: stage.id, versionId, round: row.approvalRound }, select: { userId: true } });
+        await this.notifyReviewers(ctx, key, policy, userId, given.map((item) => item.userId), author.createdByUserId);
+      }
+    }
+    if (!accepted && ctx.project.ownerUserId !== userId) {
       await this.core.notifyUser(ctx.project.ownerUserId, () => tr("{0} одобрил(а) этап «{1}» в проекте «{2}». {3}", [who, tr(title), ctx.project.name, this.core.stageLink(projectId, key)]).trim()).catch(() => undefined);
     }
     return this.stage(userId, projectId, key);
   }
 
-  private async notifyReviewers(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: string, policy: ApprovalPolicy, exceptUserId: string) {
+  /** Parallel review tells every reviewer; sequential only the one whose turn it is. */
+  private async notifyReviewers(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: string, policy: ApprovalPolicy, exceptUserId: string, approvals: string[] = [], authorId: string | null = null) {
     const title = stageDefinitions[key as StageKey].title;
-    for (const id of policy.reviewers) {
+    const targets = policy.order === 'sequential'
+      ? [approvalState(policy, await this.teamRoles(ctx.project.id), approvals, authorId).next].filter((id): id is string => Boolean(id))
+      : policy.reviewers;
+    for (const id of targets) {
       if (id === exceptUserId) continue;
       await this.core.notifyUser(id, () => tr("Этап «{0}» в проекте «{1}» ждёт вашей проверки. {2}", [tr(title), ctx.project.name, this.core.stageLink(ctx.project.id, key)]).trim()).catch(() => undefined);
     }
   }
+
 
   async reopen(userId: string, projectId: string, key: string) {
     const ctx = await this.core.load(userId, projectId, 'accept', key);
@@ -678,7 +696,7 @@ export class JourneyService {
       await tx.projectStage.update({ where: { id: stage.id }, data: { status: 'in_review' } });
       await this.core.event(tx, projectId, userId, 'stage_submitted', key, { versionNumber: version?.versionNumber ?? null });
     });
-    if (policy) await this.notifyReviewers(ctx, key, policy, userId);
+    if (policy) await this.notifyReviewers(ctx, key, policy, userId, [], (await this.prisma.stageArtifactVersion.findUnique({ where: { id: versionId }, select: { createdByUserId: true } }))?.createdByUserId ?? null);
     else await this.core.notifyUser(ctx.project.ownerUserId, () => tr("Этап «{0}» в проекте «{1}» отправлен вам на приёмку. {2}", [tr(definition.title), ctx.project.name, this.core.stageLink(projectId, key)]).trim()).catch(() => undefined);
     await this.worktime.recordAction(userId, projectId, key);
     return this.journey(userId, projectId);

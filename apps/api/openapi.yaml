@@ -2882,6 +2882,53 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/comments:
+    get:
+      tags: [Journey]
+      operationId: listStageComments
+      summary: Remarks on a stage with replies; who may write and block
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200': { description: 'comments[] (id, text, targetKey, versionNumber, blocking, author, mine, createdAt, resolved, resolvedAt, resolvedBy, canResolve, replies[]), openBlocking, open, canWrite, canBlock, currentVersion, targets[]' }
+    post:
+      tags: [Journey]
+      operationId: addStageComment
+      summary: Add a remark or a reply
+      description: Everyone who sees the stage may write except observers; a remark can point at one part of the current version (targetKey from targets). Blocking remarks — owner, managers and reviewers named in the stage policy — stop acceptance and approval (BLOCKING_COMMENTS_OPEN) until resolved. People on the stage are notified.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string, minLength: 2, maxLength: 2000 }, targetKey: { type: [string, 'null'] }, blocking: { type: boolean }, parentId: { type: [string, 'null'], format: uuid } } }
+      responses:
+        '201': { description: 'Same as GET, plus createdId' }
+        '403': { description: 'COMMENT_FORBIDDEN, COMMENT_BLOCKING_FORBIDDEN' }
+        '404': { description: 'COMMENT_NOT_FOUND, TARGET_NOT_FOUND' }
+        '409': { description: COMMENT_LIMIT_REACHED }
+  /projects/{projectId}/stages/{stageKey}/comments/{commentId}/{action}:
+    post:
+      tags: [Journey]
+      operationId: resolveStageComment
+      summary: Resolve or reopen a remark (its author, the owner or a manager); nothing is deleted
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+        - { name: commentId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: action, in: path, required: true, schema: { type: string, enum: [resolve, reopen] } }
+      responses:
+        '200': { description: Same as GET }
+        '403': { description: COMMENT_RESOLVE_FORBIDDEN }
   /projects/{projectId}/stages/{stageKey}/approve:
     post:
       tags: [Journey]
@@ -2901,7 +2948,7 @@ paths:
       responses:
         '200': { description: 'Stage detail (as GET stage), with stage.approval: policy, policyText, reviewers[] (name, approved, active, author), approvals[], approved, required, broken, canApprove, approveBlocker' }
         '403': { description: NOT_A_REVIEWER }
-        '409': { description: 'STAGE_NOT_IN_REVIEW, STAGE_VERSION_CONFLICT, NO_APPROVAL_POLICY, AUTHOR_CANNOT_APPROVE, NOT_A_REVIEWER, ALREADY_APPROVED, APPROVAL_POLICY_BROKEN' }
+        '409': { description: 'STAGE_NOT_IN_REVIEW, STAGE_VERSION_CONFLICT, NO_APPROVAL_POLICY, AUTHOR_CANNOT_APPROVE, NOT_A_REVIEWER, ALREADY_APPROVED, NOT_YOUR_TURN, APPROVAL_POLICY_BROKEN, BLOCKING_COMMENTS_OPEN' }
   /projects/{projectId}/stages/{stageKey}/approval-policy:
     put:
       tags: [Journey]
@@ -2933,6 +2980,7 @@ paths:
                         reviewers: { type: array, minItems: 1, maxItems: 10, items: { type: string, format: uuid } }
                         quorum: { type: [integer, 'null'], minimum: 1 }
                         authorMayApprove: { type: boolean }
+                        order: { type: string, enum: [parallel, sequential], description: 'sequential — reviewers approve one after another in the listed order (NOT_YOUR_TURN otherwise); only the reviewer whose turn it is is notified' }
       responses:
         '200': { description: 'Stage detail, as GET stage' }
         '400': { description: 'POLICY_MODE_INVALID, POLICY_REVIEWERS_INVALID, POLICY_REVIEWERS_COUNT, POLICY_REVIEWER_NOT_MEMBER, POLICY_QUORUM_INVALID, POLICY_AUTHOR_INVALID' }
@@ -2963,7 +3011,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, required: [email, role], properties: { email: { type: string, maxLength: 254 }, role: { type: string, enum: [manager, contributor, reviewer, viewer] } } }
+            schema: { type: object, additionalProperties: false, required: [email, role], properties: { email: { type: string, maxLength: 254 }, role: { type: string, enum: [manager, contributor, reviewer, viewer] }, stageKeys: { type: array, items: { type: string }, description: 'Contributor only — the stages they may work on; empty or absent — every stage (STAGE_KEYS_ONLY_FOR_CONTRIBUTORS, STAGE_KEYS_INVALID)' } } }
       responses:
         '201': { description: 'invitation, inviteUrl, emailSent' }
         '400': { description: 'EMAIL_INVALID, ROLE_INVALID' }
@@ -3002,6 +3050,25 @@ paths:
         '200': { description: 'Team, as GET' }
         '403': { description: ROLE_NOT_ALLOWED }
         '409': { description: CANNOT_CHANGE_SELF }
+  /projects/{projectId}/team/members/{memberId}/stages:
+    post:
+      tags: [Projects]
+      operationId: setProjectMemberStages
+      summary: Limit a contributor to some stages of the route (empty list — every stage)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: memberId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [stageKeys], properties: { stageKeys: { type: array, items: { type: string } } } }
+      responses:
+        '200': { description: 'Team, as GET (members[].stageKeys, stages[] of the route)' }
+        '400': { description: 'STAGE_KEYS_INVALID, STAGE_KEYS_ONLY_FOR_CONTRIBUTORS' }
+        '403': { description: ROLE_NOT_ALLOWED }
   /projects/{projectId}/team/members/{memberId}/remove:
     post:
       tags: [Projects]
