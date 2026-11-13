@@ -2895,7 +2895,7 @@ paths:
         - $ref: '#/components/parameters/ProjectId'
         - $ref: '#/components/parameters/StageKey'
       responses:
-        '200': { description: 'comments[] (id, text, targetKey, versionNumber, blocking, author, mine, createdAt, resolved, resolvedAt, resolvedBy, canResolve, replies[]), openBlocking, open, canWrite, canBlock, currentVersion, targets[]' }
+        '200': { description: 'comments[] (id, text, attachments[] (id, name, kind, sizeBytes or deleted), mentions[] (names), targetKey, versionNumber, blocking, author, mine, createdAt, resolved, resolvedAt, resolvedBy, canResolve, replies[] with attachments and mentions), openBlocking, open, canWrite, canBlock, currentVersion, targets[], files[] (stage files that can be attached), people[] (who can be mentioned; members only), limits' }
     post:
       tags: [Journey]
       operationId: addStageComment
@@ -2910,11 +2910,12 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string, minLength: 2, maxLength: 2000 }, targetKey: { type: [string, 'null'] }, blocking: { type: boolean }, parentId: { type: [string, 'null'], format: uuid } } }
+            schema: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string, minLength: 2, maxLength: 2000 }, targetKey: { type: [string, 'null'] }, blocking: { type: boolean }, parentId: { type: [string, 'null'], format: uuid }, fileIds: { type: array, maxItems: 5, items: { type: string, format: uuid }, description: 'Files of this stage' }, mentionUserIds: { type: array, maxItems: 10, items: { type: string, format: uuid }, description: 'From people; they are notified' } } }
       responses:
         '201': { description: 'Same as GET, plus createdId' }
+        '400': { description: 'COMMENT_FILES_INVALID, COMMENT_MENTIONS_INVALID' }
         '403': { description: 'COMMENT_FORBIDDEN, COMMENT_BLOCKING_FORBIDDEN' }
-        '404': { description: 'COMMENT_NOT_FOUND, TARGET_NOT_FOUND' }
+        '404': { description: 'COMMENT_NOT_FOUND, TARGET_NOT_FOUND, FILE_NOT_FOUND' }
         '409': { description: COMMENT_LIMIT_REACHED }
   /projects/{projectId}/stages/{stageKey}/comments/{commentId}/{action}:
     post:
