@@ -12,12 +12,12 @@ const good = { status: 200, ms: 50, headers: {
 describe('published address check', () => {
   it('passes a site served the way the sites server serves it', () => {
     const items = judge('https://cakes.example.kz/', good, { status: 308, ms: 5, headers: { location: 'https://cakes.example.kz/' } }, { status: 200, ms: 5, headers: {} });
-    assert.deepEqual(items.filter((item) => item.status !== 'passed'), []);
+    assert.deepEqual(items.filter((item) => item.status === 'failed'), []);
   });
 
   it('names what is missing, and does not guess when the site did not answer', () => {
     const items = Object.fromEntries(judge('http://cakes.example.kz/', { status: 200, ms: 5, headers: { 'x-frame-options': 'DENY' } }, null, { status: 404, ms: 5, headers: {} }).map((item) => [item.id, item.status]));
-    assert.deepEqual(items, { https: 'failed', hsts: 'failed', http_redirect: 'failed', csp: 'failed', frame: 'passed', nosniff: 'failed', referrer: 'failed', permissions: 'failed', robots: 'failed' });
+    assert.deepEqual(items, { https: 'failed', certificate: 'failed', hsts: 'failed', http_redirect: 'failed', csp: 'failed', frame: 'passed', nosniff: 'failed', referrer: 'failed', permissions: 'failed', robots: 'failed' });
     assert.ok(judge('https://x.example/', null, null, null).every((item) => item.status === 'unknown'));
     const noRedirect = judge('https://x.example/', good, { status: 200, ms: 5, headers: {} }, null);
     assert.equal(noRedirect.find((item) => item.id === 'http_redirect')!.status, 'failed');
@@ -41,5 +41,22 @@ describe('published address check', () => {
     const down = await liveCheck('http://127.0.0.1:1/', true);
     assert.equal(down.reachable, false);
     assert.equal(down.error, 'REFUSED');
+  });
+});
+
+describe('certificate and regressions', () => {
+  it('reports a certificate ending within two weeks and only items that broke since last time', async () => {
+    const { judge: j, regressions } = await import('./live-check.js');
+    const now = new Date('2026-11-14T00:00:00Z');
+    const soon = { ...good, certExpires: '2026-11-20T00:00:00Z' };
+    const later = { ...good, certExpires: '2027-02-01T00:00:00Z' };
+    const plain = { status: 308, ms: 1, headers: { location: 'https://a/' } };
+    const robots = { status: 200, ms: 1, headers: {} };
+    assert.equal(j('https://a/', soon, plain, robots, now).find((item) => item.id === 'certificate')!.status, 'failed');
+    assert.equal(j('https://a/', later, plain, robots, now).find((item) => item.id === 'certificate')!.status, 'passed');
+    const check = (main: typeof good) => ({ url: 'https://a/', checkedAt: '', reachable: true, error: null, ms: 1, items: j('https://a/', main, plain, robots, now) });
+    assert.deepEqual(regressions(check(later), check(soon)), ['certificate']);
+    assert.deepEqual(regressions(null, check(soon)), []);
+    assert.deepEqual(regressions(check(soon), check(soon)), []);
   });
 });

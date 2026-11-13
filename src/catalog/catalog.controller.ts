@@ -1,4 +1,6 @@
-import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Res, UploadedFile, UseInterceptors, Get, Header, HttpCode, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { MAX_UPLOAD_BYTES } from '../images/image-processing.js';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { StaffAuthGuard, type StaffRequest } from '../admin/staff-auth.guard.js';
@@ -53,6 +55,24 @@ export class CatalogController {
       displayName: input.displayName, headline: input.headline, about: optionalText(input.about, 'PROFILE_ABOUT_TOO_LONG'), stageKeys: input.stageKeys as string[],
       hourlyRate: (input.hourlyRate as number | null | undefined) ?? null, city: optionalText(input.city, 'PROFILE_CITY_INVALID'), published: input.published,
     }, input.portfolio);
+  }
+
+  @Post('me/specialist-profile/photos')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1, fields: 0 } }))
+  uploadPhoto(@Req() request: AuthenticatedRequest, @UploadedFile() file: { buffer: Buffer; size: number } | undefined) {
+    return this.catalog.uploadPhoto(request.user.id, file);
+  }
+
+  @Delete('me/specialist-profile/photos/:photoId')
+  deletePhoto(@Req() request: AuthenticatedRequest, @Param('photoId') photoId: string) {
+    return this.catalog.deletePhoto(request.user.id, photoId);
+  }
+
+  @Get('specialist-photos/:photoId')
+  async photo(@Req() request: AuthenticatedRequest, @Param('photoId') photoId: string, @Res() response: { set(headers: Record<string, string>): unknown; send(body: Buffer): unknown }) {
+    const photo = await this.catalog.photo(request.user.id, photoId);
+    response.set({ 'Content-Type': 'image/webp', 'Cache-Control': 'private, max-age=3600', ETag: `"${photo.etag}"`, 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" });
+    response.send(photo.data);
   }
 
   @Post('projects/:projectId/assignments/:assignmentId/review')

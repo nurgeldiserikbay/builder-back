@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { after, describe, it } from 'node:test';
 import { PrismaService } from '../database/prisma.service.js';
 import { MonitoringService } from './monitoring.service.js';
+import type { LiveCheck } from './live-check.js';
 
 /** Runs against the database from DATABASE_URL (use a development database); skipped when it is not reachable. Removes only what it created. */
 describe('site monitoring (database)', async () => {
@@ -102,6 +103,44 @@ describe('site monitoring (database)', async () => {
     } finally {
       process.env = saved;
       mailServer.close();
+    }
+  });
+
+  it('checks the address once a day and writes only when something that was fine broke', { skip }, async () => {
+    const notes: string[] = [];
+    const tgServer = createServer((request, response) => { let raw = ''; request.on('data', (c) => { raw += c; }); request.on('end', () => { if (request.url?.endsWith('/sendMessage')) notes.push(JSON.parse(raw).text); response.writeHead(200).end('{"ok":true}'); }); });
+    await new Promise<void>((resolve) => tgServer.listen(0, '127.0.0.1', resolve));
+    const saved = { ...process.env };
+    Object.assign(process.env, { TELEGRAM_BOT_TOKEN: 't', TELEGRAM_BOT_USERNAME: 'b', TELEGRAM_API_BASE_URL: `http://127.0.0.1:${(tgServer.address() as { port: number }).port}` });
+    delete process.env.RESEND_API_KEY; delete process.env.BREVO_API_KEY;
+    try {
+      const email = `daily-${randomUUID()}@test.local`;
+      const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), locale: 'ru' } });
+      users.push(owner.id);
+      const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
+      const project = await prisma!.project.create({ data: { workspaceId: workspace.id, ownerUserId: owner.id, name: 'Цветы', startMode: 'build', status: 'live' } });
+      await prisma!.projectMember.create({ data: { projectId: project.id, userId: owner.id, role: 'owner' } });
+      const site = await prisma!.sitePublication.create({ data: { projectId: project.id, slug: `d-${randomUUID().slice(0, 8)}`, status: 'live', buildVersionId: randomUUID(), publishedAt: new Date(), publishedByUserId: owner.id } });
+      const monitoring = new MonitoringService(prisma!);
+      const result = (certificate: 'passed' | 'failed'): LiveCheck => ({ url: 'https://x/', checkedAt: new Date().toISOString(), reachable: true, error: null, ms: 10, items: [{ id: 'https', status: 'passed', detail: null }, { id: 'certificate', status: certificate, detail: certificate === 'passed' ? '60' : '9' }] });
+      let next = result('passed');
+      monitoring.inspect = async () => next;
+      const t0 = new Date('2026-11-20T03:00:00Z');
+      const only = async (at: Date) => { await monitoring.dailyLiveChecks(at, 500); return prisma!.sitePublication.findUniqueOrThrow({ where: { id: site.id } }); };
+      assert.ok((await only(t0)).liveCheckedAt);
+      next = result('failed');
+      await only(new Date(t0.getTime() + 3600_000)); // not due yet: still yesterday's result
+      assert.equal(((await prisma!.sitePublication.findUniqueOrThrow({ where: { id: site.id } })).liveCheck as LiveCheck).items[1]!.status, 'passed');
+      const day = await monitoring.dailyLiveChecks(new Date(t0.getTime() + 25 * 3600_000), 500);
+      assert.ok(day.alerts >= 1);
+      await monitoring.dailyLiveChecks(new Date(t0.getTime() + 50 * 3600_000), 500); // still failing: no second message
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const mine = await prisma!.projectEvent.count({ where: { projectId: project.id } });
+      assert.equal(mine, 0);
+      assert.equal(((await prisma!.sitePublication.findUniqueOrThrow({ where: { id: site.id } })).liveCheck as LiveCheck).items[1]!.status, 'failed');
+    } finally {
+      process.env = saved;
+      tgServer.close();
     }
   });
 });

@@ -84,7 +84,7 @@ export function checkModeration(decision: unknown, note: unknown): { ok: true; d
 }
 
 export const MAX_PORTFOLIO = 12;
-export interface PortfolioItem { title: string; description: string | null; url: string | null; stageKey: string | null }
+export interface PortfolioItem { title: string; description: string | null; url: string | null; stageKey: string | null; photoId?: string | null }
 
 /**
  * A link a person can open safely: http(s) only, no user name or password in it, a real host name. The platform
@@ -100,7 +100,8 @@ export function portfolioUrl(raw: string): string | null {
   return url.href.length <= 300 ? url.href : null;
 }
 
-export function checkPortfolio(raw: unknown): { ok: true; items: PortfolioItem[] } | { ok: false; code: string } {
+/** photoIds: the specialist's own photos; a work may show one of them. */
+export function checkPortfolio(raw: unknown, photoIds: Set<string> = new Set()): { ok: true; items: PortfolioItem[] } | { ok: false; code: string } {
   if (!Array.isArray(raw)) return { ok: false, code: 'PORTFOLIO_INVALID' };
   if (raw.length > MAX_PORTFOLIO) return { ok: false, code: 'PORTFOLIO_TOO_MANY' };
   const items: PortfolioItem[] = [];
@@ -108,7 +109,7 @@ export function checkPortfolio(raw: unknown): { ok: true; items: PortfolioItem[]
   for (const [index, entry] of raw.entries()) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return { ok: false, code: `PORTFOLIO_INVALID:${index}` };
     const item = entry as Record<string, unknown>;
-    if (Object.keys(item).some((key) => !['title', 'description', 'url', 'stageKey'].includes(key))) return { ok: false, code: `PORTFOLIO_INVALID:${index}` };
+    if (Object.keys(item).some((key) => !['title', 'description', 'url', 'stageKey', 'photoId'].includes(key))) return { ok: false, code: `PORTFOLIO_INVALID:${index}` };
     const title = typeof item.title === 'string' ? item.title.replace(/\s+/g, ' ').trim() : '';
     if (title.length < 3 || title.length > 80) return { ok: false, code: `PORTFOLIO_TITLE_INVALID:${index}` };
     const description = typeof item.description === 'string' && item.description.trim() ? item.description.trim() : null;
@@ -123,7 +124,9 @@ export function checkPortfolio(raw: unknown): { ok: true; items: PortfolioItem[]
     } else if (item.url !== null && item.url !== undefined && item.url !== '') return { ok: false, code: `PORTFOLIO_URL_INVALID:${index}` };
     const stageKey = item.stageKey ?? null;
     if (stageKey !== null && (typeof stageKey !== 'string' || !(catalogStageKeys as string[]).includes(stageKey))) return { ok: false, code: `PORTFOLIO_STAGE_INVALID:${index}` };
-    items.push({ title, description, url, stageKey: stageKey as string | null });
+    const photoId = item.photoId ?? null;
+    if (photoId !== null && (typeof photoId !== 'string' || !photoIds.has(photoId))) return { ok: false, code: `PORTFOLIO_PHOTO_INVALID:${index}` };
+    items.push({ title, description, url, stageKey: stageKey as string | null, photoId: photoId as string | null });
   }
   return { ok: true, items };
 }

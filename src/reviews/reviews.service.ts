@@ -51,8 +51,10 @@ export class ReviewsService {
       }
       if (previous) await tx.idempotencyRecord.delete({ where: { id: previous.id } });
 
+      const chosenKey = (await tx.project.findUnique({ where: { id: projectId }, select: { qualityProfileKey: true } }))?.qualityProfileKey ?? null;
+      const chosen = chosenKey ? await tx.qualityProfile.findFirst({ where: { key: chosenKey, versions: { some: { status: 'active' } } }, select: { id: true } }) : null;
       const defaultProfile = await tx.qualityProfile.findFirst({
-        where: { isDefault: true },
+        where: chosen ? { id: chosen.id } : { isDefault: true },
         include: { versions: { where: { status: 'active' }, take: 1 } },
       });
       const activeProfileVersion = defaultProfile?.versions[0];

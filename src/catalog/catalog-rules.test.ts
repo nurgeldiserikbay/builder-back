@@ -70,7 +70,10 @@ describe('portfolio', () => {
   it('checks items, keeps their order and refuses too many or duplicates', async () => {
     const { checkPortfolio } = await import('./catalog-rules.js');
     const ok = checkPortfolio([{ title: ' Сайт кондитерской ', description: '', url: 'https://tort.kz', stageKey: 'content' }, { title: 'Меню кафе', description: 'Тексты и структура', url: null, stageKey: null }]);
-    assert.deepEqual(ok, { ok: true, items: [{ title: 'Сайт кондитерской', description: null, url: 'https://tort.kz/', stageKey: 'content' }, { title: 'Меню кафе', description: 'Тексты и структура', url: null, stageKey: null }] });
+    assert.deepEqual(ok, { ok: true, items: [{ title: 'Сайт кондитерской', description: null, url: 'https://tort.kz/', stageKey: 'content', photoId: null }, { title: 'Меню кафе', description: 'Тексты и структура', url: null, stageKey: null, photoId: null }] });
+    // A photo must be one of the specialist's own.
+    assert.deepEqual(checkPortfolio([{ title: 'Сайт', photoId: 'p1' }]), { ok: false, code: 'PORTFOLIO_PHOTO_INVALID:0' });
+    assert.equal((checkPortfolio([{ title: 'Сайт', photoId: 'p1' }], new Set(['p1'])) as { items: { photoId: string }[] }).items[0].photoId, 'p1');
     assert.deepEqual(checkPortfolio([{ title: 'ab' }]), { ok: false, code: 'PORTFOLIO_TITLE_INVALID:0' });
     assert.deepEqual(checkPortfolio([{ title: 'Сайт', url: 'ftp://x.kz' }]), { ok: false, code: 'PORTFOLIO_URL_INVALID:0' });
     assert.deepEqual(checkPortfolio([{ title: 'Сайт', url: 'https://a.kz' }, { title: 'Ещё', url: 'https://a.kz/' }]), { ok: false, code: 'PORTFOLIO_URL_DUPLICATE:1' });

@@ -7,7 +7,7 @@ import { dayIn } from '../sites/visit-counter.js';
 import { change } from '../insights/insights-rules.js';
 import { CHECK_INTERVAL_MS, duration, nextState, weeklyReportDue, type MonitorStatus, type Probe } from './monitor-rules.js';
 import { probeSite } from './site-probe.js';
-import { liveCheck, type LiveCheck } from './live-check.js';
+import { liveCheck, regressions, type LiveCheck } from './live-check.js';
 
 /** Only one API instance checks sites at a time. */
 const LOCK_KEY = 7_316_005;
@@ -54,6 +54,7 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
     try {
       const result = await this.checkAll(now);
       const reports = await this.sendWeeklyReports(now);
+      await this.dailyLiveChecks(now);
       if (result.alerts || reports) this.logger.log(`checked ${result.checked}, alerts ${result.alerts}, reports ${reports}`);
       return { ...result, reports };
     } finally {
@@ -170,6 +171,32 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
     };
   }
 
+  /**
+   * Once a day per live site: the address check again. When something that was fine is not any more (the certificate
+   * ends within 14 days, a header disappeared, HTTPS stopped working), the owner gets one message about it.
+   */
+  async dailyLiveChecks(now = new Date(), limit = 20) {
+    const due = new Date(now.getTime() - 24 * 3600_000);
+    const sites = await this.prisma.sitePublication.findMany({
+      where: { status: 'live', OR: [{ liveCheckedAt: null }, { liveCheckedAt: { lt: due } }] }, orderBy: { liveCheckedAt: { sort: 'asc', nulls: 'first' } }, take: limit,
+      select: { id: true, projectId: true, slug: true, customDomain: true, domainStatus: true, liveCheck: true, project: { select: { name: true, ownerUserId: true } } },
+    });
+    let alerts = 0;
+    for (const site of sites) {
+      const { url, trusted } = this.urlOf(site);
+      const result = await this.inspect(url, trusted);
+      const worse = result.reachable ? regressions(site.liveCheck as LiveCheck | null, result) : [];
+      await this.prisma.sitePublication.updateMany({ where: { id: site.id }, data: { liveCheck: result as never, liveCheckedAt: now } });
+      if (!worse.length) continue;
+      alerts += 1;
+      await notifyUser(this.prisma, site.project.ownerUserId, {
+        text: () => tr('На сайте «{0}» что-то испортилось с прошлой проверки: {1}. Подробности — в карточке «Работает ли сайт».', [site.project.name, worse.map((id) => tr(liveTexts[id]?.title ?? id)).join('; ')]),
+        emailSubject: () => tr('BuildPath: сайт «{0}» — проверьте защиту адреса', [site.project.name]), link: { path: `/projects/${site.projectId}#publish`, label: () => tr('Открыть проект') },
+      }).catch(() => undefined);
+    }
+    return { checked: sites.length, alerts };
+  }
+
   /** Checks the published address now (owner or manager); at most once a minute per site — a repeat returns the last result. */
   async runLiveCheck(userId: string, projectId: string) {
     if (!isUuid(projectId)) throw new NotFoundException('PROJECT_NOT_FOUND');
@@ -206,6 +233,7 @@ function causeText(cause: string | null): string {
 }
 
 const liveTexts: Record<string, { title: string; fix: string }> = {
+  certificate: { title: 'Сертификат HTTPS действует ещё больше двух недель', fix: 'Сертификат скоро закончится — после этого браузеры перестанут открывать сайт. Обычно он продлевается сам; если нет — сообщите в поддержку.' },
   https: { title: 'Сайт открывается по HTTPS', fix: 'Без HTTPS браузер помечает сайт как небезопасный. Для своего домена дождитесь выпуска сертификата или проверьте DNS.' },
   hsts: { title: 'Браузеру велено всегда открывать сайт по HTTPS (HSTS)', fix: 'Заголовок Strict-Transport-Security ставит сервер сайтов при HTTPS; если его нет — сообщите в поддержку.' },
   http_redirect: { title: 'Адрес с http:// переводит на https://', fix: 'Иначе часть посетителей останется на незащищённой версии.' },

@@ -50,7 +50,7 @@ describe('specialist catalog and reviews (database)', async () => {
     // Saving without the portfolio field (an older client) keeps it.
     await catalog!.saveMine(specialist.id, { displayName: 'Айгерим', headline: 'Тексты для сайтов услуг', about: null, stageKeys: ['content'], hourlyRate: 5000, city: null, published: true });
     const withWorks = await catalog!.get(profileId, owner.id);
-    assert.deepEqual(withWorks.data.portfolio, [{ title: 'Сайт кондитерской', description: 'Тексты и структура', url: 'https://www.tort.kz/', stageKey: 'content', stageTitle: 'Структура и тексты', host: 'tort.kz' }]);
+    assert.deepEqual(withWorks.data.portfolio, [{ title: 'Сайт кондитерской', description: 'Тексты и структура', url: 'https://www.tort.kz/', stageKey: 'content', stageTitle: 'Структура и тексты', host: 'tort.kz', photoId: null }]);
     assert.equal((await catalog!.list('content')).data.specialists.find((card) => card.id === profileId)?.works, 1);
     const listed = (await catalog!.list('content')).data.specialists.find((card) => card.id === profileId);
     assert.ok(listed);
@@ -112,5 +112,37 @@ describe('specialist catalog and reviews (database)', async () => {
     // An account being deleted disappears from the catalog at once.
     await prisma!.user.update({ where: { id: specialist.id }, data: { deletionRequestedAt: new Date() } });
     assert.ok(!(await catalog!.list(null)).data.specialists.some((item) => item.id === profileId));
+  });
+  it('portfolio photos: upload, put on a work, visibility and deletion', { skip }, async () => {
+    process.env.UPLOAD_MALWARE_SCAN = 'disabled';
+    const { default: sharp } = await import('sharp');
+    const png = await sharp({ create: { width: 40, height: 30, channels: 3, background: '#c86' } }).png().toBuffer();
+    const author = await user('photo-author');
+    const viewer = await user('photo-viewer');
+    const base = { displayName: 'Данияр', headline: 'Сайты для кафе', about: null, stageKeys: ['design'], hourlyRate: null, city: null };
+
+    await assert.rejects(catalog!.uploadPhoto(author.id, { buffer: Buffer.from('not an image'), size: 12 }), /IMAGE_TYPE_NOT_SUPPORTED/);
+    const uploaded = (await catalog!.uploadPhoto(author.id, { buffer: png, size: png.length })).data;
+    assert.equal(uploaded.width, 40);
+    const other = (await catalog!.uploadPhoto(viewer.id, { buffer: png, size: png.length })).data;
+
+    // Only the author's own photo may be put on a work.
+    await assert.rejects(catalog!.saveMine(author.id, { ...base, published: false }, [{ title: 'Кафе', photoId: other.id }]), /PORTFOLIO_PHOTO_INVALID:0/);
+    await catalog!.saveMine(author.id, { ...base, published: false }, [{ title: 'Кафе', photoId: uploaded.id }]);
+
+    // The author sees it; others only once the profile is published.
+    assert.ok((await catalog!.photo(author.id, uploaded.id)).data.length > 0);
+    await assert.rejects(catalog!.photo(viewer.id, uploaded.id), /PHOTO_NOT_FOUND/);
+    await catalog!.saveMine(author.id, { ...base, published: true }, [{ title: 'Кафе', photoId: uploaded.id }]);
+    const served = await catalog!.photo(viewer.id, uploaded.id);
+    assert.equal((await sharp(served.data).metadata()).format, 'webp');
+    // A photo nobody shows stays private.
+    await assert.rejects(catalog!.photo(author.id, other.id), /PHOTO_NOT_FOUND/);
+
+    await assert.rejects(catalog!.deletePhoto(author.id, uploaded.id), /PORTFOLIO_PHOTO_IN_USE/);
+    await assert.rejects(catalog!.deletePhoto(author.id, other.id), /PHOTO_NOT_FOUND/);
+    await catalog!.saveMine(author.id, { ...base, published: true }, [{ title: 'Кафе' }]);
+    await catalog!.deletePhoto(author.id, uploaded.id);
+    assert.equal(await prisma!.specialistPhoto.count({ where: { userId: author.id } }), 0);
   });
 });

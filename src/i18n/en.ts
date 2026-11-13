@@ -2016,4 +2016,11 @@ export const en: Record<string, string> = {
   "Заголовок Permissions-Policy.": "The Permissions-Policy header.",
   "Файл robots.txt отвечает": "robots.txt answers",
   "Поисковики читают из него карту сайта.": "Search engines read the sitemap from it.",
+  "На сайте «{0}» что-то испортилось с прошлой проверки: {1}. Подробности — в карточке «Работает ли сайт».": "Something on the site “{0}” broke since the last check: {1}. Details are in the “Is the site working” card.",
+  "BuildPath: сайт «{0}» — проверьте защиту адреса": "BuildPath: site “{0}” — check the address protection",
+  "⛔ Блокирующее замечание добавлено: этап нельзя принять, пока его не закроют.": "⛔ Blocking remark added: the stage cannot be accepted until it is closed.",
+  "Напишите блокирующее замечание: пока его не закроют, этап нельзя принять или одобрить.\n\nОтменить — /cancel": "Write a blocking remark: until it is closed, the stage cannot be accepted or approved.\n\nCancel — /cancel",
+  "⛔ Блокирующее": "⛔ Blocking",
+  "Сертификат HTTPS действует ещё больше двух недель": "The HTTPS certificate is valid for more than two more weeks",
+  "Сертификат скоро закончится — после этого браузеры перестанут открывать сайт. Обычно он продлевается сам; если нет — сообщите в поддержку.": "The certificate expires soon — after that browsers will stop opening the site. It usually renews itself; if not, contact support.",
 };
