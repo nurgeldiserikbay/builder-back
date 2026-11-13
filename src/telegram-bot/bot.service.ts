@@ -3,14 +3,17 @@ import { HttpException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { SpecialistsService } from '../journey/specialists.service.js';
+import { CommentsService } from '../journey/comments.service.js';
 import { answerCallbackQuery, downloadTelegramFile, sendTelegramMessage, telegramConfig, type InlineKeyboard, type TelegramConfig } from '../notifications/telegram.js';
 import { transcribe, transcribeConfig, VOICE_LIMITS } from './transcribe.js';
 import { artifactSummary, errorText, helpText, statusEmoji } from './bot-texts.js';
 
 const PENDING_TTL_MS = 15 * 60 * 1000;
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-type Pending = 'instruction' | 'changes_note' | 'suggestion';
-const PENDING_KINDS: Pending[] = ['instruction', 'changes_note', 'suggestion'];
+type Pending = 'instruction' | 'changes_note' | 'suggestion' | 'comment' | 'reply';
+const PENDING_KINDS: Pending[] = ['instruction', 'changes_note', 'suggestion', 'comment', 'reply'];
+/** Remarks are typed: for a reply the bot keeps the remark id in pendingText, where a voice message would keep its text. */
+const TEXT_ONLY: Pending[] = ['comment', 'reply'];
 /** «voice:<kind>» — recognised text waits for «Выполнить»; «voice_consent:<kind>» — a voice file waits for consent. */
 type VoicePending = `voice:${Pending}` | `voice_consent:${Pending}`;
 export type VoiceMessage = { fileId: string; duration: number; size: number | null };
@@ -22,7 +25,7 @@ type Ctx = { config: TelegramConfig; chatId: string; userId: string };
  */
 @Injectable()
 export class TelegramBotService {
-  constructor(private readonly prisma: PrismaService, private readonly journey: JourneyService, private readonly specialists: SpecialistsService) {}
+  constructor(private readonly prisma: PrismaService, private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly comments: CommentsService) {}
 
   private send(ctx: Ctx, text: string, keyboard?: InlineKeyboard) {
     return sendTelegramMessage(ctx.config, ctx.chatId, text, fetch, keyboard);
@@ -88,6 +91,7 @@ export class TelegramBotService {
     const waiting = await this.waiting(ctx.chatId, ctx.userId);
     // Voice is only recognised when the bot waits for a text, so nothing is sent to the provider by accident.
     if (!waiting) return void this.send(ctx, tr("Голосом можно ответить, когда бот ждёт ваш текст: откройте этап и нажмите «Попросить ИИ». Наберите /projects, чтобы выбрать проект."), [[{ text: tr("📂 Мои проекты"), callback_data: 'L' }]]);
+    if (TEXT_ONLY.includes(waiting.kind)) return void this.send(ctx, tr("Замечание напишите, пожалуйста, текстом."));
     if (voice.duration > VOICE_LIMITS.seconds || (voice.size ?? 0) > VOICE_LIMITS.bytes) return void this.send(ctx, tr("Голосовое длиннее {0} секунд — скажите короче или напишите текстом.", [VOICE_LIMITS.seconds]));
     const user = await this.prisma.user.findUnique({ where: { id: ctx.userId }, select: { voiceConsentAt: true } });
     if (!user?.voiceConsentAt) {
@@ -132,12 +136,13 @@ export class TelegramBotService {
       return void this.send(ctx, tr("Чтобы что-то изменить, откройте этап и нажмите «Попросить ИИ». Наберите /projects, чтобы выбрать проект."), [[{ text: tr("📂 Мои проекты"), callback_data: 'L' }]]);
     }
     if (trimmed.length < 2 || trimmed.length > 1000) return void this.send(ctx, tr("Напишите от 2 до 1000 символов или /cancel, чтобы отменить."));
+    const target = waiting.kind === 'reply' ? waiting.state.pendingText : null;
     await this.setState(ctx, { pending: null });
-    await this.act(ctx, waiting.projectId, waiting.stageKey, waiting.kind, trimmed);
+    await this.act(ctx, waiting.projectId, waiting.stageKey, waiting.kind, trimmed, target);
   }
 
   /** Does what the person asked for with the text they typed or confirmed after a voice message. */
-  private async act(ctx: Ctx, projectId: string, stageKey: string, pending: Pending, trimmed: string) {
+  private async act(ctx: Ctx, projectId: string, stageKey: string, pending: Pending, trimmed: string, target: string | null = null) {
     const userId = ctx.userId;
     await this.guarded(ctx, async () => {
       if (pending === 'instruction') {
@@ -147,6 +152,10 @@ export class TelegramBotService {
       } else if (pending === 'changes_note') {
         await this.journey.requestChanges(userId, projectId, stageKey, trimmed);
         await this.send(ctx, tr("↩️ Этап возвращён на доработку с вашим комментарием."));
+      } else if (pending === 'comment' || pending === 'reply') {
+        await this.comments.add(userId, projectId, stageKey, { text: trimmed, targetKey: null, blocking: false, parentId: pending === 'reply' ? target : null });
+        await this.send(ctx, pending === 'reply' ? tr("💬 Ответ добавлен.") : tr("💬 Замечание добавлено. Участники этапа получат уведомление."));
+        return this.showComments(ctx, projectId, stageKey);
       } else {
         await this.journey.suggest(userId, projectId, stageKey, { text: trimmed, targetKey: null });
         await this.send(ctx, tr("💬 Предложение отправлено ведущему этапа."));
@@ -221,6 +230,22 @@ export class TelegramBotService {
           await this.send(ctx, detail.stage.status === 'approved' ? tr("✅ Одобрено. Набраны все нужные одобрения — этап принят.") : tr("👍 Одобрено: {0} из {1}.", [detail.stage.approval.approved ?? 0, detail.stage.approval.required ?? 0]));
           return;
         }
+        case 'C':
+          return this.showComments(ctx, projectId, stageKey);
+        case 'CN':
+          await this.setState(ctx, { pending: 'comment' });
+          await this.send(ctx, tr("Напишите замечание к этапу одним сообщением. Блокирующее замечание и замечание к отдельной части можно оставить в приложении.\n\nОтменить — /cancel"));
+          return;
+        case 'CR':
+          if (!isUuid(arg)) return;
+          await this.setState(ctx, { pending: 'reply', pendingText: arg });
+          await this.send(ctx, tr("Напишите ответ одним сообщением.\n\nОтменить — /cancel"));
+          return;
+        case 'CX':
+          if (!isUuid(arg)) return;
+          await this.comments.resolve(userId, projectId, stageKey, arg, true);
+          await this.send(ctx, tr("✅ Замечание закрыто."));
+          return this.showComments(ctx, projectId, stageKey);
         case 'U': {
           if (!isUuid(arg)) return;
           await this.journey.submit(userId, projectId, stageKey, arg);
@@ -300,8 +325,30 @@ export class TelegramBotService {
     if (stage.approval.canApprove && current) keyboard.push([{ text: tr("👍 Одобрить"), callback_data: `AP:${current.id}` }]);
     if (stage.canSubmit && current && !detail.issues.length && stage.inputsReady) keyboard.push([{ text: tr("📤 Отправить на приёмку"), callback_data: `U:${current.id}` }]);
     if (stage.canSuggest) keyboard.push([{ text: tr("💬 Предложить правку"), callback_data: 'G' }]);
+    if (stage.status !== 'locked') keyboard.push([{ text: stage.blockingComments ? tr("📝 Замечания · блокирующих: {0}", [stage.blockingComments]) : tr("📝 Замечания"), callback_data: 'C' }]);
     const button = this.appButton(`/projects/${projectId}/stages/${stageKey}`);
     keyboard.push([...(button ? [button] : []), { text: tr("← Этапы"), callback_data: `P:${projectId}` }]);
+    await this.send(ctx, lines.join('\n'), keyboard);
+  }
+
+  /** Open remarks of the stage, newest last; reply, close (author, owner, manager) or write a new one. */
+  private async showComments(ctx: Ctx, projectId: string, stageKey: string) {
+    const list = (await this.comments.list(ctx.userId, projectId, stageKey)).data;
+    const open = list.comments.filter((item) => !item.resolved).slice(-5);
+    const lines = [list.open ? tr("Открытых замечаний: {0}.", [list.open]) : tr("Открытых замечаний нет.")];
+    const keyboard: InlineKeyboard = [];
+    open.forEach((item, index) => {
+      const number = index + 1;
+      const files = item.attachments.length ? ` 📎${item.attachments.length}` : '';
+      lines.push('', `${number}. ${item.blocking ? '⛔ ' : ''}${item.author ?? ''}${item.versionNumber ? ` · ${tr('версия {0}', [item.versionNumber])}` : ''}${files}`, item.text.slice(0, 500));
+      for (const reply of item.replies.slice(-2)) lines.push(`   ↳ ${reply.author ?? ''}: ${reply.text.slice(0, 200)}`);
+      const row: InlineKeyboard[number] = [];
+      if (list.canWrite) row.push({ text: tr("↩️ Ответить на {0}", [number]), callback_data: `CR:${item.id}` });
+      if (item.canResolve) row.push({ text: tr("✅ Закрыть {0}", [number]), callback_data: `CX:${item.id}` });
+      if (row.length) keyboard.push(row);
+    });
+    if (list.canWrite) keyboard.push([{ text: tr("➕ Новое замечание"), callback_data: 'CN' }]);
+    keyboard.push([{ text: tr("← Этап"), callback_data: `S:${stageKey}` }]);
     await this.send(ctx, lines.join('\n'), keyboard);
   }
 }

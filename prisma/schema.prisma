@@ -1732,6 +1732,10 @@ model StageComment {
   authorUserId     String        @map("author_user_id") @db.Uuid
   text             String        @db.VarChar(2000)
   blocking         Boolean       @default(false)
+  /// Files of the same stage attached to the remark.
+  fileIds          String[]      @default([]) @map("file_ids") @db.Uuid
+  /// People named in the remark; they are notified.
+  mentionUserIds   String[]      @default([]) @map("mention_user_ids") @db.Uuid
   resolvedAt       DateTime?     @map("resolved_at") @db.Timestamptz(3)
   resolvedByUserId String?       @map("resolved_by_user_id") @db.Uuid
   createdAt        DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)

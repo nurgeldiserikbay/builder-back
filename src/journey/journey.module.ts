@@ -15,6 +15,6 @@ import { CommentsService } from './comments.service.js';
   imports: [AuthModule, CatalogModule],
   controllers: [JourneyController, InviteInfoController],
   providers: [JourneyCore, StageAiService, ChangeNoticesService, JourneyService, SpecialistsService, WorktimeService, ChangeDeadlinesService, CommentsService],
-  exports: [JourneyService, SpecialistsService, WorktimeService, JourneyCore],
+  exports: [JourneyService, SpecialistsService, WorktimeService, JourneyCore, CommentsService],
 })
 export class JourneyModule {}

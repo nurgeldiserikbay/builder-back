@@ -60,9 +60,17 @@ export class JourneyController {
 
   @Post('projects/:projectId/stages/:stageKey/comments')
   addComment(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
-    const input = body(raw, ['text', 'targetKey', 'blocking', 'parentId']);
+    const input = body(raw, ['text', 'targetKey', 'blocking', 'parentId', 'fileIds', 'mentionUserIds']);
     if (input.blocking !== undefined && typeof input.blocking !== 'boolean') throw new BadRequestException('INVALID_BLOCKING');
-    return this.comments.add(request.user.id, projectId, stageKey(key), { text: text(input.text, 'text', 2, 2000)!, targetKey: text(input.targetKey, 'targetKey', 1, 60, true), blocking: input.blocking === true, parentId: text(input.parentId, 'parentId', 36, 36, true) });
+    const ids = (value: unknown, code: string) => {
+      if (value === undefined || value === null) return [];
+      if (!Array.isArray(value) || value.length > 20 || value.some((item) => typeof item !== 'string')) throw new BadRequestException(code);
+      return value as string[];
+    };
+    return this.comments.add(request.user.id, projectId, stageKey(key), {
+      text: text(input.text, 'text', 2, 2000)!, targetKey: text(input.targetKey, 'targetKey', 1, 60, true), blocking: input.blocking === true, parentId: text(input.parentId, 'parentId', 36, 36, true),
+      fileIds: ids(input.fileIds, 'COMMENT_FILES_INVALID'), mentionUserIds: ids(input.mentionUserIds, 'COMMENT_MENTIONS_INVALID'),
+    });
   }
 
   @Post('projects/:projectId/stages/:stageKey/comments/:commentId/:action')
