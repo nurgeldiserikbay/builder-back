@@ -332,6 +332,7 @@ model Project {
   stageFiles       StageFile[]
   analysisRuns     AnalysisRun[]
   browserChecks    BrowserCheck[]
+  ownershipTransfers OwnershipTransfer[]
   leads            SiteLead[]
   bookings         Booking[]
   orders           StoreOrder[]
@@ -1810,4 +1811,24 @@ model BrowserCheck {
   @@index([status, createdAt], map: "browser_checks_status_created_idx")
   @@index([projectId], map: "browser_checks_project_idx")
   @@map("browser_checks")
+}
+
+/// An offer to hand a project to another member. The recipient accepts; nothing changes until then.
+model OwnershipTransfer {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId   String    @map("project_id") @db.Uuid
+  fromUserId  String    @map("from_user_id") @db.Uuid
+  toUserId    String    @map("to_user_id") @db.Uuid
+  /// The previous owner stays in the team as a manager.
+  keepAccess  Boolean   @default(true) @map("keep_access")
+  /// pending | accepted | declined | cancelled | expired
+  status      String    @default("pending") @db.VarChar(12)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(3)
+  decidedAt   DateTime? @map("decided_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status], map: "ownership_transfers_project_status_idx")
+  @@index([toUserId, status], map: "ownership_transfers_to_status_idx")
+  @@map("ownership_transfers")
 }

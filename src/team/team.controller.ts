@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Po
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { TeamService } from './team.service.js';
+import { OwnershipService } from './ownership.service.js';
 
 function body(value: unknown, fields: string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('INVALID_REQUEST_BODY');
@@ -17,12 +18,30 @@ const str = (value: unknown, code: string): string => {
 @Controller()
 @UseGuards(AuthGuard)
 export class TeamController {
-  constructor(private readonly team: TeamService) {}
+  constructor(private readonly team: TeamService, private readonly ownership: OwnershipService) {}
 
   @Get('projects/:projectId/team')
   @Header('Cache-Control', 'no-store')
-  list(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
-    return this.team.list(request.user.id, projectId);
+  async list(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    const list = await this.team.list(request.user.id, projectId);
+    return { data: { ...list.data, ownership: await this.ownership.view(request.user.id, projectId, list.data.viewerRole) } };
+  }
+
+  @Post('projects/:projectId/team/ownership')
+  @HttpCode(200)
+  offerOwnership(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw, ['toMemberId', 'keepAccess', 'confirmName']);
+    if (input.keepAccess !== undefined && typeof input.keepAccess !== 'boolean') throw new BadRequestException('INVALID_KEEPACCESS');
+    return this.ownership.offer(request.user.id, projectId, { toMemberId: str(input.toMemberId, 'MEMBER_NOT_FOUND'), keepAccess: input.keepAccess !== false, confirmName: str(input.confirmName, 'OWNERSHIP_CONFIRM_NAME') });
+  }
+
+  @Post('projects/:projectId/team/ownership/:action')
+  @HttpCode(200)
+  decideOwnership(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('action') action: string) {
+    if (action === 'accept') return this.ownership.accept(request.user.id, projectId);
+    if (action === 'decline') return this.ownership.decline(request.user.id, projectId);
+    if (action === 'cancel') return this.ownership.cancel(request.user.id, projectId);
+    throw new BadRequestException('INVALID_ACTION');
   }
 
   @Post('projects/:projectId/team/invitations')
@@ -73,7 +92,7 @@ export class TeamController {
 /** The invitation page reads this before the person signs in. */
 @Controller()
 export class TeamInviteInfoController {
-  constructor(private readonly team: TeamService) {}
+  constructor(private readonly team: TeamService, private readonly ownership: OwnershipService) {}
 
   @Get('team-invites/:token')
   @Header('Cache-Control', 'no-store')

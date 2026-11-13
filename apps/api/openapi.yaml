@@ -3085,6 +3085,47 @@ paths:
       responses:
         '200': { description: 'Team, as GET, plus affectedStages[]' }
         '403': { description: ROLE_NOT_ALLOWED }
+  /projects/{projectId}/team/ownership:
+    post:
+      tags: [Projects]
+      operationId: offerProjectOwnership
+      summary: The owner offers the project to another member (not an observer); nothing changes until they accept
+      description: |
+        confirmName must repeat the project name. keepAccess (default true) keeps the previous owner as a manager; false removes
+        their access on transfer. Refused while money or credentials of the owner are tied to the project — OWNERSHIP_BLOCKED with
+        blockers[] (WALLET_NOT_EMPTY, TOP_UP_IN_PROGRESS, PAYMENTS_OPEN, DISPUTE_OPEN, REPOSITORY_CONNECTED). One open offer per
+        project; it expires after 7 days. GET /team returns ownership (offer, canOffer, blockers with texts).
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [toMemberId, confirmName], properties: { toMemberId: { type: string, format: uuid }, keepAccess: { type: boolean }, confirmName: { type: string } } }
+      responses:
+        '200': { description: offered }
+        '400': { description: 'OWNERSHIP_CONFIRM_NAME, OWNERSHIP_TARGET_VIEWER' }
+        '403': { description: OWNERSHIP_OWNER_ONLY }
+        '404': { description: MEMBER_NOT_FOUND }
+        '409': { description: 'OWNERSHIP_BLOCKED (with blockers[]), OWNERSHIP_OFFER_OPEN, PROJECT_NOT_ACTIVE' }
+  /projects/{projectId}/team/ownership/{action}:
+    post:
+      tags: [Projects]
+      operationId: decideProjectOwnership
+      summary: The recipient accepts or declines; the owner cancels
+      description: On accept everything is checked again under a lock; the recipient's plan must hold the project (PLAN_LIMIT_PROJECTS, PLAN_LIMIT_SITES, PLAN_NO_TEAM). The project moves to the recipient's workspace; the recipient becomes owner.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: action, in: path, required: true, schema: { type: string, enum: [accept, decline, cancel] } }
+      responses:
+        '200': { description: Done }
+        '403': { description: 'OWNERSHIP_OWNER_ONLY, PLAN_NO_TEAM, PLAN_LIMIT_PROJECTS, PLAN_LIMIT_SITES' }
+        '404': { description: OWNERSHIP_OFFER_NOT_FOUND }
+        '409': { description: OWNERSHIP_BLOCKED }
   /me/team-projects:
     get:
       tags: [Projects]
