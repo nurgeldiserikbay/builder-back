@@ -4,7 +4,10 @@ import { PrismaService } from '../database/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { SpecialistsService } from '../journey/specialists.service.js';
-import { CommentsService } from '../journey/comments.service.js';
+import { COMMENT_LIMITS, CommentsService } from '../journey/comments.service.js';
+import { StageFilesService } from '../analysis/stage-files.service.js';
+import { OwnershipService } from '../team/ownership.service.js';
+import { STAGE_FILE_LIMITS } from '../analysis/file-types.js';
 import { answerCallbackQuery, downloadTelegramFile, sendTelegramMessage, telegramConfig, type InlineKeyboard, type TelegramConfig } from '../notifications/telegram.js';
 import { transcribe, transcribeConfig, VOICE_LIMITS } from './transcribe.js';
 import { artifactSummary, errorText, helpText, statusEmoji } from './bot-texts.js';
@@ -18,7 +21,9 @@ const TEXT_ONLY: Pending[] = ['comment', 'blocker', 'reply'];
 /** «voice:<kind>» — recognised text waits for «Выполнить»; «voice_consent:<kind>» — a voice file waits for consent. */
 type VoicePending = `voice:${Pending}` | `voice_consent:${Pending}` | `mention:${Pending}`;
 /** A typed remark waiting for «Отправить» while the person picks whom to mention. */
-type MentionDraft = { text: string; target: string | null; mentionIds: string[] };
+type MentionDraft = { text: string; target: string | null; mentionIds: string[]; fileIds?: string[] };
+/** A file sent to the bot: a document or the largest size of a photo. */
+export type IncomingFile = { fileId: string; name: string; size: number | null };
 const MENTION_BUTTONS = 10;
 export type VoiceMessage = { fileId: string; duration: number; size: number | null };
 type Ctx = { config: TelegramConfig; chatId: string; userId: string };
@@ -29,7 +34,7 @@ type Ctx = { config: TelegramConfig; chatId: string; userId: string };
  */
 @Injectable()
 export class TelegramBotService {
-  constructor(private readonly prisma: PrismaService, private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly comments: CommentsService) {}
+  constructor(private readonly prisma: PrismaService, private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly comments: CommentsService, private readonly stageFiles: StageFilesService, private readonly ownership: OwnershipService) {}
 
   private send(ctx: Ctx, text: string, keyboard?: InlineKeyboard) {
     return sendTelegramMessage(ctx.config, ctx.chatId, text, fetch, keyboard);
@@ -77,8 +82,8 @@ export class TelegramBotService {
     return runWithLocale(contentLocale(user?.locale), work);
   }
 
-  async onMessage(userId: string, chatId: string, text: string | null, kind: 'text' | 'voice' | 'other', voice?: VoiceMessage) {
-    return this.inUserLocale(userId, () => this.handleMessage(userId, chatId, text, kind, voice));
+  async onMessage(userId: string, chatId: string, text: string | null, kind: 'text' | 'voice' | 'file' | 'other', media?: VoiceMessage | IncomingFile) {
+    return this.inUserLocale(userId, () => (kind === 'file' ? this.handleFileMessage(userId, chatId, text, media as IncomingFile | undefined) : this.handleMessage(userId, chatId, text, kind, media as VoiceMessage | undefined)));
   }
 
   /** What the bot is waiting for in this chat, if anything: the kind of text and whether a voice step is in between. */
@@ -142,12 +147,13 @@ export class TelegramBotService {
     if (waiting.step === 'mention') return void this.send(ctx, tr("Замечание уже написано: отметьте, кого упомянуть, и нажмите «Отправить» — или /cancel, чтобы отменить."));
     if (trimmed.length < 2 || trimmed.length > 1000) return void this.send(ctx, tr("Напишите от 2 до 1000 символов или /cancel, чтобы отменить."));
     const target = waiting.kind === 'reply' ? waiting.state.pendingText : null;
+    const fileIds = (waiting.state.pendingDraft as MentionDraft | null)?.fileIds ?? [];
     await this.setState(ctx, { pending: null });
-    await this.act(ctx, waiting.projectId, waiting.stageKey, waiting.kind, trimmed, target);
+    await this.act(ctx, waiting.projectId, waiting.stageKey, waiting.kind, trimmed, target, fileIds);
   }
 
   /** Does what the person asked for with the text they typed or confirmed after a voice message. */
-  private async act(ctx: Ctx, projectId: string, stageKey: string, pending: Pending, trimmed: string, target: string | null = null) {
+  private async act(ctx: Ctx, projectId: string, stageKey: string, pending: Pending, trimmed: string, target: string | null = null, fileIds: string[] = []) {
     const userId = ctx.userId;
     await this.guarded(ctx, async () => {
       if (pending === 'instruction') {
@@ -160,8 +166,8 @@ export class TelegramBotService {
       } else if (pending === 'comment' || pending === 'blocker' || pending === 'reply') {
         // People the person may mention (participants and the stage's specialists): pick them before the remark goes out.
         const people = (await this.comments.list(userId, projectId, stageKey)).data.people;
-        if (people.length) return this.askMentions(ctx, pending, { text: trimmed, target, mentionIds: [] }, people);
-        await this.comments.add(userId, projectId, stageKey, { text: trimmed, targetKey: null, blocking: pending === 'blocker', parentId: pending === 'reply' ? target : null });
+        if (people.length) return this.askMentions(ctx, pending, { text: trimmed, target, mentionIds: [], fileIds }, people);
+        await this.comments.add(userId, projectId, stageKey, { text: trimmed, targetKey: null, blocking: pending === 'blocker', parentId: pending === 'reply' ? target : null, fileIds });
         await this.send(ctx, pending === 'reply' ? tr("💬 Ответ добавлен.") : pending === 'blocker' ? tr("⛔ Блокирующее замечание добавлено: этап нельзя принять, пока его не закроют.") : tr("💬 Замечание добавлено. Участники этапа получат уведомление."));
         return this.showComments(ctx, projectId, stageKey);
       } else {
@@ -185,6 +191,8 @@ export class TelegramBotService {
     if (action === 'L') return this.guarded(ctx, () => this.showProjects(ctx));
     if (action === 'VC' || action === 'VY' || action === 'VE') return this.guarded(ctx, () => this.voiceCallback(ctx, action));
     // Access is checked by JourneyService before the chat context is saved.
+    // A project offered to this person: read it, accept (after one more tap) or decline — same checks as in the app.
+    if ((action === 'OT' || action === 'OA' || action === 'OY' || action === 'OD') && isUuid(arg)) return this.guarded(ctx, () => this.transferCallback(ctx, action, arg));
     if (action === 'P' && isUuid(arg)) return this.guarded(ctx, async () => { await this.showProject(ctx, arg); await this.setState(ctx, { projectId: arg, stageKey: null, pending: null }); });
     const state = await this.state(chatId);
     if (!state || state.userId !== userId || !state.projectId) return this.guarded(ctx, () => this.showProjects(ctx));
@@ -313,8 +321,42 @@ export class TelegramBotService {
     const journey = localizeDeep((await this.journey.journey(ctx.userId, projectId)).data, currentLocale());
     const lines = [`📁 ${journey.project.name} — ${journey.project.typeTitle}`, tr("Принято этапов: {0} из {1}", [journey.progress.accepted, journey.progress.total]), '', journey.nextAction.text];
     const keyboard: InlineKeyboard = journey.stages.map((stage) => [{ text: `${statusEmoji[stage.status] ?? '•'} ${stage.title} — ${stage.statusLabel}`.slice(0, 60), callback_data: `S:${stage.key}` }]);
+    const offered = await this.ownership.forRecipient(ctx.userId, projectId).catch(() => null);
+    if (offered) keyboard.unshift([{ text: tr("📦 Вам предлагают стать владельцем"), callback_data: `OT:${projectId}` }]);
     const button = this.appButton(`/projects/${projectId}`);
     keyboard.push([...(button ? [button] : []), { text: tr("← Проекты"), callback_data: 'L' }]);
+    await this.send(ctx, lines.join('\n'), keyboard);
+  }
+
+  private async transferCallback(ctx: Ctx, action: 'OT' | 'OA' | 'OY' | 'OD', projectId: string) {
+    if (action === 'OD') {
+      await this.ownership.decline(ctx.userId, projectId);
+      return void this.send(ctx, tr("Вы отказались. Проект остаётся у прежнего владельца, он получит уведомление."));
+    }
+    if (action === 'OY') {
+      await this.ownership.accept(ctx.userId, projectId);
+      await this.send(ctx, tr("✅ Теперь вы владелец проекта."));
+      return this.showProject(ctx, projectId);
+    }
+    const offer = await this.ownership.forRecipient(ctx.userId, projectId);
+    if (!offer) return void this.send(ctx, tr("Этого предложения больше нет: его отменили, оно истекло или уже решено."));
+    const until = offer.expiresAt.toLocaleDateString(currentLocale() === 'en' ? 'en-GB' : 'ru-RU');
+    if (action === 'OA') {
+      return void this.send(ctx, tr("Точно стать владельцем проекта «{0}»? Это действие не отменить из бота: вернуть проект можно только новой передачей.", [offer.projectName]),
+        [[{ text: tr("✅ Да, стать владельцем"), callback_data: `OY:${projectId}` }], [{ text: tr("Назад"), callback_data: `OT:${projectId}` }]]);
+    }
+    const lines = [
+      tr("📦 {0} предлагает передать вам проект «{1}».", [offer.fromName, offer.projectName]), '',
+      tr("Если вы согласитесь, проект перейдёт в ваш аккаунт и будет считаться в вашем тарифе: место проекта, опубликованный сайт и команда. Запросы к ИИ, будущие оплаты специалистам и публикация — от вашего имени."),
+      offer.keepAccess ? tr("Прежний владелец останется в команде администратором — вы сможете это изменить.") : tr("Прежний владелец потеряет доступ к проекту."),
+      tr("Предложение действует до {0}.", [until]),
+    ];
+    if (offer.blockers.length) lines.push('', tr("Сейчас принять нельзя:"), ...offer.blockers.map((text) => `• ${text}`));
+    const keyboard: InlineKeyboard = [];
+    if (!offer.blockers.length) keyboard.push([{ text: tr("✅ Стать владельцем"), callback_data: `OA:${projectId}` }]);
+    keyboard.push([{ text: tr("Отказаться"), callback_data: `OD:${projectId}` }]);
+    const button = this.appButton(`/projects/${projectId}#team`);
+    if (button) keyboard.push([button]);
     await this.send(ctx, lines.join('\n'), keyboard);
   }
 
@@ -346,6 +388,44 @@ export class TelegramBotService {
     await this.send(ctx, lines.join('\n'), keyboard);
   }
 
+  /**
+   * A document or photo while the bot waits for a remark: it is stored as a file of the stage (the same checks as an
+   * upload in the app — type by content, size, antivirus, limits) and attached to the remark. A caption is the remark.
+   */
+  private async handleFileMessage(userId: string, chatId: string, caption: string | null, file: IncomingFile | undefined) {
+    const config = telegramConfig();
+    if (!config || !file) return;
+    const ctx: Ctx = { config, chatId, userId };
+    const waiting = await this.waiting(chatId, userId);
+    if (!waiting || !TEXT_ONLY.includes(waiting.kind)) return void this.send(ctx, tr("Файл можно прикрепить к замечанию: откройте этап, нажмите «📝 Замечания» и «➕ Новое замечание», затем пришлите файл."), [[{ text: tr("📂 Мои проекты"), callback_data: 'L' }]]);
+    const draft: MentionDraft = (waiting.state.pendingDraft as MentionDraft | null) ?? { text: '', target: waiting.kind === 'reply' ? waiting.state.pendingText : null, mentionIds: [], fileIds: [] };
+    const fileIds = draft.fileIds ?? [];
+    if (fileIds.length >= COMMENT_LIMITS.files) return void this.send(ctx, tr("К одному замечанию можно прикрепить не больше {0} файлов.", [COMMENT_LIMITS.files]));
+    if ((file.size ?? 0) > STAGE_FILE_LIMITS.fileBytes) return void this.send(ctx, tr("Файл больше {0} МБ — такие файлы к этапу не прикрепить.", [Math.round(STAGE_FILE_LIMITS.fileBytes / 1024 / 1024)]));
+    await this.guarded(ctx, async () => {
+      // Checked before downloading, so a file nobody may store here is not fetched at all.
+      if (!(await this.stageFiles.list(userId, waiting.projectId, waiting.stageKey)).data.canUpload) return void this.send(ctx, tr("Прикреплять новые файлы может тот, кто может менять этап. Напишите замечание текстом."));
+      const data = await downloadTelegramFile(config, file.fileId, STAGE_FILE_LIMITS.fileBytes);
+      if (!data) return void this.send(ctx, tr("Не получилось получить файл из Telegram. Пришлите его ещё раз."));
+      const stored = await this.stageFiles.upload(userId, waiting.projectId, waiting.stageKey, { buffer: data, size: data.length, originalname: file.name }, {});
+      const next: MentionDraft = { ...draft, fileIds: [...fileIds, stored.data.createdId!] };
+      const name = stored.data.files.find((item: { id: string }) => item.id === stored.data.createdId)?.name ?? file.name;
+      const text = (caption ?? '').trim();
+      if (waiting.step === 'mention') {
+        // The remark is already written: the file joins it.
+        const people = (await this.comments.list(userId, waiting.projectId, waiting.stageKey)).data.people;
+        await this.send(ctx, tr("📎 «{0}» будет прикреплён к замечанию.", [name]));
+        return this.askMentions(ctx, waiting.kind, next, people);
+      }
+      if (text.length >= 2 && text.length <= 1000) {
+        await this.setState(ctx, { pending: null });
+        return this.act(ctx, waiting.projectId, waiting.stageKey, waiting.kind, text, next.target, next.fileIds);
+      }
+      await this.setState(ctx, { pending: waiting.kind, pendingText: waiting.state.pendingText, draft: next });
+      await this.send(ctx, tr("📎 «{0}» сохранён в файлах этапа и будет прикреплён к замечанию. Напишите текст замечания или пришлите ещё файл.\n\nОтменить — /cancel", [name]));
+    });
+  }
+
   /** Shows who can be mentioned; a tap toggles a person, «Отправить» posts the remark with them. */
   private async askMentions(ctx: Ctx, kind: Pending, draft: MentionDraft, people: Array<{ id: string; name: string }>) {
     await this.setState(ctx, { pending: `mention:${kind}`, draft });
@@ -374,7 +454,7 @@ export class TelegramBotService {
     // Someone who left the stage since is dropped rather than failing the whole remark.
     const allowed = new Set(people.map((person) => person.id));
     const mentionUserIds = draft.mentionIds.filter((id) => allowed.has(id));
-    await this.comments.add(ctx.userId, projectId, stageKey, { text: draft.text, targetKey: null, blocking: kind === 'blocker', parentId: kind === 'reply' ? draft.target : null, mentionUserIds });
+    await this.comments.add(ctx.userId, projectId, stageKey, { text: draft.text, targetKey: null, blocking: kind === 'blocker', parentId: kind === 'reply' ? draft.target : null, mentionUserIds, fileIds: draft.fileIds ?? [] });
     const done = kind === 'reply' ? tr("💬 Ответ добавлен.") : kind === 'blocker' ? tr("⛔ Блокирующее замечание добавлено: этап нельзя принять, пока его не закроют.") : tr("💬 Замечание добавлено. Участники этапа получат уведомление.");
     await this.send(ctx, mentionUserIds.length ? `${done} ${tr("Упомянуты: {0}.", [people.filter((person) => mentionUserIds.includes(person.id)).map((person) => person.name).join(', ')])}` : done);
     return this.showComments(ctx, projectId, stageKey);

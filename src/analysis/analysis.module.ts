@@ -6,5 +6,5 @@ import { AnalysisRunner } from './analysis-runner.js';
 import { AnalysisService } from './analysis.service.js';
 import { StageFilesService } from './stage-files.service.js';
 
-@Module({ imports: [AuthModule, JourneyModule], controllers: [AnalysisController], providers: [StageFilesService, AnalysisService, AnalysisRunner] })
+@Module({ imports: [AuthModule, JourneyModule], controllers: [AnalysisController], providers: [StageFilesService, AnalysisService, AnalysisRunner], exports: [StageFilesService] })
 export class AnalysisModule {}

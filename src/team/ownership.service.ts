@@ -75,6 +75,16 @@ export class OwnershipService {
     };
   }
 
+  /** The open offer to this person, with what they would take on — for the Telegram bot. Null when there is none. */
+  async forRecipient(userId: string, projectId: string) {
+    const { project } = await this.member(userId, projectId);
+    const offer = await this.pending(projectId);
+    if (!offer || offer.toUserId !== userId) return null;
+    const from = await this.prisma.user.findUnique({ where: { id: offer.fromUserId }, select: { name: true, email: true } });
+    const blockers = await this.blockers(projectId);
+    return { projectName: project.name, fromName: from?.name || from?.email || '', keepAccess: offer.keepAccess, expiresAt: offer.expiresAt, blockers: blockers.map((code) => tr(blockerTexts[code] ?? code)) };
+  }
+
   async offer(userId: string, projectId: string, input: { toMemberId: string; keepAccess: boolean; confirmName: string }) {
     const { role, project } = await this.member(userId, projectId);
     if (role !== 'owner') throw new ForbiddenException('OWNERSHIP_OWNER_ONLY');
@@ -98,7 +108,11 @@ export class OwnershipService {
       throw error;
     }
     const from = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
-    await notifyUser(this.prisma, target.userId, { text: () => tr('{0} предлагает передать вам проект «{1}». Посмотрите условия и примите или откажитесь во вкладке «Команда» в течение 7 дней.', [from?.name || from?.email || '', project.name]) }).catch(() => undefined);
+    await notifyUser(this.prisma, target.userId, {
+      text: () => tr('{0} предлагает передать вам проект «{1}». Посмотрите условия и примите или откажитесь во вкладке «Команда» в течение 7 дней.', [from?.name || from?.email || '', project.name]),
+      // In Telegram the offer can be read and answered right in the chat.
+      telegramKeyboard: () => [[{ text: tr('📦 Посмотреть предложение'), callback_data: `OT:${projectId}` }]],
+    }).catch(() => undefined);
     return { data: { offered: true } };
   }
 

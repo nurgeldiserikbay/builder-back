@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { listZipEntries, readZipEntry, ZipError } from './zip-reader.js';
 import type { AnalysisReport, Evidence, Finding, Severity } from './code-analysis.js';
 
+import { extractRequirements } from './requirements-match.js';
 export const DOCUMENT_PROFILE = 'document-1.0';
 export const DOCUMENT_LIMITS = { xmlBytes: 8 * 1024 * 1024, pdfPages: 200, paragraphs: 5000, scanChars: 2000, evidence: 10 };
 
@@ -153,7 +154,7 @@ export function analyzeDocument(input: { paragraphs: Paragraph[]; bytes: Buffer;
       files: 1, directories: 0, textFilesRead: 1, lines: paragraphs.length, languages: [], stack: [], routes: [],
       readmeExcerpt: paragraphs.slice(0, 6).map((item) => item.text).join('\n').slice(0, 800) || null,
     },
-    document: { format: input.format, words, paragraphs: paragraphs.length, pages: input.pdf?.pages ?? null, headings: headings.slice(0, 40).map((item) => item.text.slice(0, 120)), sections },
+    document: { format: input.format, words, paragraphs: paragraphs.length, pages: input.pdf?.pages ?? null, headings: headings.slice(0, 40).map((item) => item.text.slice(0, 120)), sections, requirements: extractRequirements(paragraphs) },
     findings,
     checks: [
       { key: 'doc_text', status: scanned ? 'partial' : 'run' },

@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { createHash } from 'node:crypto';
 import { scanRequired, scanWithClamAv } from '../security/clamav.js';
 import { processImage } from '../images/image-processing.js';
-import { cleanFileName, detectStageFile } from '../analysis/file-types.js';
+import { cleanFileName, detectStageFile, multipartName } from '../analysis/file-types.js';
 
 import { PrismaService } from '../database/prisma.service.js';
 import { tr, type Message } from '../i18n/i18n.js';
@@ -131,7 +131,7 @@ export class DisputesService {
     if (dispute.status !== 'open') throw new ConflictException('DISPUTE_CLOSED');
     if (!file?.buffer?.length) throw new BadRequestException('FILE_REQUIRED');
     if (file.size > DISPUTE_FILE_BYTES) throw new UnprocessableEntityException('FILE_TOO_LARGE');
-    const name = cleanFileName(file.originalname) ?? 'file';
+    const name = cleanFileName(multipartName(file.originalname)) ?? 'file';
     const type = detectStageFile(file.buffer, name);
     if (!type || (type.kind !== 'image' && type.kind !== 'pdf')) throw new UnprocessableEntityException('DISPUTE_FILE_TYPE');
     const files = await this.prisma.disputeMessage.count({ where: { disputeId, fileName: { not: null } } });

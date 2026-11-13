@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Header, BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
@@ -87,6 +87,12 @@ export class AnalysisController {
   @Get('analysis-runs/:runId')
   getRun(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('runId') runId: string) {
     return this.analysis.get(request.user.id, projectId, runId);
+  }
+
+  @Get('analysis-runs/:runId/compare')
+  @Header('Cache-Control', 'no-store')
+  compare(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('runId') runId: string) {
+    return this.analysis.compare(request.user.id, projectId, runId);
   }
 
   @Post('analysis-runs/:runId/findings/:findingId/remark')

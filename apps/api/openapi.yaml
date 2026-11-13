@@ -3805,6 +3805,21 @@ paths:
       responses:
         '200': { description: 'Run fields plus report (profile, status, source with sha256, summary with languages, stack, routes and readmeExcerpt, findings[] with id, code, category, severity, confidence, title, explanation, remediation and evidence[path, line], counts, checks[], skipped, unverified[], disclaimer) or null while queued' }
         '404': { description: ANALYSIS_NOT_FOUND }
+  /projects/{projectId}/analysis-runs/{runId}/compare:
+    get:
+      tags: [Analysis]
+      operationId: compareBriefWithStages
+      summary: A brief (document report) against the accepted results of the project's stages, by words
+      description: Requirement lines of the document (lines under function, page, content, integration and acceptance headings, and lines that ask for something) against the text of every accepted stage version. Two thirds of a line's content words in one stage — found; a third — partial; less — missing; the best stage is named. Computed on request; the report does not change. It does not say whether the result does what the line asks.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'runId, sourceLabel, items[] (paragraph, text, status found|partial|missing, stage {key,title} or null, matched[], missingWords[]), totals (requirements, found, partial, missing), comparedStages[], notAccepted[], note' }
+        '404': { description: 'PROJECT_NOT_FOUND, ANALYSIS_NOT_FOUND' }
+        '409': { description: 'PROJECT_HAS_NO_ROUTE, ANALYSIS_NOT_READY, COMPARE_NOT_A_DOCUMENT, COMPARE_ANALYZE_AGAIN (report made before requirement lines were kept — analyse the document again)' }
   /projects/{projectId}/route:
     post:
       tags: [Projects]

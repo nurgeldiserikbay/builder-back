@@ -1,3 +1,4 @@
+import { OwnershipService } from '../team/ownership.service.js';
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -41,6 +42,17 @@ describe('remarks: files, mentions and the bot (database)', async () => {
       let raw = '';
       request.on('data', (chunk) => { raw += chunk; });
       request.on('end', () => {
+        // getFile and the file itself, for files sent to the bot.
+        if ((request.url ?? '').endsWith('/getFile')) {
+          const id = JSON.parse(raw).file_id as string;
+          response.writeHead(200).end(JSON.stringify({ ok: true, result: { file_path: `documents/${id}.bin`, file_size: 20 } }));
+          return;
+        }
+        const download = /\/file\/bott\/documents\/(\w+)\.bin$/.exec(request.url ?? '');
+        if (download) {
+          response.writeHead(200).end(download[1] === 'pdf' ? '%PDF-1.7 price list' : 'MZ\x90\x00not allowed');
+          return;
+        }
         if ((request.url ?? '').endsWith('/sendMessage')) {
           const body = JSON.parse(raw);
           sent.push({ chat: String(body.chat_id), text: body.text, buttons: (body.reply_markup?.inline_keyboard ?? []).flat().map((button: { callback_data?: string }) => button.callback_data ?? '') });
@@ -60,7 +72,7 @@ describe('remarks: files, mentions and the bot (database)', async () => {
       const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core));
       const comments = new CommentsService(prisma!, core);
       const files = new StageFilesService(prisma!, core);
-      const bot = new TelegramBotService(prisma!, journey, {} as never, comments);
+      const bot = new TelegramBotService(prisma!, journey, {} as never, comments, files, new OwnershipService(prisma!, billing));
 
       const owner = await user('owner');
       const writer = await user('writer');
@@ -142,6 +154,29 @@ describe('remarks: files, mentions and the bot (database)', async () => {
       assert.equal(blocker.blocking, true);
       assert.deepEqual(blocker.mentionUserIds, [writer.id]);
       assert.ok(sent.some((item) => /Упомянуты: writer/.test(item.text)));
+      // A file sent while writing a remark: stored on the stage and attached; the caption is the text.
+      await bot.onCallback(owner.id, ochat, 'q16', 'CN');
+      await bot.onMessage(owner.id, ochat, null, 'file', { fileId: 'pdf', name: 'prices.pdf', size: 20 });
+      await settle();
+      assert.match(sent.at(-1)!.text, /prices\.pdf.*сохранён в файлах этапа/s);
+      await bot.onMessage(owner.id, ochat, 'Сверьте цены с прайсом', 'text');
+      await bot.onCallback(owner.id, ochat, 'q17', 'MS');
+      await settle();
+      const withFile = await prisma!.stageComment.findFirstOrThrow({ where: { projectId: project.id, text: 'Сверьте цены с прайсом' } });
+      const stored = await prisma!.stageFile.findFirstOrThrow({ where: { projectId: project.id, name: 'prices.pdf' } });
+      assert.deepEqual(withFile.fileIds, [stored.id]);
+      // A file of a type stages do not take is refused, and nothing is kept.
+      await bot.onCallback(owner.id, ochat, 'q18', 'CN');
+      await bot.onMessage(owner.id, ochat, 'Смотрите программу', 'file', { fileId: 'exe', name: 'setup.exe', size: 20 });
+      await settle();
+      assert.equal(await prisma!.stageFile.count({ where: { projectId: project.id, name: 'setup.exe' } }), 0);
+      assert.match(sent.at(-1)!.text, /Такой файл к этапу не прикрепить/);
+      assert.equal(await prisma!.stageComment.count({ where: { projectId: project.id, text: 'Смотрите программу' } }), 0);
+      // Outside a remark a file is not taken.
+      await bot.onCallback(owner.id, ochat, 'q19', 'S:goal');
+      await bot.onMessage(owner.id, ochat, null, 'file', { fileId: 'pdf', name: 'x.pdf', size: 20 });
+      await settle();
+      assert.match(sent.at(-1)!.text, /Файл можно прикрепить к замечанию/);
       // A voice message is not taken for a remark.
       await bot.onCallback(writer.id, wchat, 'q9', 'CN');
       await bot.onMessage(writer.id, wchat, null, 'voice', { fileId: 'f', duration: 3, size: 100 });

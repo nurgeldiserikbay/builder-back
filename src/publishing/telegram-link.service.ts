@@ -11,7 +11,7 @@ const consentText = () => tr('Мы обновили оферту и полити
 const CODE_TTL_MS = 15 * 60 * 1000;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 
-type TelegramMessage = { text?: unknown; voice?: unknown; audio?: unknown; chat?: { id?: unknown; type?: unknown }; from?: { id?: unknown; username?: unknown; language_code?: unknown } };
+type TelegramMessage = { text?: unknown; caption?: unknown; voice?: unknown; audio?: unknown; document?: unknown; photo?: unknown; chat?: { id?: unknown; type?: unknown }; from?: { id?: unknown; username?: unknown; language_code?: unknown } };
 type TelegramUpdate = { message?: TelegramMessage; callback_query?: { id?: unknown; data?: unknown; from?: { id?: unknown; language_code?: unknown }; message?: { chat?: { id?: unknown; type?: unknown } } } };
 const idOf = (value: unknown) => (typeof value === 'number' || typeof value === 'string' ? String(value) : null);
 
@@ -126,11 +126,19 @@ export class TelegramLinkService {
       return true;
     }
     if (identity) {
-      const kind = typeof message.text === 'string' ? 'text' : message.voice || message.audio ? 'voice' : 'other';
+      const doc = message.document as { file_id?: unknown; file_name?: unknown; file_size?: unknown } | undefined;
+      // A photo comes in several sizes; the largest is the one people mean.
+      const photos = Array.isArray(message.photo) ? (message.photo as Array<{ file_id?: unknown; file_size?: unknown; width?: unknown }>) : [];
+      const photo = photos.reduce<(typeof photos)[number] | undefined>((best, item) => (!best || Number(item.width ?? 0) > Number(best.width ?? 0) ? item : best), undefined);
+      const fileSource = doc && typeof doc.file_id === 'string' ? { fileId: doc.file_id, name: typeof doc.file_name === 'string' ? doc.file_name : 'file', size: doc.file_size }
+        : photo && typeof photo.file_id === 'string' ? { fileId: photo.file_id, name: 'photo.jpg', size: photo.file_size } : null;
+      const file = fileSource && fileSource.fileId.length <= 200 ? { fileId: fileSource.fileId, name: fileSource.name.slice(0, 200), size: typeof fileSource.size === 'number' ? fileSource.size : null } : undefined;
+      const kind = typeof message.text === 'string' ? 'text' : message.voice || message.audio ? 'voice' : file ? 'file' : 'other';
       const audio = (message.voice ?? message.audio) as { file_id?: unknown; duration?: unknown; file_size?: unknown } | undefined;
       const voice = audio && typeof audio.file_id === 'string' && audio.file_id.length <= 200 && typeof audio.duration === 'number'
         ? { fileId: audio.file_id, duration: audio.duration, size: typeof audio.file_size === 'number' ? audio.file_size : null } : undefined;
-      void this.bot.onMessage(identity.userId, String(chatId), typeof message.text === 'string' ? message.text : null, kind, voice).catch(() => undefined);
+      const text = typeof message.text === 'string' ? message.text : kind === 'file' && typeof message.caption === 'string' ? message.caption : null;
+      void this.bot.onMessage(identity.userId, String(chatId), text, kind, kind === 'file' ? file : voice).catch(() => undefined);
       return true;
     }
     await reply(tr("Это бот BuildPath. Здесь можно вести проекты и получать заявки с сайтов. Чтобы подключиться, откройте проект в BuildPath и нажмите «Подключить Telegram»."));

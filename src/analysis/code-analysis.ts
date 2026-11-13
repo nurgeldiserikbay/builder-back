@@ -12,7 +12,9 @@ export type Severity = 'high' | 'medium' | 'low' | 'info';
 export type Evidence = { path: string; line?: number };
 export type Finding = { id: string; code: string; category: 'security' | 'structure' | 'dependencies' | 'docs' | 'quality'; severity: Severity; confidence: 'confirmed' | 'likely'; evidence: Evidence[]; params?: Record<string, string | number> };
 export type CheckRecord = { key: string; status: 'run' | 'partial' | 'skipped' };
-export type DocumentSummary = { format: 'pdf' | 'docx' | 'text'; words: number; paragraphs: number; pages: number | null; headings: string[]; sections: { key: string; found: boolean; paragraph: number | null }[] };
+export type DocumentSummary = { format: 'pdf' | 'docx' | 'text'; words: number; paragraphs: number; pages: number | null; headings: string[]; sections: { key: string; found: boolean; paragraph: number | null }[];
+  /** Requirement lines for the comparison with the stages (reports since 14 November 2026). */
+  requirements?: { paragraph: number; text: string }[] };
 export type AnalysisReport = {
   /** Missing in reports made before documents could be analysed: those are code reports. */
   type?: 'code' | 'document';
