@@ -29,7 +29,7 @@ async function bootstrap(): Promise<void> {
     .map((origin) => origin.trim())
     .filter(Boolean);
   if (origins.length > 0) {
-    app.enableCors({ origin: origins, credentials: true });
+    app.enableCors({ origin: origins, credentials: true, exposedHeaders: ['Content-Disposition'] });
   }
 
   app.enableShutdownHooks();

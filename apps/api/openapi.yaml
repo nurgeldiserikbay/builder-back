@@ -11,6 +11,8 @@ servers:
 tags:
   - name: Health
   - name: Images
+  - name: Analysis
+    description: Stage files and read-only code analysis
   - name: Authentication
   - name: Workspaces
   - name: Projects
@@ -3314,6 +3316,155 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/files:
+    get:
+      tags: [Analysis]
+      operationId: listStageFiles
+      summary: Files attached to a stage for people to read
+      description: Everyone who sees the stage may read and download. Files are not passed to an AI provider and are not used to build; a ZIP can be analysed read-only (POST /analysis-runs).
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200': { description: 'files[] (id, name, kind, mime, sizeBytes, sha256, note, createdAt, author, mine, canDelete, canAnalyze), canUpload, limits (fileBytes, perStage, note), accepted[]' }
+        '404': { description: 'PROJECT_NOT_FOUND, STAGE_NOT_FOUND' }
+    post:
+      tags: [Analysis]
+      operationId: uploadStageFile
+      summary: Attach a file to a stage (PDF, PNG, JPEG, WebP, TXT, MD, CSV, JSON, DOCX, XLSX, PPTX or ZIP up to 15 MB)
+      description: |
+        Requires write access to the stage (contributors only on their stages; specialists as stage lead). The type is decided from the
+        bytes and must match the extension; HTML, SVG and executables are refused. The file is scanned for malware before it is stored
+        (503 FILE_SCAN_UNAVAILABLE when the scanner is unreachable). A new upload never replaces an older file. At most 20 files per stage
+        and 150 MB per project; 30 uploads per hour per person.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                name: { type: string, maxLength: 200, description: 'Name to show; defaults to the uploaded file name' }
+                note: { type: string, maxLength: 500 }
+      responses:
+        '201': { description: 'Same as GET, plus createdId' }
+        '400': { description: 'FILE_REQUIRED, FILE_NAME_INVALID, FILE_NOTE_INVALID, FILE_NOTE_TOO_LONG' }
+        '403': { description: STAGE_WRITE_FORBIDDEN }
+        '409': { description: 'FILE_LIMIT_REACHED, FILE_STORAGE_FULL, PROJECT_NOT_ACTIVE' }
+        '422': { description: 'FILE_TOO_LARGE, FILE_TYPE_NOT_SUPPORTED, FILE_REJECTED_BY_SCAN' }
+        '429': { description: FILE_UPLOADS_TOO_FREQUENT }
+        '503': { description: FILE_SCAN_UNAVAILABLE }
+  /projects/{projectId}/stages/{stageKey}/files/{fileId}:
+    get:
+      tags: [Analysis]
+      operationId: downloadStageFile
+      summary: Download a stage file (always as an attachment, with nosniff and a sandboxing CSP)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+        - { name: fileId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The file as uploaded, content: { application/octet-stream: { schema: { type: string, format: binary } } } }
+        '404': { description: FILE_NOT_FOUND }
+    delete:
+      tags: [Analysis]
+      operationId: deleteStageFile
+      summary: Delete a stage file (its uploader, the owner or a manager); analysis reports made from it stay
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+        - { name: fileId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Same as GET of the list }
+        '403': { description: 'STAGE_WRITE_FORBIDDEN, FILE_DELETE_FORBIDDEN' }
+        '404': { description: FILE_NOT_FOUND }
+  /projects/{projectId}/analysis-runs:
+    get:
+      tags: [Analysis]
+      operationId: listAnalysisRuns
+      summary: Read-only code analyses of the project and the sources available for a new one (project members)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'runs[] (id, status, statusLabel, sourceKind, sourceKindLabel, sourceLabel, sourceRef, sourceSha256, errorCode, error, createdAt, startedAt, finishedAt, requestedBy), sources (files[], repository, publicRepo), canRun, profile' }
+        '404': { description: PROJECT_NOT_FOUND }
+    post:
+      tags: [Analysis]
+      operationId: createAnalysisRun
+      summary: Request a read-only analysis of an uploaded ZIP, the connected repository or an open GitHub repository
+      description: |
+        Nothing is executed, installed or built, and nothing is sent to an AI provider: findings come from deterministic rules over file
+        names and the text of small files, each with file and line evidence. The source and the project are not changed. The run is
+        asynchronous (queued → running → succeeded | partial | failed) and idempotent by idempotencyKey. The connected repository is
+        for the owner and managers; an open GitHub repository is downloaded without credentials. Archives over 40 MB, more than 5000
+        files or ZIP64 are refused with a plain reason. At most 2 active and 20 runs a day per project.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source]
+              properties:
+                source: { type: string, enum: [file, repository, public_repo] }
+                fileId: { type: [string, 'null'], format: uuid, description: 'ZIP stage file, for source=file' }
+                url: { type: [string, 'null'], maxLength: 300, description: 'https://github.com/owner/repo, for source=public_repo' }
+                ref: { type: [string, 'null'], maxLength: 200, description: 'Branch or tag; default branch when empty' }
+                idempotencyKey: { type: [string, 'null'], pattern: '^[A-Za-z0-9_-]{8,80}$' }
+      responses:
+        '201': { description: 'The run, as GET /analysis-runs/{runId}' }
+        '400': { description: 'ANALYSIS_SOURCE_INVALID, ANALYSIS_NEEDS_ZIP, REPO_URL_INVALID, REPO_URL_NOT_GITHUB, REPO_REF_INVALID' }
+        '403': { description: 'STAGE_WRITE_FORBIDDEN, ANALYSIS_REPOSITORY_FORBIDDEN' }
+        '404': { description: 'FILE_NOT_FOUND, REPO_NOT_CONNECTED' }
+        '409': { description: 'ANALYSIS_ALREADY_RUNNING, ANALYSIS_DAILY_LIMIT' }
+  /projects/{projectId}/analysis-runs/{runId}:
+    get:
+      tags: [Analysis]
+      operationId: getAnalysisRun
+      summary: An analysis run with its report
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'Run fields plus report (profile, status, source with sha256, summary with languages, stack, routes and readmeExcerpt, findings[] with id, code, category, severity, confidence, title, explanation, remediation and evidence[path, line], counts, checks[], skipped, unverified[], disclaimer) or null while queued' }
+        '404': { description: ANALYSIS_NOT_FOUND }
+  /projects/{projectId}/analysis-runs/{runId}/export:
+    get:
+      tags: [Analysis]
+      operationId: exportAnalysisRun
+      summary: Download the report as Markdown or JSON (an attachment; the export is recorded in the project history)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: runId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: format, in: query, required: false, schema: { type: string, enum: [md, json], default: md } }
+      responses:
+        '200': { description: The report file }
+        '400': { description: EXPORT_FORMAT_INVALID }
+        '409': { description: ANALYSIS_NOT_READY }
   /projects/{projectId}/images:
     get:
       tags: [Images]
