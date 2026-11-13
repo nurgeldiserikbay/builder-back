@@ -77,6 +77,8 @@ export class PublishingService {
         domainsAvailable: Boolean(domainTarget()),
         acceptedBuild: build ? { versionId: build.versionId, versionNumber: build.versionNumber, hasForm: build.hasForm } : null,
         outdated: Boolean(publication && publication.status === 'live' && build && build.versionId !== publication.buildVersionId),
+        // The live site shows an older build than the accepted one because the owner put it back.
+        rolledBack: Boolean(publication && publication.status === 'live' && build && publishedVersion && publishedVersion.versionNumber < build.versionNumber),
         canManage: manageRoles.has(role) && project.status !== 'archived',
         suggestedSlug: publication?.slug ?? suggestSlug(build?.businessName ?? project.name),
         baseDomain: config.baseDomain,
@@ -124,6 +126,64 @@ export class PublishingService {
       if ((error as { code?: string }).code === 'P2002') throw new ConflictException('SLUG_TAKEN');
       throw error;
     }
+    return this.status(userId, projectId);
+  }
+
+  /**
+   * Builds that have been on the live site, newest first, so the owner can put one of them back. A build is in the
+   * list only if it was published (or rolled back to) before — not every build ever made.
+   */
+  async history(userId: string, projectId: string) {
+    const { project, role } = await this.load(userId, projectId, false);
+    const events = await this.prisma.projectEvent.findMany({
+      where: { projectId, type: { in: ['site_published', 'site_rolled_back'] } }, orderBy: { createdAt: 'desc' }, take: 100,
+      select: { type: true, createdAt: true, details: true },
+    });
+    const numbers = new Map<number, Date>();
+    for (const event of events) {
+      const details = event.details as { buildVersion?: number; toVersion?: number } | null;
+      const number = event.type === 'site_rolled_back' ? details?.toVersion : details?.buildVersion;
+      if (typeof number === 'number' && !numbers.has(number)) numbers.set(number, event.createdAt);
+    }
+    const stage = await this.prisma.projectStage.findFirst({ where: { projectId, stageKey: 'build' }, select: { id: true, approvedVersionId: true } });
+    const versions = stage && numbers.size ? await this.prisma.stageArtifactVersion.findMany({
+      where: { stageId: stage.id, versionNumber: { in: [...numbers.keys()] } }, orderBy: { versionNumber: 'desc' }, take: 10,
+      select: { id: true, versionNumber: true, createdAt: true },
+    }) : [];
+    const live = project.publication?.status === 'live' ? project.publication.buildVersionId : null;
+    return {
+      data: {
+        canRollback: manageRoles.has(role) && Boolean(live),
+        versions: versions.map((version) => ({
+          versionId: version.id, versionNumber: version.versionNumber, builtAt: version.createdAt, lastPublishedAt: numbers.get(version.versionNumber) ?? null,
+          live: version.id === live, accepted: version.id === stage?.approvedVersionId,
+        })),
+      },
+    };
+  }
+
+  /**
+   * Put an earlier published build back on the live site. Only what visitors see changes: the stages and the accepted
+   * build stay as they are, so «Обновить сайт» brings the newer build back. Visible within about two minutes
+   * (the sites server and browsers keep pages for a short while).
+   */
+  async rollback(userId: string, projectId: string, input: { versionId: unknown; confirm: unknown }) {
+    const { project } = await this.load(userId, projectId, true);
+    if (input.confirm !== true) throw new BadRequestException('PUBLISH_CONFIRMATION_REQUIRED');
+    if (!project.publication || project.publication.status !== 'live') throw new ConflictException('SITE_NOT_PUBLISHED');
+    if (typeof input.versionId !== 'string' || !isUuid(input.versionId)) throw new BadRequestException('ROLLBACK_VERSION_INVALID');
+    const history = (await this.history(userId, projectId)).data.versions;
+    const target = history.find((version) => version.versionId === input.versionId);
+    // Only a build that has been live before: it was checked and accepted when it went out.
+    if (!target) throw new NotFoundException('ROLLBACK_VERSION_NOT_FOUND');
+    if (target.live) throw new ConflictException('ROLLBACK_ALREADY_LIVE');
+    const from = history.find((version) => version.live)?.versionNumber ?? null;
+    const now = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.sitePublication.updateMany({ where: { projectId, status: 'live', buildVersionId: project.publication!.buildVersionId }, data: { buildVersionId: target.versionId, publishedAt: now, publishedByUserId: userId } });
+      if (!updated.count) throw new ConflictException('PUBLICATION_CHANGED');
+      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'site_rolled_back', stageKey: 'build', details: { fromVersion: from, toVersion: target.versionNumber, slug: project.publication!.slug } } });
+    });
     return this.status(userId, projectId);
   }
 
