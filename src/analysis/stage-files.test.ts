@@ -110,4 +110,36 @@ describe('stage files and code analysis (database)', async () => {
     const events = await prisma!.projectEvent.findMany({ where: { projectId: project.id }, select: { type: true } });
     for (const type of ['stage_file_added', 'stage_file_deleted', 'analysis_run_requested', 'analysis_report_exported']) assert.ok(events.some((event) => event.type === type), type);
   });
+
+  it('a project started as «Только анализ» takes a ZIP straight into code analysis, without stages', { skip }, async () => {
+    process.env.UPLOAD_MALWARE_SCAN = 'disabled'; process.env.ANALYSIS_WORKER = 'external';
+    const billing = new BillingService(prisma!);
+    const core = new JourneyCore(prisma!, billing);
+    const files = new StageFilesService(prisma!, core);
+    const runner = new AnalysisRunner(prisma!);
+    const analysis = new AnalysisService(prisma!, core, runner);
+    const owner = await user('analyst');
+    const watcher = await user('reader');
+    const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
+    const project = await prisma!.project.create({ data: { workspaceId: workspace.id, ownerUserId: owner.id, name: 'Старый сайт', startMode: 'analysis_only' } });
+    await prisma!.projectMember.createMany({ data: [{ projectId: project.id, userId: owner.id, role: 'owner' }, { projectId: project.id, userId: watcher.id, role: 'viewer' }] });
+
+    const zip = buildZip([{ name: 'README.md', data: '# Сайт' }, { name: 'index.html', data: '<h1>Hi</h1>' }]);
+    const upload = { buffer: zip, size: zip.length, originalname: 'site.zip' };
+    await assert.rejects(files.uploadSource(watcher.id, project.id, upload, {}), /STAGE_WRITE_FORBIDDEN/);
+    await assert.rejects(files.uploadSource(owner.id, project.id, { buffer: Buffer.from('%PDF-1.7'), size: 8, originalname: 'a.pdf' }, {}), /ANALYSIS_NEEDS_ZIP/);
+    const source = await files.uploadSource(owner.id, project.id, upload, {});
+    const listed = await analysis.list(watcher.id, project.id);
+    assert.equal(listed.data.project.analysisOnly, true);
+    assert.equal(listed.data.canRun, false);
+    assert.deepEqual(listed.data.sources.files.map((file) => [file.name, file.stageKey]), [['site.zip', null]]);
+    const run = await analysis.create(owner.id, project.id, { source: 'file', fileId: source.data.createdId, url: null, ref: null, idempotencyKey: null });
+    await runner.processNext();
+    const done = await analysis.get(owner.id, project.id, run.data.id);
+    assert.equal(done.data.status, 'succeeded');
+    assert.deepEqual(done.data.report!.summary.stack.map((item) => item.key), ['static_html']);
+    await assert.rejects(files.removeSource(watcher.id, project.id, source.data.createdId), /FILE_DELETE_FORBIDDEN/);
+    await files.removeSource(owner.id, project.id, source.data.createdId);
+    assert.equal((await analysis.get(owner.id, project.id, run.data.id)).data.status, 'succeeded');
+  });
 });

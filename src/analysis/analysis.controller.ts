@@ -55,6 +55,17 @@ export class AnalysisController {
     return this.files.remove(request.user.id, projectId, stageKey(key), fileId);
   }
 
+  @Post('analysis-sources')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: STAGE_FILE_LIMITS.fileBytes, files: 1, fields: 3, fieldSize: 2048 } }))
+  uploadSource(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @UploadedFile() file: { buffer: Buffer; size: number; originalname?: string } | undefined, @Body() body: Record<string, unknown> | undefined) {
+    return this.files.uploadSource(request.user.id, projectId, file, body);
+  }
+
+  @Delete('analysis-sources/:fileId')
+  removeSource(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('fileId') fileId: string) {
+    return this.files.removeSource(request.user.id, projectId, fileId);
+  }
+
   @Get('analysis-runs')
   listRuns(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
     return this.analysis.list(request.user.id, projectId);
