@@ -1872,7 +1872,7 @@ export const en: Record<string, string> = {
   "Очень длинные строки (сжатый код): в них не искались ключи и пароли.": "Very long lines (minified code): they were not searched for keys and passwords.",
   "Двоичные файлы (картинки, шрифты, архивы): их содержимое не разбиралось.": "Binary files (images, fonts, archives): their contents were not analysed.",
   "HTML без сборки": "HTML without a build",
-  "Загруженный архив": "Uploaded archive",
+  "Загруженный файл": "Uploaded file",
   "Подключённый репозиторий": "Connected repository",
   "Открытый репозиторий GitHub": "Public GitHub repository",
   "Это разбор по файлам, а не сертификат: отсутствие находок не гарантирует, что ошибок нет. Исходный код не менялся.": "This is a file-based analysis, not a certificate: no findings does not guarantee there are no errors. The source code was not changed.",

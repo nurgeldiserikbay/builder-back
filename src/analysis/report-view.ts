@@ -151,7 +151,7 @@ const stackLabels: Record<string, string> = {
   tailwind: 'Tailwind CSS', prisma: 'Prisma', laravel: 'Laravel', wordpress: 'WordPress', django: 'Django', flask: 'Flask', fastapi: 'FastAPI', rails: 'Ruby on Rails',
   go: 'Go', spring: 'Spring Boot', flutter: 'Flutter', docker: 'Docker', static_html: 'HTML без сборки',
 };
-export const sourceKindLabels: Record<string, string> = { stage_file: 'Загруженный архив', repository: 'Подключённый репозиторий', public_repo: 'Открытый репозиторий GitHub' };
+export const sourceKindLabels: Record<string, string> = { stage_file: 'Загруженный файл', repository: 'Подключённый репозиторий', public_repo: 'Открытый репозиторий GitHub' };
 
 const secretKinds: Record<string, string> = { aws_access_key: 'AWS', github_token: 'GitHub', slack_token: 'Slack', stripe_live_key: 'Stripe', google_api_key: 'Google API', telegram_bot_token: 'Telegram' };
 
