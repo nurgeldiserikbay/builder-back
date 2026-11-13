@@ -156,13 +156,13 @@ export class TelegramBotService {
           await this.send(ctx, next ? tr("✅ Этап принят. Дальше: «{0}».", [journey.nextAction.title]) : tr("✅ Этап принят."), next ? [[{ text: `➡️ ${journey.nextAction.title}`, callback_data: `S:${next}` }]] : undefined);
           return;
         }
-        case 'P': {
+        case 'AP': {
           if (!isUuid(arg)) return;
           const detail = localizeDeep((await this.journey.stage(userId, projectId, stageKey)).data, currentLocale());
           return void this.send(ctx, tr("Одобрить версию {0} этапа «{1}»? Одобрение записывается от вашего имени и относится только к этой версии.", [detail.current?.versionNumber ?? '', detail.stage.title]),
-            [[{ text: tr("👍 Да, одобрить"), callback_data: `PK:${arg}` }, { text: tr("Отмена"), callback_data: `S:${stageKey}` }]]);
+            [[{ text: tr("👍 Да, одобрить"), callback_data: `APK:${arg}` }, { text: tr("Отмена"), callback_data: `S:${stageKey}` }]]);
         }
-        case 'PK': {
+        case 'APK': {
           if (!isUuid(arg)) return;
           const detail = localizeDeep((await this.journey.approve(userId, projectId, stageKey, arg, null)).data, currentLocale());
           await this.send(ctx, detail.stage.status === 'approved' ? tr("✅ Одобрено. Набраны все нужные одобрения — этап принят.") : tr("👍 Одобрено: {0} из {1}.", [detail.stage.approval.approved ?? 0, detail.stage.approval.required ?? 0]));
@@ -228,7 +228,7 @@ export class TelegramBotService {
     const failedChecks = stage.artifactType === 'site' && (current?.content as { checks?: Array<{ status: string; required: boolean }> } | undefined)?.checks?.some((check) => check.required && check.status === 'failed');
     if (stage.canAccept && current && !detail.issues.length && !failedChecks) keyboard.push([{ text: stage.status === 'stale' ? tr("✅ Подтвердить") : tr("✅ Принять"), callback_data: `A:${current.id}` }]);
     if (stage.canRequestChanges) keyboard.push([{ text: tr("↩️ Вернуть на доработку"), callback_data: 'R' }]);
-    if (stage.approval.canApprove && current) keyboard.push([{ text: tr("👍 Одобрить"), callback_data: `P:${current.id}` }]);
+    if (stage.approval.canApprove && current) keyboard.push([{ text: tr("👍 Одобрить"), callback_data: `AP:${current.id}` }]);
     if (stage.canSubmit && current && !detail.issues.length && stage.inputsReady) keyboard.push([{ text: tr("📤 Отправить на приёмку"), callback_data: `U:${current.id}` }]);
     if (stage.canSuggest) keyboard.push([{ text: tr("💬 Предложить правку"), callback_data: 'G' }]);
     const button = this.appButton(`/projects/${projectId}/stages/${stageKey}`);
