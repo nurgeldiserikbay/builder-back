@@ -331,6 +331,7 @@ model Project {
   images           ProjectImage[]
   stageFiles       StageFile[]
   analysisRuns     AnalysisRun[]
+  browserChecks    BrowserCheck[]
   leads            SiteLead[]
   bookings         Booking[]
   orders           StoreOrder[]
@@ -1787,4 +1788,25 @@ model AnalysisRun {
   @@index([projectId, createdAt(sort: Desc)], map: "analysis_runs_project_created_idx")
   @@index([status, createdAt], map: "analysis_runs_status_created_idx")
   @@map("analysis_runs")
+}
+
+/// A build checked in a real browser (Lighthouse on a local copy, no network). Advisory: it does not block publishing.
+model BrowserCheck {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId         String    @map("project_id") @db.Uuid
+  versionId         String    @unique @map("version_id") @db.Uuid
+  status            String    @default("queued") @db.VarChar(20)
+  result            Json?
+  errorCode         String?   @map("error_code") @db.VarChar(60)
+  attemptCount      Int       @default(0) @map("attempt_count")
+  runs              Int       @default(1)
+  requestedByUserId String    @map("requested_by_user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt         DateTime? @map("started_at") @db.Timestamptz(3)
+  finishedAt        DateTime? @map("finished_at") @db.Timestamptz(3)
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt], map: "browser_checks_status_created_idx")
+  @@index([projectId], map: "browser_checks_project_idx")
+  @@map("browser_checks")
 }

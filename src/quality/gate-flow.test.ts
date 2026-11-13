@@ -13,6 +13,7 @@ import { PublishingService } from '../publishing/publishing.service.js';
 import { templateContent, type Brief, type SiteArtifact } from '../journey/artifacts.js';
 import { templateProcess } from '../journey/process.js';
 import { ProjectsService } from '../projects/projects.service.js';
+import { BrowserCheckRunner, BrowserChecksService } from './browser-checks.js';
 
 /** The whole path of a one-page site through the release gate, against DATABASE_URL; skipped without a database. */
 describe('release gate (database)', async () => {
@@ -86,5 +87,35 @@ describe('release gate (database)', async () => {
     const status = await publishing.publish(owner.id, projectId, { slug: `gate-${Date.now()}`, confirm: true });
     assert.equal(status.data.publication?.status, 'live');
     assert.equal(status.data.acceptedBuild?.quality?.status, 'passed');
+
+    // Every build queued a browser check; the worker measures it (here a fake browser), and it never holds the build.
+    process.env.BROWSER_CHECK_WORKER = 'external';
+    const runner = new BrowserCheckRunner(prisma!);
+    const seen: Array<{ paths: string[]; locale: string }> = [];
+    runner.run = async (input) => {
+      seen.push({ paths: input.pages.map((page) => page.path), locale: input.locale });
+      return { version: '1.0.0', tool: { lighthouse: '13.6.0', browser: 'HeadlessChrome/1' }, formFactor: 'mobile', throttling: 'simulate', measuredAt: new Date().toISOString(), skippedPages: 0,
+        pages: [{ path: '/', scores: { performance: 98, accessibility: 100, 'best-practices': 96, seo: 100 }, metrics: { fcpMs: 800, lcpMs: 900, cls: 0, tbtMs: 0, speedIndexMs: 800 }, issues: [], error: null }] };
+    };
+    const checks = new BrowserChecksService(prisma!, core, runner);
+    assert.equal(await prisma!.browserCheck.count({ where: { projectId } }), 2);
+    const queued = await checks.get(owner.id, projectId, rebuilt.data.versionId);
+    assert.equal(queued.data.check?.status, 'queued');
+    assert.equal(queued.data.canRerun, false);
+    while (await runner.processNext());
+    assert.deepEqual(seen.map((item) => item.paths), [['/'], ['/']]);
+    const done = await checks.get(owner.id, projectId, rebuilt.data.versionId);
+    assert.equal(done.data.check?.status, 'succeeded');
+    assert.equal(done.data.check?.result?.pages[0]?.scores.performance, 98);
+    assert.equal(done.data.canRerun, true);
+    // No browser on the server: «unavailable», not a failure of the site; it can be run again.
+    runner.run = async () => { const { BrowserCheckError } = await import('./browser-check.js'); throw new BrowserCheckError('BROWSER_NOT_CONFIGURED'); };
+    await checks.rerun(owner.id, projectId, rebuilt.data.versionId);
+    await assert.rejects(checks.rerun(owner.id, projectId, rebuilt.data.versionId), /BROWSER_CHECK_RUNNING/);
+    while (await runner.processNext());
+    const unavailable = await checks.get(owner.id, projectId, rebuilt.data.versionId);
+    assert.equal(unavailable.data.check?.status, 'unavailable');
+    assert.equal(unavailable.data.check?.result, null);
+    assert.match(unavailable.data.check?.error ?? '', /браузера/);
   });
 });
