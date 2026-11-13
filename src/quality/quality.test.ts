@@ -67,3 +67,37 @@ describe('quality gate of a build', () => {
     assert.equal(evaluateGate({ ...medium, auditVersion: 't' }, defaultQualityPolicy(), null).status, 'passed');
   });
 });
+
+describe('browser thresholds in a quality profile', () => {
+  it('parses an optional browser rule and keeps old policies valid', async () => {
+    const { defaultQualityPolicy, parseQualityPolicy } = await import('../admin/quality-profiles.service.js');
+    const base = defaultQualityPolicy();
+    assert.equal(parseQualityPolicy(base).browser, undefined);
+    const rule = { required: true, minScores: { performance: 90, accessibility: null, 'best-practices': null, seo: null }, maxLcpMs: 2500, maxCls: 0.1 };
+    assert.deepEqual(parseQualityPolicy({ ...base, browser: rule }).browser, rule);
+    for (const bad of [
+      { ...rule, minScores: { performance: 0, accessibility: null, 'best-practices': null, seo: null } },
+      { ...rule, maxLcpMs: 100 },
+      { ...rule, maxCls: 2 },
+      { ...rule, extra: true },
+      { required: true, minScores: { performance: null, accessibility: null, 'best-practices': null, seo: null }, maxLcpMs: null, maxCls: null },
+    ]) assert.throws(() => parseQualityPolicy({ ...base, browser: bad }), /INVALID_QUALITY_POLICY/);
+  });
+
+  it('judges every phone page; unmeasured pages and missing checks do not pass', async () => {
+    const { evaluateBrowserGate } = await import('./browser-gate.js');
+    const rule = { required: true, minScores: { performance: 90, accessibility: null, 'best-practices': null, seo: null }, maxLcpMs: 2500, maxCls: 0.1 };
+    const page = (path: string, performance: number | null, lcpMs: number | null, cls: number | null, error: string | null = null) => ({ path, scores: { performance, accessibility: 100, 'best-practices': 100, seo: 100 }, metrics: { fcpMs: 1, lcpMs, cls, tbtMs: 0, speedIndexMs: 1 }, issues: [], error });
+    const result = (pages: unknown[]) => ({ status: 'succeeded', result: { pages } });
+    assert.equal(evaluateBrowserGate(rule, null).status, 'pending');
+    assert.equal(evaluateBrowserGate(rule, { status: 'running', result: null }).status, 'pending');
+    assert.equal(evaluateBrowserGate(rule, { status: 'unavailable', result: null }).status, 'unavailable');
+    assert.deepEqual(evaluateBrowserGate(rule, result([page('/', 95, 2000, 0.05), page('/menu', 91, 2400, 0)])), { status: 'passed', reasons: [] });
+    const failed = evaluateBrowserGate(rule, result([page('/', 95, 2000, 0.05), page('/menu', 80, 3100, 0.25)]));
+    assert.equal(failed.status, 'failed');
+    assert.equal(failed.reasons.length, 3);
+    assert.ok(failed.reasons.every((reason) => reason.includes('/menu')));
+    assert.equal(evaluateBrowserGate(rule, result([page('/', null, null, null, 'PAGE_TIMEOUT')])).status, 'failed');
+    assert.equal(evaluateBrowserGate(rule, result([])).status, 'failed');
+  });
+});

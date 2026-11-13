@@ -14,6 +14,8 @@ import { templateContent, type Brief, type SiteArtifact } from '../journey/artif
 import { templateProcess } from '../journey/process.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { BrowserCheckRunner, BrowserChecksService } from './browser-checks.js';
+import { defaultQualityPolicy } from '../admin/quality-profiles.service.js';
+import type { BrowserCheckResult } from './browser-check.js';
 
 /** The whole path of a one-page site through the release gate, against DATABASE_URL; skipped without a database. */
 describe('release gate (database)', async () => {
@@ -117,5 +119,80 @@ describe('release gate (database)', async () => {
     assert.equal(unavailable.data.check?.status, 'unavailable');
     assert.equal(unavailable.data.check?.result, null);
     assert.match(unavailable.data.check?.error ?? '', /браузера/);
+  });
+
+  it('a profile with browser thresholds holds the build until the check passes them', { skip }, async () => {
+    process.env.BROWSER_CHECK_WORKER = 'external';
+    const billing = new BillingService(prisma!);
+    const core = new JourneyCore(prisma!, billing);
+    core.provider = null;
+    const worktime = new WorktimeService(prisma!);
+    const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core));
+    const publishing = new PublishingService(prisma!, billing);
+    const runner = new BrowserCheckRunner(prisma!);
+    const checks = new BrowserChecksService(prisma!, core, runner);
+    const email = `bgate-${randomUUID()}@test.local`;
+    const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), name: 'Owner' } });
+    users.push(owner.id);
+    const staffEmail = `bgate-staff-${randomUUID()}@test.local`;
+    const staff = await prisma!.staffAccount.create({ data: { email: staffEmail, emailNormalized: staffEmail, passwordHash: 'x', displayName: 'S', role: 'super_admin' } });
+    const key = `fast-${randomUUID().slice(0, 8)}`;
+    const policy = { ...defaultQualityPolicy(), browser: { required: true, minScores: { performance: 90, accessibility: 95, 'best-practices': null, seo: null }, maxLcpMs: 2500, maxCls: null } };
+    const profile = await prisma!.qualityProfile.create({ data: { key, name: 'Быстрый', description: 'Пороги скорости', createdByStaffId: staff.id } });
+    await prisma!.qualityProfileVersion.create({ data: { profileId: profile.id, version: 1, status: 'active', policy: policy as never, authoredByStaffId: staff.id, activatedAt: new Date() } });
+    try {
+      const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
+      await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
+      const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Кофейня', startMode: 'build', locale: 'ru', projectType: 'landing' } as never)).data.id;
+      await prisma!.project.update({ where: { id: projectId }, data: { qualityProfileKey: key } });
+      const brief: Brief = { businessName: 'Кофейня Зерно', whatYouDo: 'Варим кофе и печём круассаны каждое утро', audience: 'Соседи и студенты', city: 'Алматы', mainAction: 'message', phone: null, messenger: '@zerno', email: null, address: null, tone: 'friendly' };
+      const stageVersion = async (stageKey: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey } })).currentVersionId!;
+      const step = async (stageKey: string, content: unknown) => { await journey.saveDraft(owner.id, projectId, stageKey, { content, baseVersionId: null }); await journey.accept(owner.id, projectId, stageKey, await stageVersion(stageKey)); };
+      await step('goal', brief);
+      await step('process', templateProcess('landing', brief));
+      await step('techplan', { ownerNotes: null });
+      const content = templateContent(brief, null);
+      await step('content', { ...content, sections: content.sections.filter((section) => section.type !== 'benefits') });
+      await step('design', { palette: 'forest', font: 'modern', corners: 'rounded', heroLayout: 'centered' });
+
+      const built = await journey.build(owner.id, projectId);
+      assert.equal(built.data.quality.status, 'passed');
+      assert.deepEqual(built.data.quality.profile, { key, version: 1 });
+      assert.equal(built.data.quality.browserRule?.maxLcpMs, 2500);
+      // Not measured yet: the build waits.
+      await assert.rejects(journey.accept(owner.id, projectId, 'build', built.data.versionId), /BROWSER_CHECK_PENDING/);
+      assert.equal((await checks.get(owner.id, projectId, built.data.versionId)).data.gate?.status, 'pending');
+
+      const measured = (performance: number, lcpMs: number): BrowserCheckResult => ({ version: '1.1.0', tool: { lighthouse: '13', browser: 'HeadlessChrome/1' }, formFactor: 'mobile', throttling: 'simulate', measuredAt: new Date().toISOString(), skippedPages: 0, desktop: null,
+        pages: [{ path: '/', scores: { performance, accessibility: 100, 'best-practices': 80, seo: 100 }, metrics: { fcpMs: 800, lcpMs, cls: 0, tbtMs: 0, speedIndexMs: 900 }, issues: [], error: null }] });
+      runner.run = async () => measured(72, 4100);
+      while (await runner.processNext());
+      const failed = (await checks.get(owner.id, projectId, built.data.versionId)).data.gate!;
+      assert.equal(failed.status, 'failed');
+      assert.equal(failed.reasons.length, 2); // speed score and the main block; «Надёжность» has no threshold
+      assert.match(failed.reasons.join(' '), /72 из 100/);
+      await assert.rejects(journey.accept(owner.id, projectId, 'build', built.data.versionId), /BROWSER_GATE_FAILED/);
+
+      // A check that could not run is not a pass.
+      runner.run = async () => { const { BrowserCheckError } = await import('./browser-check.js'); throw new BrowserCheckError('BROWSER_NOT_CONFIGURED'); };
+      await checks.rerun(owner.id, projectId, built.data.versionId);
+      while (await runner.processNext());
+      await assert.rejects(journey.accept(owner.id, projectId, 'build', built.data.versionId), /BROWSER_CHECK_REQUIRED/);
+
+      runner.run = async () => measured(94, 1800);
+      await checks.rerun(owner.id, projectId, built.data.versionId);
+      while (await runner.processNext());
+      assert.equal((await checks.get(owner.id, projectId, built.data.versionId)).data.gate?.status, 'passed');
+      await journey.accept(owner.id, projectId, 'build', built.data.versionId);
+      // Publishing re-checks the same verdict.
+      await prisma!.browserCheck.update({ where: { versionId: built.data.versionId }, data: { status: 'failed' } });
+      await assert.rejects(publishing.publish(owner.id, projectId, { slug: `bgate-${Date.now()}`, confirm: true }), /BROWSER_CHECK_REQUIRED/);
+      await prisma!.browserCheck.update({ where: { versionId: built.data.versionId }, data: { status: 'succeeded' } });
+      assert.equal((await publishing.publish(owner.id, projectId, { slug: `bgate-${Date.now()}`, confirm: true })).data.publication?.status, 'live');
+    } finally {
+      await prisma!.project.updateMany({ where: { qualityProfileKey: key }, data: { qualityProfileKey: null } });
+      await prisma!.qualityProfile.deleteMany({ where: { key } });
+      await prisma!.staffAccount.deleteMany({ where: { id: staff.id } });
+    }
   });
 });

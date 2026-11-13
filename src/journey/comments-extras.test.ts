@@ -99,9 +99,23 @@ describe('remarks: files, mentions and the bot (database)', async () => {
       assert.ok(!sent.at(-1)!.buttons.includes(`CX:${remark.id}`));
       await bot.onCallback(writer.id, wchat, 'q4', `CR:${remark.id}`);
       await bot.onMessage(writer.id, wchat, 'Сверил, всё учтено', 'text');
+      await settle();
+      // People to mention come first; nothing is posted until «Отправить».
+      assert.match(sent.at(-1)!.text, /Кого упомянуть/);
+      assert.deepEqual(sent.at(-1)!.buttons, ['MT:0', 'MS']);
+      assert.equal(await prisma!.stageComment.count({ where: { projectId: project.id } }), 1);
+      await bot.onMessage(writer.id, wchat, 'ещё текст', 'text');
+      await settle();
+      assert.match(sent.at(-1)!.text, /Замечание уже написано/);
+      await bot.onCallback(writer.id, wchat, 'q4s', 'MS');
       await bot.onCallback(writer.id, wchat, 'q5', 'CN');
       await bot.onMessage(writer.id, wchat, 'Добавьте адрес в контакты', 'text');
+      await bot.onCallback(writer.id, wchat, 'q5s', 'MS');
       await settle();
+      // A second «Отправить» on the same picker does nothing.
+      await bot.onCallback(writer.id, wchat, 'q5t', 'MS');
+      await settle();
+      assert.match(sent.at(-1)!.text, /уже отправлено или отменено/);
       const rows = await prisma!.stageComment.findMany({ where: { projectId: project.id }, orderBy: { createdAt: 'asc' } });
       assert.deepEqual(rows.map((row) => [row.text, row.parentId === remark.id]), [['Сверь с прошлым ТЗ', false], ['Сверил, всё учтено', true], ['Добавьте адрес в контакты', false]]);
       const ochat = `chat-${randomUUID().slice(0, 8)}`;
@@ -117,8 +131,17 @@ describe('remarks: files, mentions and the bot (database)', async () => {
       assert.ok(sent.at(-1)!.buttons.includes('CB'));
       await bot.onCallback(owner.id, ochat, 'q11', 'CB');
       await bot.onMessage(owner.id, ochat, 'Нет телефона в контактах', 'text');
+      await bot.onCallback(owner.id, ochat, 'q12', 'MT:0'); // the writer
       await settle();
-      assert.equal((await prisma!.stageComment.findFirstOrThrow({ where: { projectId: project.id, text: 'Нет телефона в контактах' } })).blocking, true);
+      assert.match(sent.at(-1)!.buttons.join(' '), /MT:0 MS/);
+      await bot.onCallback(owner.id, ochat, 'q13', 'MT:0');
+      await bot.onCallback(owner.id, ochat, 'q14', 'MT:0');
+      await bot.onCallback(owner.id, ochat, 'q15', 'MS');
+      await settle();
+      const blocker = await prisma!.stageComment.findFirstOrThrow({ where: { projectId: project.id, text: 'Нет телефона в контактах' } });
+      assert.equal(blocker.blocking, true);
+      assert.deepEqual(blocker.mentionUserIds, [writer.id]);
+      assert.ok(sent.some((item) => /Упомянуты: writer/.test(item.text)));
       // A voice message is not taken for a remark.
       await bot.onCallback(writer.id, wchat, 'q9', 'CN');
       await bot.onMessage(writer.id, wchat, null, 'voice', { fileId: 'f', duration: 3, size: 100 });

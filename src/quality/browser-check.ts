@@ -2,13 +2,13 @@
 // 127.0.0.1 with the same headers the sites server sends; Chromium gets a dead proxy and a resolver that maps every
 // other host to "not found", so nothing leaves the machine. Builds contain no scripts (the release gate refuses them),
 // so the browser only renders HTML, CSS and the project's own photos.
-// Lab measurement on a simulated mid-range phone — not what real visitors get.
+// Lab measurement on a simulated mid-range phone (and the home page at a laptop size) — not what real visitors get.
 
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { pageCsp } from '../journey/site-renderer.js';
 
-export const BROWSER_CHECK_VERSION = '1.0.0';
+export const BROWSER_CHECK_VERSION = '1.1.0';
 export const BROWSER_CHECK_LIMITS = { pages: 7, pageTimeoutMs: 60_000 };
 
 export type BrowserCategory = 'performance' | 'accessibility' | 'best-practices' | 'seo';
@@ -28,6 +28,8 @@ export type BrowserCheckResult = {
   measuredAt: string;
   pages: BrowserPage[];
   skippedPages: number;
+  /** The home page once more at a laptop size with a fast connection (1.1.0+). Advice only; thresholds use the phone pages. */
+  desktop?: BrowserPage | null;
 };
 
 export class BrowserCheckError extends Error {
@@ -35,6 +37,9 @@ export class BrowserCheckError extends Error {
 }
 
 const categories: BrowserCategory[] = ['performance', 'accessibility', 'best-practices', 'seo'];
+// Lighthouse's own desktop preset: a laptop screen and a fast wired connection.
+const DESKTOP_SCREEN = { mobile: false, width: 1350, height: 940, deviceScaleFactor: 1, disabled: false };
+const DESKTOP_THROTTLING = { rttMs: 40, throughputKbps: 10 * 1024, cpuSlowdownMultiplier: 1, requestLatencyMs: 0, downloadThroughputKbps: 0, uploadThroughputKbps: 0 };
 // Not meaningful for a local copy: it is served over plain HTTP from 127.0.0.1; HTTPS, HTTP/2 and redirects are the
 // sites server's job and are checked on the published site.
 const skipAudits = ['is-on-https', 'redirects-http', 'uses-http2', 'csp-xss', 'valid-source-maps', 'bf-cache'];
@@ -161,7 +166,20 @@ export async function runBrowserCheck(input: { pages: Array<{ path: string; html
       } finally { clearTimeout(timer); }
     }
     if (results.every((page) => page.error)) throw new BrowserCheckError(results[0]?.error ?? 'PAGE_CHECK_FAILED');
-    return { version: BROWSER_CHECK_VERSION, tool: { lighthouse: lighthouseVersion, browser }, formFactor: 'mobile', throttling: 'simulate', measuredAt: new Date().toISOString(), pages: results, skippedPages: input.pages.length - pages.length };
+    let desktop: BrowserPage | null = null;
+    const home = pages[0]!;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const run = await Promise.race([
+        lighthouse(`${origin}${home.path}`, { port: chrome.port, output: 'json', logLevel: 'silent', onlyCategories: categories, skipAudits, formFactor: 'desktop', screenEmulation: DESKTOP_SCREEN, throttling: DESKTOP_THROTTLING, throttlingMethod: 'simulate', locale: input.locale, maxWaitForLoad: 30_000 }),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new BrowserCheckError('PAGE_TIMEOUT')), BROWSER_CHECK_LIMITS.pageTimeoutMs); }),
+      ]);
+      const lhr = run?.lhr as unknown as Lhr | undefined;
+      desktop = lhr ? summarizeLhr(home.path, lhr) : null;
+    } catch {
+      desktop = null; // the phone result stands; the laptop view is shown as not measured
+    } finally { clearTimeout(timer); }
+    return { version: BROWSER_CHECK_VERSION, tool: { lighthouse: lighthouseVersion, browser }, formFactor: 'mobile', throttling: 'simulate', measuredAt: new Date().toISOString(), pages: results, skippedPages: input.pages.length - pages.length, desktop };
   } finally {
     try { chrome?.kill(); } catch { /* already gone */ }
     await new Promise((resolve) => server.close(resolve));

@@ -8,12 +8,37 @@ const CATEGORY_IDS = ['security', 'accessibility', 'performance', 'seo'] as cons
 const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
 type Category = typeof CATEGORY_IDS[number];
 type Severity = typeof SEVERITIES[number];
+export const BROWSER_SCORE_KEYS = ['performance', 'accessibility', 'best-practices', 'seo'] as const;
+export type BrowserScoreKey = (typeof BROWSER_SCORE_KEYS)[number];
+/**
+ * Optional lab thresholds for site builds, measured by Lighthouse on a simulated phone (STAGE_WORK_MODEL §41). When
+ * required, a build is accepted and published only after the browser check succeeded and every page met them.
+ */
+export type BrowserRule = { required: boolean; minScores: Record<BrowserScoreKey, number | null>; maxLcpMs: number | null; maxCls: number | null };
 export type QualityPolicy = {
   schemaVersion: 1;
   minimumRequirementCoverage: number;
   blockingSeverities: Severity[];
   categories: Record<Category, { enabled: boolean; required: boolean; maxOpenCritical: number; maxOpenHigh: number }>;
+  browser?: BrowserRule;
 };
+
+function parseBrowserRule(value: unknown): BrowserRule {
+  if (!isRecord(value) || !onlyKeys(value, ['required', 'minScores', 'maxLcpMs', 'maxCls']) || typeof value.required !== 'boolean') throw new BadRequestException('INVALID_QUALITY_POLICY');
+  const scores = value.minScores;
+  if (!isRecord(scores) || !onlyKeys(scores, [...BROWSER_SCORE_KEYS])) throw new BadRequestException('INVALID_QUALITY_POLICY');
+  const minScores = {} as BrowserRule['minScores'];
+  for (const key of BROWSER_SCORE_KEYS) {
+    const score = scores[key];
+    if (score !== null && !integerIn(score, 1, 100)) throw new BadRequestException('INVALID_QUALITY_POLICY');
+    minScores[key] = score as number | null;
+  }
+  if (value.maxLcpMs !== null && !integerIn(value.maxLcpMs, 500, 60_000)) throw new BadRequestException('INVALID_QUALITY_POLICY');
+  if (value.maxCls !== null && !(typeof value.maxCls === 'number' && value.maxCls >= 0 && value.maxCls <= 1)) throw new BadRequestException('INVALID_QUALITY_POLICY');
+  // A required rule with nothing to check would block for no reason.
+  if (value.required && BROWSER_SCORE_KEYS.every((key) => minScores[key] === null) && value.maxLcpMs === null && value.maxCls === null) throw new BadRequestException('INVALID_QUALITY_POLICY');
+  return { required: value.required, minScores, maxLcpMs: value.maxLcpMs as number | null, maxCls: value.maxCls as number | null };
+}
 
 export function defaultQualityPolicy(): QualityPolicy {
   return {
@@ -34,7 +59,8 @@ function integerIn(value: unknown, min: number, max: number): value is number {
   return Number.isInteger(value) && (value as number) >= min && (value as number) <= max;
 }
 export function parseQualityPolicy(value: unknown): QualityPolicy {
-  if (!isRecord(value) || !onlyKeys(value, ['schemaVersion', 'minimumRequirementCoverage', 'blockingSeverities', 'categories'])) throw new BadRequestException('INVALID_QUALITY_POLICY');
+  // `browser` is optional: versions saved before it existed keep working without browser thresholds.
+  if (!isRecord(value) || !onlyKeys(Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'browser')), ['schemaVersion', 'minimumRequirementCoverage', 'blockingSeverities', 'categories'])) throw new BadRequestException('INVALID_QUALITY_POLICY');
   if (value.schemaVersion !== 1 || !integerIn(value.minimumRequirementCoverage, 0, 100)) throw new BadRequestException('INVALID_QUALITY_POLICY');
   if (!Array.isArray(value.blockingSeverities) || value.blockingSeverities.some((item) => typeof item !== 'string' || !SEVERITIES.includes(item as Severity)) || new Set(value.blockingSeverities).size !== value.blockingSeverities.length) throw new BadRequestException('INVALID_QUALITY_POLICY');
   if (!isRecord(value.categories)) throw new BadRequestException('INVALID_QUALITY_POLICY');
@@ -52,6 +78,7 @@ export function parseQualityPolicy(value: unknown): QualityPolicy {
     minimumRequirementCoverage: value.minimumRequirementCoverage,
     blockingSeverities: value.blockingSeverities as Severity[],
     categories,
+    ...(value.browser !== undefined ? { browser: parseBrowserRule(value.browser) } : {}),
   };
 }
 

@@ -1,6 +1,7 @@
 import { contentLocale, currentLocale, localizeDeep, runWithLocale, tr } from '../i18n/i18n.js';
 import { HttpException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
+import { Prisma } from '../generated/prisma/client.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { SpecialistsService } from '../journey/specialists.service.js';
 import { CommentsService } from '../journey/comments.service.js';
@@ -15,7 +16,10 @@ const PENDING_KINDS: Pending[] = ['instruction', 'changes_note', 'suggestion', '
 /** Remarks are typed: for a reply the bot keeps the remark id in pendingText, where a voice message would keep its text. */
 const TEXT_ONLY: Pending[] = ['comment', 'blocker', 'reply'];
 /** «voice:<kind>» — recognised text waits for «Выполнить»; «voice_consent:<kind>» — a voice file waits for consent. */
-type VoicePending = `voice:${Pending}` | `voice_consent:${Pending}`;
+type VoicePending = `voice:${Pending}` | `voice_consent:${Pending}` | `mention:${Pending}`;
+/** A typed remark waiting for «Отправить» while the person picks whom to mention. */
+type MentionDraft = { text: string; target: string | null; mentionIds: string[] };
+const MENTION_BUTTONS = 10;
 export type VoiceMessage = { fileId: string; duration: number; size: number | null };
 type Ctx = { config: TelegramConfig; chatId: string; userId: string };
 
@@ -44,16 +48,16 @@ export class TelegramBotService {
     return this.prisma.telegramChatState.findUnique({ where: { chatId } });
   }
 
-  private async setState(ctx: Ctx, data: { projectId?: string | null; stageKey?: string | null; pending?: Pending | VoicePending | null; pendingText?: string | null }) {
+  private async setState(ctx: Ctx, data: { projectId?: string | null; stageKey?: string | null; pending?: Pending | VoicePending | null; pendingText?: string | null; draft?: MentionDraft | null }) {
     const pending = data.pending === undefined ? undefined : data.pending;
     await this.prisma.telegramChatState.upsert({
       where: { chatId: ctx.chatId },
-      create: { chatId: ctx.chatId, userId: ctx.userId, projectId: data.projectId ?? null, stageKey: data.stageKey ?? null, pending: pending ?? null, pendingUntil: pending ? new Date(Date.now() + PENDING_TTL_MS) : null, pendingText: data.pendingText ?? null },
+      create: { chatId: ctx.chatId, userId: ctx.userId, projectId: data.projectId ?? null, stageKey: data.stageKey ?? null, pending: pending ?? null, pendingUntil: pending ? new Date(Date.now() + PENDING_TTL_MS) : null, pendingText: data.pendingText ?? null, pendingDraft: (data.draft ?? undefined) as never },
       update: {
         userId: ctx.userId,
         ...(data.projectId !== undefined ? { projectId: data.projectId } : {}),
         ...(data.stageKey !== undefined ? { stageKey: data.stageKey } : {}),
-        ...(pending !== undefined ? { pending, pendingUntil: pending ? new Date(Date.now() + PENDING_TTL_MS) : null, pendingText: data.pendingText ?? null } : {}),
+        ...(pending !== undefined ? { pending, pendingUntil: pending ? new Date(Date.now() + PENDING_TTL_MS) : null, pendingText: data.pendingText ?? null, pendingDraft: (data.draft ?? Prisma.DbNull) as never } : {}),
       },
     });
   }
@@ -83,7 +87,7 @@ export class TelegramBotService {
     if (!state || state.userId !== userId || !state.pending || !state.pendingUntil || state.pendingUntil <= new Date() || !state.projectId || !state.stageKey) return null;
     const [step, kind] = state.pending.includes(':') ? state.pending.split(':') as [string, Pending] : [null, state.pending as Pending];
     if (!PENDING_KINDS.includes(kind)) return null;
-    return { state, projectId: state.projectId, stageKey: state.stageKey, kind, step: step as 'voice' | 'voice_consent' | null };
+    return { state, projectId: state.projectId, stageKey: state.stageKey, kind, step: step as 'voice' | 'voice_consent' | 'mention' | null };
   }
 
   private async handleVoice(ctx: Ctx, voice: VoiceMessage | undefined) {
@@ -135,6 +139,7 @@ export class TelegramBotService {
     if (!waiting) {
       return void this.send(ctx, tr("Чтобы что-то изменить, откройте этап и нажмите «Попросить ИИ». Наберите /projects, чтобы выбрать проект."), [[{ text: tr("📂 Мои проекты"), callback_data: 'L' }]]);
     }
+    if (waiting.step === 'mention') return void this.send(ctx, tr("Замечание уже написано: отметьте, кого упомянуть, и нажмите «Отправить» — или /cancel, чтобы отменить."));
     if (trimmed.length < 2 || trimmed.length > 1000) return void this.send(ctx, tr("Напишите от 2 до 1000 символов или /cancel, чтобы отменить."));
     const target = waiting.kind === 'reply' ? waiting.state.pendingText : null;
     await this.setState(ctx, { pending: null });
@@ -153,6 +158,9 @@ export class TelegramBotService {
         await this.journey.requestChanges(userId, projectId, stageKey, trimmed);
         await this.send(ctx, tr("↩️ Этап возвращён на доработку с вашим комментарием."));
       } else if (pending === 'comment' || pending === 'blocker' || pending === 'reply') {
+        // People the person may mention (participants and the stage's specialists): pick them before the remark goes out.
+        const people = (await this.comments.list(userId, projectId, stageKey)).data.people;
+        if (people.length) return this.askMentions(ctx, pending, { text: trimmed, target, mentionIds: [] }, people);
         await this.comments.add(userId, projectId, stageKey, { text: trimmed, targetKey: null, blocking: pending === 'blocker', parentId: pending === 'reply' ? target : null });
         await this.send(ctx, pending === 'reply' ? tr("💬 Ответ добавлен.") : pending === 'blocker' ? tr("⛔ Блокирующее замечание добавлено: этап нельзя принять, пока его не закроют.") : tr("💬 Замечание добавлено. Участники этапа получат уведомление."));
         return this.showComments(ctx, projectId, stageKey);
@@ -234,7 +242,7 @@ export class TelegramBotService {
           return this.showComments(ctx, projectId, stageKey);
         case 'CN':
           await this.setState(ctx, { pending: 'comment' });
-          await this.send(ctx, tr("Напишите замечание к этапу одним сообщением. Блокирующее замечание и замечание к отдельной части можно оставить в приложении.\n\nОтменить — /cancel"));
+          await this.send(ctx, tr("Напишите замечание к этапу одним сообщением. Замечание к отдельной части и с файлами можно оставить в приложении.\n\nОтменить — /cancel"));
           return;
         case 'CB':
           await this.setState(ctx, { pending: 'blocker' });
@@ -245,6 +253,9 @@ export class TelegramBotService {
           await this.setState(ctx, { pending: 'reply', pendingText: arg });
           await this.send(ctx, tr("Напишите ответ одним сообщением.\n\nОтменить — /cancel"));
           return;
+        case 'MT':
+        case 'MS':
+          return this.mentionCallback(ctx, projectId, stageKey, action, arg);
         case 'CX':
           if (!isUuid(arg)) return;
           await this.comments.resolve(userId, projectId, stageKey, arg, true);
@@ -333,6 +344,40 @@ export class TelegramBotService {
     const button = this.appButton(`/projects/${projectId}/stages/${stageKey}`);
     keyboard.push([...(button ? [button] : []), { text: tr("← Этапы"), callback_data: `P:${projectId}` }]);
     await this.send(ctx, lines.join('\n'), keyboard);
+  }
+
+  /** Shows who can be mentioned; a tap toggles a person, «Отправить» posts the remark with them. */
+  private async askMentions(ctx: Ctx, kind: Pending, draft: MentionDraft, people: Array<{ id: string; name: string }>) {
+    await this.setState(ctx, { pending: `mention:${kind}`, draft });
+    const shown = people.slice(0, MENTION_BUTTONS);
+    const keyboard: InlineKeyboard = [];
+    for (let index = 0; index < shown.length; index += 2) {
+      keyboard.push(shown.slice(index, index + 2).map((person, offset) => ({ text: `${draft.mentionIds.includes(person.id) ? '☑️' : '⬜'} ${person.name}`.slice(0, 60), callback_data: `MT:${index + offset}` })));
+    }
+    keyboard.push([{ text: draft.mentionIds.length ? tr("📨 Отправить, упомянуть: {0}", [draft.mentionIds.length]) : tr("📨 Отправить без упоминаний"), callback_data: 'MS' }]);
+    await this.send(ctx, tr("Кого упомянуть? Упомянутые получат отдельное уведомление. Отметьте людей и нажмите «Отправить».\n\nОтменить — /cancel"), keyboard);
+  }
+
+  private async mentionCallback(ctx: Ctx, projectId: string, stageKey: string, action: 'MT' | 'MS', arg: string) {
+    const waiting = await this.waiting(ctx.chatId, ctx.userId);
+    const draft = waiting?.step === 'mention' ? (waiting.state.pendingDraft as MentionDraft | null) : null;
+    if (!waiting || !draft || waiting.projectId !== projectId || waiting.stageKey !== stageKey) return void this.send(ctx, tr("Это замечание уже отправлено или отменено. Откройте замечания этапа заново."));
+    const people = (await this.comments.list(ctx.userId, projectId, stageKey)).data.people;
+    if (action === 'MT') {
+      const person = /^\d{1,2}$/.test(arg) ? people.slice(0, MENTION_BUTTONS)[Number(arg)] : undefined;
+      if (!person) return this.askMentions(ctx, waiting.kind, draft, people);
+      const mentionIds = draft.mentionIds.includes(person.id) ? draft.mentionIds.filter((id) => id !== person.id) : [...draft.mentionIds, person.id];
+      return this.askMentions(ctx, waiting.kind, { ...draft, mentionIds }, people);
+    }
+    await this.setState(ctx, { pending: null });
+    const kind = waiting.kind;
+    // Someone who left the stage since is dropped rather than failing the whole remark.
+    const allowed = new Set(people.map((person) => person.id));
+    const mentionUserIds = draft.mentionIds.filter((id) => allowed.has(id));
+    await this.comments.add(ctx.userId, projectId, stageKey, { text: draft.text, targetKey: null, blocking: kind === 'blocker', parentId: kind === 'reply' ? draft.target : null, mentionUserIds });
+    const done = kind === 'reply' ? tr("💬 Ответ добавлен.") : kind === 'blocker' ? tr("⛔ Блокирующее замечание добавлено: этап нельзя принять, пока его не закроют.") : tr("💬 Замечание добавлено. Участники этапа получат уведомление.");
+    await this.send(ctx, mentionUserIds.length ? `${done} ${tr("Упомянуты: {0}.", [people.filter((person) => mentionUserIds.includes(person.id)).map((person) => person.name).join(', ')])}` : done);
+    return this.showComments(ctx, projectId, stageKey);
   }
 
   /** Open remarks of the stage, newest last; reply, close (author, owner, manager) or write a new one. */

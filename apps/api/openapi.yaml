@@ -2367,13 +2367,14 @@ paths:
       tags: [Specialists]
       operationId: listSpecialists
       summary: Specialist catalog (signed-in users)
-      description: Published profiles of accounts not being deleted, optionally for one stage. Ordered by a rating weighted toward 4 by the number of reviews, then by accepted stages. No e-mail addresses.
+      description: Published profiles of accounts not being deleted and not hidden by support, optionally for one stage and a text query. Ordered by a rating weighted toward 4 by the number of reviews, then by accepted stages. No e-mail addresses.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
         - { name: stage, in: query, required: false, schema: { type: string }, description: Stage key with AI (400 PROFILE_STAGE_INVALID otherwise) }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 200 }, description: 'Words that must all appear on the card (name, headline, about, city, stage titles, work titles and descriptions); case and ё/е ignored; up to 8 words, 80 characters after normalising (400 CATALOG_QUERY_TOO_LONG)' }
       responses:
-        '200': { description: 'specialists[] (id, displayName, headline, city, hourlyRate, stages[{key,title}], rating, reviews, completedStages, works), stages[] for the filter' }
+        '200': { description: 'specialists[] (id, displayName, headline, city, hourlyRate, stages[{key,title}], rating, reviews, completedStages, works), stages[] for the filter, query (normalised)' }
   /specialists/{profileId}:
     get:
       tags: [Specialists]
@@ -2385,8 +2386,37 @@ paths:
       parameters:
         - { name: profileId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
-        '200': { description: 'card fields plus reviewCount, about, own, published, portfolio[] (title, description, url, stageKey, stageTitle, host), reviews[] (latest 50) (id, rating, text, reply, repliedAt, createdAt, stageTitle, projectTypeTitle, canReply)' }
+        '200': { description: 'card fields plus reviewCount, about, own, published, portfolio[] (title, description, url, stageKey, stageTitle, host, photoId), reviews[] (latest 50) (id, rating, text, reply, repliedAt, createdAt, stageTitle, projectTypeTitle, canReply); to the specialist blocked (at, reason) or null; to others canReport, reportPending' }
         '404': { description: PROFILE_NOT_FOUND }
+  /specialists/{profileId}/report:
+    post:
+      tags: [Specialists]
+      operationId: reportSpecialistProfile
+      summary: Complain about a card or one of its works
+      description: Anyone signed in except the specialist. One open complaint per person and card, at most 5 open complaints per person. The work is stored as it was when reported. The specialist never learns who complained; support sees the content, not the complainant.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: profileId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [target, reason, text]
+              properties:
+                target: { type: string, enum: [card, work] }
+                workIndex: { type: integer, minimum: 0, description: Position of the work on the card; required for target work }
+                reason: { type: string, enum: [not_theirs, unsafe_link, offensive, fake, other] }
+                text: { type: string, minLength: 10, maxLength: 1000 }
+      responses:
+        '200': { description: 'reportPending: true' }
+        '400': { description: 'PROFILE_REPORT_TARGET_INVALID, PROFILE_REPORT_WORK_INVALID, PROFILE_REPORT_REASON_INVALID, PROFILE_REPORT_TEXT_INVALID' }
+        '403': { description: PROFILE_REPORT_OWN }
+        '404': { description: PROFILE_NOT_FOUND }
+        '409': { description: 'PROFILE_REPORT_PENDING, PROFILE_REPORT_TOO_MANY' }
   /me/specialist-profile:
     get:
       tags: [Specialists]
@@ -2435,6 +2465,7 @@ paths:
       responses:
         '200': { description: Same as GET }
         '400': { description: 'PROFILE_NAME_INVALID, PROFILE_HEADLINE_INVALID, PROFILE_ABOUT_TOO_LONG, PROFILE_STAGE_INVALID, PROFILE_STAGES_REQUIRED, PROFILE_RATE_INVALID, PROFILE_CITY_INVALID' }
+        '409': { description: 'PROFILE_BLOCKED — support hid the card; it can be saved unpublished but not published until support restores it' }
   /me/specialist-profile/photos:
     post:
       tags: [Specialists]
@@ -2530,6 +2561,68 @@ paths:
         '400': { description: REVIEW_REPORT_INVALID }
         '404': { description: REVIEW_NOT_FOUND }
         '409': { description: REVIEW_ALREADY_REPORTED }
+  /admin/specialist-reports:
+    get:
+      tags: [Admin]
+      operationId: listSpecialistProfileReports
+      summary: Complaints about catalog cards (super_admin, operations_auditor)
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: status, in: query, required: false, schema: { type: string, enum: [pending, decided] } }
+      responses:
+        '200': { description: 'items: id, target, reason, text, status (pending|dismissed|work_removed|card_hidden), note, createdAt, decidedAt, work (title, url, stillShown) or null, profile (id, displayName, headline, published, blocked). The complainant is not shown.' }
+        '403': { description: STAFF_ROLE_REQUIRED }
+  /admin/specialist-reports/{reportId}/decide:
+    post:
+      tags: [Admin]
+      operationId: decideSpecialistProfileReport
+      summary: Dismiss a complaint, take the reported work off the card, or hide the card (super_admin)
+      description: The reporter is told the outcome; the specialist is told what changed (not who complained). A hidden card cannot be published until it is restored. Audit events specialist_profile_report.*.
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: reportId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, note]
+              properties:
+                decision: { type: string, enum: [dismiss, remove_work, hide_card], description: remove_work only for a complaint about a work }
+                note: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        '200': { description: Pending complaints }
+        '400': { description: 'MODERATION_DECISION_INVALID, MODERATION_NOTE_REQUIRED' }
+        '404': { description: REPORT_NOT_FOUND }
+        '409': { description: REPORT_ALREADY_DECIDED }
+  /admin/specialist-profiles/{profileId}/unblock:
+    post:
+      tags: [Admin]
+      operationId: unblockSpecialistProfile
+      summary: Let a hidden card be published again (super_admin); the specialist publishes it themselves
+      x-implementation-status: implemented
+      security: [{ adminSessionCookie: [] }]
+      parameters:
+        - { name: profileId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [note]
+              properties:
+                note: { type: string, minLength: 5, maxLength: 500 }
+      responses:
+        '200': { description: 'blocked: false' }
+        '400': { description: MODERATION_NOTE_REQUIRED }
+        '404': { description: PROFILE_NOT_FOUND }
+        '409': { description: PROFILE_NOT_BLOCKED }
   /admin/reviews:
     get:
       tags: [Specialists]
@@ -2721,7 +2814,7 @@ paths:
       tags: [Publishing]
       operationId: confirmQuickEdit
       summary: Accept the draft, rebuild, check and update the live site
-      description: Chains accept → change notice to the build accepted → build → required checks → accept build → update publication. If a required check fails, the stage stays accepted, the live site keeps the old version and the answer is QUICK_EDIT_CHECKS_FAILED.
+      description: Chains accept → change notice to the build accepted → build → required checks → accept build → update publication. If a required check fails, the stage stays accepted, the live site keeps the old version and the answer is QUICK_EDIT_CHECKS_FAILED. When the project's quality profile requires the browser check, the new build waits on the build stage (409 QUICK_EDIT_WAITS_FOR_BROWSER_CHECK) and is accepted and published there once the check passes.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -2733,7 +2826,7 @@ paths:
             schema: { type: object, additionalProperties: false, required: [versionId], properties: { versionId: { type: string, format: uuid } } }
       responses:
         '200': { description: 'Same body as GET plus published (buildVersion, changes)' }
-        '409': { description: QUICK_EDIT_NOTHING_PENDING }
+        '409': { description: 'QUICK_EDIT_NOTHING_PENDING, QUICK_EDIT_WAITS_FOR_BROWSER_CHECK' }
         '422': { description: 'QUICK_EDIT_NO_CHANGES, QUICK_EDIT_CHECKS_FAILED, REQUIRED_CHECKS_FAILED' }
   /projects/{projectId}/quick-edit/cancel:
     post:
@@ -2772,7 +2865,7 @@ paths:
       responses:
         '200': { description: 'Same body as GET plus published (buildVersion, contacts[] with field, before, after)' }
         '400': { description: 'QUICK_EDIT_CONTACT_INVALID:<field>, UNKNOWN_FIELD' }
-        '409': { description: 'QUICK_EDIT_NOT_LIVE, QUICK_EDIT_BUILD_IN_WORK, QUICK_EDIT_PENDING, QUICK_EDIT_STAGE_IN_WORK, QUICK_EDIT_STAGE_HAS_LEAD' }
+        '409': { description: 'QUICK_EDIT_NOT_LIVE, QUICK_EDIT_BUILD_IN_WORK, QUICK_EDIT_PENDING, QUICK_EDIT_STAGE_IN_WORK, QUICK_EDIT_STAGE_HAS_LEAD, QUICK_EDIT_WAITS_FOR_BROWSER_CHECK' }
         '422': { description: 'QUICK_EDIT_NO_CHANGES, QUICK_EDIT_CHECKS_FAILED' }
   /admin/ai-pricing:
     get:
@@ -3313,7 +3406,7 @@ paths:
       tags: [Journey]
       operationId: acceptStage
       summary: Accept the current version of a stage
-      description: Requires owner or manager, accepted inputs, a complete artifact and, for the build stage, no failed required checks on a build from the currently accepted versions. For the build stage the quality report must have passed (422 QUALITY_GATE_FAILED; 409 BUILD_NOT_QUALITY_CHECKED for builds made before the gate). Refused with APPROVAL_POLICY_ACTIVE when the stage has an approval policy — then reviewers approve via /approve.
+      description: Requires owner or manager, accepted inputs, a complete artifact and, for the build stage, no failed required checks on a build from the currently accepted versions. For the build stage the quality report must have passed (422 QUALITY_GATE_FAILED; 409 BUILD_NOT_QUALITY_CHECKED for builds made before the gate) and, when the build's quality profile has a required browser rule, the browser check of that build must meet it (409 BROWSER_CHECK_PENDING; 422 BROWSER_CHECK_REQUIRED when the check failed or could not run; 422 BROWSER_GATE_FAILED). Refused with APPROVAL_POLICY_ACTIVE when the stage has an approval policy — then reviewers approve via /approve.
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -3513,15 +3606,18 @@ paths:
       description: |
         Every build queues a check. The worker serves the build from memory on 127.0.0.1 with the published headers and runs
         Lighthouse in Chromium (simulated mid-range phone); the browser cannot reach any other host. Up to 7 pages. Scores per
-        category, lab metrics (FCP, LCP, CLS, TBT, Speed Index) and failing audits. Advisory: it never blocks acceptance or
-        publishing. Status unavailable means this server has no browser (BROWSER_NOT_CONFIGURED), not that the site failed.
+        category, lab metrics (FCP, LCP, CLS, TBT, Speed Index) and failing audits. Since 1.1.0 the home page is measured once
+        more at a laptop size (desktop, advice only). Advisory unless the build's quality profile has a required browser rule:
+        then gate (status passed|pending|failed|unavailable, reasons[], rule) says whether the build may be accepted and
+        published — every phone page must meet the thresholds; a check that could not run does not pass. Status unavailable
+        means this server has no browser (BROWSER_NOT_CONFIGURED), not that the site failed.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: '#/components/parameters/ProjectId'
         - { name: versionId, in: query, required: false, schema: { type: string, format: uuid } }
       responses:
-        '200': { description: 'check (id, versionId, status queued|running|succeeded|failed|unavailable, statusLabel, error, result with tool, formFactor, throttling, measuredAt, pages[path, scores, metrics, issues[], error], categories[], note) or null; canRerun' }
+        '200': { description: 'check (id, versionId, status queued|running|succeeded|failed|unavailable, statusLabel, error, result with tool, formFactor, throttling, measuredAt, pages[path, scores, metrics, issues[], error], desktop (same shape, or null), categories[], note) or null; gate or null; canRerun' }
         '404': { description: 'PROJECT_NOT_FOUND, VERSION_NOT_FOUND' }
     post:
       tags: [Journey]
@@ -3943,7 +4039,7 @@ paths:
       tags: [Publishing]
       operationId: publishSite
       summary: Publish or update the site on a BuildPath subdomain
-      description: Requires owner or manager, an accepted build stage whose quality report passed (QUALITY_GATE_FAILED; BUILD_NOT_QUALITY_CHECKED for builds made before the gate — build again) and confirm=true. Makes the site public at the returned URL and sets the project status to live. Putting back an earlier published build (/publication/rollback) is not gated again.
+      description: Requires owner or manager, an accepted build stage whose quality report passed (QUALITY_GATE_FAILED; BUILD_NOT_QUALITY_CHECKED for builds made before the gate — build again), the browser rule of its profile if it has one (BROWSER_CHECK_PENDING, BROWSER_CHECK_REQUIRED, BROWSER_GATE_FAILED) and confirm=true. Makes the site public at the returned URL and sets the project status to live. Putting back an earlier published build (/publication/rollback) is not gated again.
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -5162,6 +5258,25 @@ components:
             accessibility: { $ref: '#/components/schemas/QualityCategoryPolicy' }
             performance: { $ref: '#/components/schemas/QualityCategoryPolicy' }
             seo: { $ref: '#/components/schemas/QualityCategoryPolicy' }
+        browser: { $ref: '#/components/schemas/QualityBrowserRule' }
+    QualityBrowserRule:
+      type: object
+      additionalProperties: false
+      description: Optional Lighthouse thresholds for site builds (phone pages). A required rule needs at least one threshold; then builds are accepted and published only after the browser check met it. Versions without it keep the check advisory.
+      required: [required, minScores, maxLcpMs, maxCls]
+      properties:
+        required: { type: boolean }
+        minScores:
+          type: object
+          additionalProperties: false
+          required: [performance, accessibility, best-practices, seo]
+          properties:
+            performance: { type: [integer, 'null'], minimum: 1, maximum: 100 }
+            accessibility: { type: [integer, 'null'], minimum: 1, maximum: 100 }
+            best-practices: { type: [integer, 'null'], minimum: 1, maximum: 100 }
+            seo: { type: [integer, 'null'], minimum: 1, maximum: 100 }
+        maxLcpMs: { type: [integer, 'null'], minimum: 500, maximum: 60000 }
+        maxCls: { type: [number, 'null'], minimum: 0, maximum: 1 }
     QualityCategoryPolicy:
       type: object
       additionalProperties: false

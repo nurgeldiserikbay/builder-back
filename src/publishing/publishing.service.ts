@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { assertBrowserGate } from '../quality/browser-gate.js';
 import { PrismaService } from '../database/prisma.service.js';
 import type { SiteArtifact } from '../journey/artifacts.js';
 import { emailConfig } from '../notifications/email.js';
@@ -112,6 +113,7 @@ export class PublishingService {
     // The release gate: a build without a passed quality report does not go live (an earlier published build can still be put back).
     if (!build.quality) throw new ConflictException('BUILD_NOT_QUALITY_CHECKED');
     if (build.quality.status !== 'passed') throw new UnprocessableEntityException('QUALITY_GATE_FAILED');
+    await assertBrowserGate(this.prisma, build.versionId, build.quality.browserRule);
     const problem = slugProblem(input.slug);
     if (problem) throw new BadRequestException('INVALID_SLUG');
     await this.billing.assertCanPublish(projectId);

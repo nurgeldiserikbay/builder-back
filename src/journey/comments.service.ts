@@ -39,7 +39,8 @@ export class CommentsService {
     const people = new Map<string, string>();
     for (const row of members) people.set(row.userId, row.user.name || row.user.email.split('@')[0]!);
     for (const row of specialists) if (row.userId && row.userId !== userId && !people.has(row.userId)) people.set(row.userId, row.user?.name || row.email.split('@')[0]!);
-    return [...people].map(([id, name]) => ({ id, name }));
+    // A stable order, so a numbered choice (the Telegram bot) means the same person on the next tap.
+    return [...people].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   }
 
   async list(userId: string, projectId: string, key: string) {

@@ -209,6 +209,7 @@ model User {
   oauthStates        OAuthState[]
   payoutDetails      PayoutDetails?
   specialistPhotos  SpecialistPhoto[]
+  profileReports    SpecialistProfileReport[]
 }
 
 model UserSession {
@@ -1103,6 +1104,8 @@ model TelegramChatState {
   pendingUntil DateTime? @map("pending_until") @db.Timestamptz(3)
   /// Recognised text of a voice message waiting for «Выполнить», or the voice file id waiting for consent.
   pendingText  String?   @map("pending_text") @db.VarChar(1000)
+  /// A remark waiting for the people to mention: { text, target, mentionIds }.
+  pendingDraft Json?     @map("pending_draft")
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   project      Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
@@ -1625,12 +1628,43 @@ model SpecialistProfile {
   /// Examples of work: [{ title, description, url, stageKey }], up to 12, checked in catalog-rules.
   portfolio      Json     @default("[]")
   published      Boolean  @default(false)
+  /// Hidden by support after a complaint: not shown and cannot be published until support restores it.
+  blockedAt      DateTime? @map("blocked_at") @db.Timestamptz(3)
+  blockedReason  String?  @map("blocked_reason") @db.VarChar(500)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reports        SpecialistProfileReport[]
 
   @@index([published], map: "specialist_profiles_published_idx")
   @@map("specialist_profiles")
+}
+
+/// A complaint about a catalog card or one of its works. The specialist never learns who complained.
+model SpecialistProfileReport {
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  profileId      String            @map("profile_id") @db.Uuid
+  reporterUserId String            @map("reporter_user_id") @db.Uuid
+  /// card | work
+  target         String            @db.VarChar(10)
+  /// The work as it was when reported (it may change or move later).
+  workTitle      String?           @map("work_title") @db.VarChar(80)
+  workUrl        String?           @map("work_url") @db.VarChar(300)
+  /// not_theirs | unsafe_link | offensive | fake | other
+  reason         String            @db.VarChar(20)
+  text           String            @db.VarChar(1000)
+  /// pending → dismissed | work_removed | card_hidden
+  status         String            @default("pending") @db.VarChar(15)
+  staffNote      String?           @map("staff_note") @db.VarChar(500)
+  decidedByStaffId String?         @map("decided_by_staff_id") @db.Uuid
+  decidedAt      DateTime?         @map("decided_at") @db.Timestamptz(3)
+  createdAt      DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  profile        SpecialistProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  reporter       User              @relation(fields: [reporterUserId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt], map: "specialist_profile_reports_status_idx")
+  @@index([reporterUserId, status], map: "specialist_profile_reports_reporter_idx")
+  @@map("specialist_profile_reports")
 }
 
 /// A photo for a portfolio work: scanned, re-encoded to WebP without metadata. Shown only through a work that uses it.

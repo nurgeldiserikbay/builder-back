@@ -1,4 +1,5 @@
 import { tr } from '../i18n/i18n.js';
+import { assertBrowserGate } from '../quality/browser-gate.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { WorktimeService } from './worktime.service.js';
 import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, weekdayShort, type Schedule } from './schedule.js';
@@ -511,6 +512,7 @@ export class JourneyService {
       // Builds made before the release gate have no quality report: they are built again rather than let through unchecked.
       if (!site.quality) throw new ConflictException('BUILD_NOT_QUALITY_CHECKED');
       if (site.quality.status === 'failed') throw new UnprocessableEntityException('QUALITY_GATE_FAILED');
+      await assertBrowserGate(this.prisma, version.id, site.quality.browserRule);
       const sources = await this.core.renderSources(ctx, true);
       if (stableStringify(sources.versionIds) !== stableStringify(site.sourceVersionIds)) throw new ConflictException('BUILD_OUTDATED');
     } else {

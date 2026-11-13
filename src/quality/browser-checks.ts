@@ -5,6 +5,8 @@ import { tr } from '../i18n/i18n.js';
 import type { SiteArtifact } from '../journey/artifacts.js';
 import { isUuid, JourneyCore } from '../journey/journey-core.js';
 import { BrowserCheckError, imageIds, runBrowserCheck, type BrowserCheckResult } from './browser-check.js';
+import { evaluateBrowserGate } from './browser-gate.js';
+import type { BrowserRule } from '../admin/quality-profiles.service.js';
 
 const STALE_MS = 15 * 60_000;
 const MAX_ATTEMPTS = 3;
@@ -88,7 +90,7 @@ const errorLabels: Record<string, string> = {
 };
 const categoryLabels: Record<string, string> = { performance: 'Скорость', accessibility: 'Доступность', 'best-practices': 'Надёжность', seo: 'Поисковики' };
 
-/** Browser check of a build for the «Сборка» stage: status, scores and what to look at. Advisory, never blocks publishing. */
+/** Browser check of a build for the «Сборка» stage: status, scores and what to look at. Advisory unless the build's quality profile sets thresholds. */
 @Injectable()
 export class BrowserChecksService implements OnApplicationBootstrap, OnModuleDestroy {
   private timer: NodeJS.Timeout | null = null;
@@ -107,9 +109,11 @@ export class BrowserChecksService implements OnApplicationBootstrap, OnModuleDes
     if (this.timer) clearInterval(this.timer);
   }
 
-  private view(check: { id: string; versionId: string; status: string; result: unknown; errorCode: string | null; createdAt: Date; finishedAt: Date | null; runs: number } | null, canRerun: boolean) {
+  private view(check: { id: string; versionId: string; status: string; result: unknown; errorCode: string | null; createdAt: Date; finishedAt: Date | null; runs: number } | null, canRerun: boolean, rule: BrowserRule | null = null) {
+    // Thresholds from the build's quality profile, if it has any: then the check decides whether the build can go live.
+    const gate = rule?.required ? { ...evaluateBrowserGate(rule, check), rule } : null;
     // A build made before checks existed can be checked on request.
-    if (!check) return { check: null, canRerun };
+    if (!check) return { check: null, canRerun, gate };
     const result = check.result as BrowserCheckResult | null;
     return {
       check: {
@@ -117,29 +121,38 @@ export class BrowserChecksService implements OnApplicationBootstrap, OnModuleDes
         error: check.errorCode ? tr(errorLabels[check.errorCode] ?? 'Проверка не получилась.') : null,
         result: result ? {
           ...result,
-          pages: result.pages.map((page) => ({ ...page, error: page.error ? tr(errorLabels[page.error] ?? 'Страницу не удалось проверить.') : null, issues: page.issues.map((issue) => ({ ...issue, categoryLabel: tr(categoryLabels[issue.category] ?? issue.category) })) })),
+          pages: result.pages.map((page) => this.page(page)),
+          // Checks before 1.1.0 did not measure the laptop size: no «desktop» at all, rather than «could not measure».
+          ...(result.desktop !== undefined ? { desktop: result.desktop ? this.page(result.desktop) : null } : {}),
         } : null,
         categories: Object.entries(categoryLabels).map(([key, label]) => ({ key, label: tr(label) })),
-        note: tr('Измерено в лаборатории: Lighthouse в браузере Chromium на копии сайта без интернета, как на телефоне среднего уровня с медленной сетью. У настоящих посетителей цифры другие. Проверка подсказывает, а не запрещает публикацию.'),
+        note: gate
+          ? tr('Измерено в лаборатории: Lighthouse в браузере Chromium на копии сайта без интернета, как на телефоне среднего уровня с медленной сетью. У настоящих посетителей цифры другие. По правилам проекта сайт публикуется, только если все страницы на телефоне укладываются в пороги; замер на компьютере — подсказка.')
+          : tr('Измерено в лаборатории: Lighthouse в браузере Chromium на копии сайта без интернета, как на телефоне среднего уровня с медленной сетью. У настоящих посетителей цифры другие. Проверка подсказывает, а не запрещает публикацию.'),
       },
+      gate,
       canRerun: canRerun && check.runs < BROWSER_CHECK_RUNS_PER_VERSION && !['queued', 'running'].includes(check.status),
     };
+  }
+
+  private page(page: BrowserCheckResult['pages'][number]) {
+    return { ...page, error: page.error ? tr(errorLabels[page.error] ?? 'Страницу не удалось проверить.') : null, issues: page.issues.map((issue) => ({ ...issue, categoryLabel: tr(categoryLabels[issue.category] ?? issue.category) })) };
   }
 
   private async target(userId: string, projectId: string, versionId: string | null, access: 'read' | 'write') {
     const ctx = await this.core.load(userId, projectId, access, 'build');
     const stage = this.core.stageOf(ctx, 'build');
     const id = versionId ?? stage.currentVersionId;
-    if (!id || !isUuid(id)) return { ctx, id: null };
-    const version = await this.prisma.stageArtifactVersion.findFirst({ where: { id, stageId: stage.id }, select: { id: true } });
+    if (!id || !isUuid(id)) return { ctx, id: null, rule: null };
+    const version = await this.prisma.stageArtifactVersion.findFirst({ where: { id, stageId: stage.id }, select: { id: true, content: true } });
     if (!version) throw new NotFoundException('VERSION_NOT_FOUND');
-    return { ctx, id };
+    return { ctx, id, rule: (version.content as unknown as SiteArtifact | null)?.quality?.browserRule ?? null };
   }
 
   async get(userId: string, projectId: string, versionId: string | null) {
-    const { ctx, id } = await this.target(userId, projectId, versionId, 'read');
+    const { ctx, id, rule } = await this.target(userId, projectId, versionId, 'read');
     const check = id ? await this.prisma.browserCheck.findUnique({ where: { versionId: id } }) : null;
-    return { data: this.view(check, Boolean(id) && this.core.canWrite(ctx, 'build')) };
+    return { data: this.view(check, Boolean(id) && this.core.canWrite(ctx, 'build'), rule ?? null) };
   }
 
   /** Check the build again (or for the first time, for builds made before checks existed). */

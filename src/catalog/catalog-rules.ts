@@ -83,6 +83,52 @@ export function checkModeration(decision: unknown, note: unknown): { ok: true; d
   return { ok: true, decision, note: value };
 }
 
+export const PROFILE_REPORT_REASONS = ['not_theirs', 'unsafe_link', 'offensive', 'fake', 'other'] as const;
+export type ProfileReportReason = (typeof PROFILE_REPORT_REASONS)[number];
+
+/** A complaint about a card or one of its works: a reason from the list and an explanation support can act on. */
+export function checkProfileReport(raw: { target?: unknown; workIndex?: unknown; reason?: unknown; text?: unknown }, works: number):
+  { ok: true; target: 'card' | 'work'; workIndex: number | null; reason: ProfileReportReason; text: string } | { ok: false; code: string } {
+  if (raw.target !== 'card' && raw.target !== 'work') return { ok: false, code: 'PROFILE_REPORT_TARGET_INVALID' };
+  let workIndex: number | null = null;
+  if (raw.target === 'work') {
+    if (typeof raw.workIndex !== 'number' || !Number.isInteger(raw.workIndex) || raw.workIndex < 0 || raw.workIndex >= works) return { ok: false, code: 'PROFILE_REPORT_WORK_INVALID' };
+    workIndex = raw.workIndex;
+  }
+  if (!(PROFILE_REPORT_REASONS as readonly unknown[]).includes(raw.reason)) return { ok: false, code: 'PROFILE_REPORT_REASON_INVALID' };
+  const text = typeof raw.text === 'string' ? raw.text.replace(/\s+/g, ' ').trim() : '';
+  if (text.length < 10 || text.length > 1000) return { ok: false, code: 'PROFILE_REPORT_TEXT_INVALID' };
+  return { ok: true, target: raw.target, workIndex, reason: raw.reason as ProfileReportReason, text };
+}
+
+export type ProfileReportDecision = 'dismiss' | 'remove_work' | 'hide_card';
+export function checkProfileDecision(decision: unknown, note: unknown, target: string): { ok: true; decision: ProfileReportDecision; note: string } | { ok: false; code: string } {
+  if (decision !== 'dismiss' && decision !== 'remove_work' && decision !== 'hide_card') return { ok: false, code: 'MODERATION_DECISION_INVALID' };
+  if (decision === 'remove_work' && target !== 'work') return { ok: false, code: 'MODERATION_DECISION_INVALID' };
+  const value = typeof note === 'string' ? note.replace(/\s+/g, ' ').trim() : '';
+  if (value.length < 5 || value.length > 500) return { ok: false, code: 'MODERATION_NOTE_REQUIRED' };
+  return { ok: true, decision, note: value };
+}
+
+/**
+ * Catalog search: every word of the query must appear somewhere on the card — name, headline, about, city, stage
+ * titles or a work's title and description. Case and ё/е do not matter.
+ */
+export function normalizeSearch(value: string): string {
+  return value.toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+export function searchWords(query: unknown): { ok: true; words: string[] } | { ok: false; code: string } {
+  const value = typeof query === 'string' ? normalizeSearch(query) : '';
+  if (!value) return { ok: true, words: [] };
+  if (value.length > 80) return { ok: false, code: 'CATALOG_QUERY_TOO_LONG' };
+  return { ok: true, words: [...new Set(value.split(' '))].slice(0, 8) };
+}
+export function matchesSearch(haystack: string, words: string[]): boolean {
+  if (!words.length) return true;
+  const text = ` ${normalizeSearch(haystack)} `;
+  return words.every((word) => text.includes(word));
+}
+
 export const MAX_PORTFOLIO = 12;
 export interface PortfolioItem { title: string; description: string | null; url: string | null; stageKey: string | null; photoId?: string | null }
 
