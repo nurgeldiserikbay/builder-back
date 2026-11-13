@@ -82,3 +82,29 @@ describe('portfolio', () => {
     assert.deepEqual(checkPortfolio([{ title: 'Сайт', price: 1 }]), { ok: false, code: 'PORTFOLIO_INVALID:0' });
   });
 });
+
+describe('catalog search and complaints', () => {
+  it('matches every word anywhere on the card, ignoring case and ё', async () => {
+    const { matchesSearch, searchWords } = await import('./catalog-rules.js');
+    const words = (q: string) => (searchWords(q) as { words: string[] }).words;
+    assert.deepEqual(words('  Тексты, для  КАФЕ! '), ['тексты', 'для', 'кафе']);
+    assert.deepEqual(words(''), []);
+    assert.deepEqual(searchWords('а'.repeat(81)), { ok: false, code: 'CATALOG_QUERY_TOO_LONG' });
+    assert.ok(matchesSearch('Айгерим. Тексты для сайтов услуг. Алматы', words('тексты алматы')));
+    assert.ok(matchesSearch('Ёлочные игрушки', words('елочные')));
+    assert.ok(!matchesSearch('Тексты для сайтов', words('тексты дизайн')));
+    assert.ok(matchesSearch('что угодно', []));
+  });
+
+  it('checks a complaint: target, work, reason and an explanation', async () => {
+    const { checkProfileReport, checkProfileDecision } = await import('./catalog-rules.js');
+    assert.deepEqual(checkProfileReport({ target: 'work', workIndex: 1, reason: 'not_theirs', text: '  Это наш сайт,   мы его делали сами ' }, 2), { ok: true, target: 'work', workIndex: 1, reason: 'not_theirs', text: 'Это наш сайт, мы его делали сами' });
+    assert.deepEqual(checkProfileReport({ target: 'work', workIndex: 2, reason: 'fake', text: 'Работы нет на сайте' }, 2), { ok: false, code: 'PROFILE_REPORT_WORK_INVALID' });
+    assert.deepEqual(checkProfileReport({ target: 'card', reason: 'spam', text: 'Работы нет на сайте' }, 0), { ok: false, code: 'PROFILE_REPORT_REASON_INVALID' });
+    assert.deepEqual(checkProfileReport({ target: 'card', reason: 'other', text: 'плохо' }, 0), { ok: false, code: 'PROFILE_REPORT_TEXT_INVALID' });
+    assert.deepEqual(checkProfileReport({ target: 'card', workIndex: 0, reason: 'offensive', text: 'Оскорбления в тексте' }, 1), { ok: true, target: 'card', workIndex: null, reason: 'offensive', text: 'Оскорбления в тексте' });
+    assert.deepEqual(checkProfileDecision('remove_work', 'Чужая работа', 'card'), { ok: false, code: 'MODERATION_DECISION_INVALID' });
+    assert.deepEqual(checkProfileDecision('hide_card', 'ok', 'card'), { ok: false, code: 'MODERATION_NOTE_REQUIRED' });
+    assert.equal((checkProfileDecision('dismiss', 'Ссылка рабочая', 'work') as { decision: string }).decision, 'dismiss');
+  });
+});

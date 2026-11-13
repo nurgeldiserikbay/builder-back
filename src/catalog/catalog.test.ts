@@ -152,4 +152,55 @@ describe('specialist catalog and reviews (database)', async () => {
     await catalog!.saveMine(author.id, { ...base, published: true }, [{ title: 'Кафе' }]);
     assert.equal(await prisma!.specialistPhoto.count({ where: { userId: author.id } }), 0);
   });
+  it('search, complaints about a card or a work, and support decisions', { skip }, async () => {
+    const specialist = await user('report-specialist');
+    const reporter = await user('report-owner');
+    const tag = randomUUID().slice(0, 8);
+    const base = { displayName: `Марат ${tag}`, headline: 'Дизайн для кофеен и пекарен', about: 'Работаю в Ёлке', stageKeys: ['design'], hourlyRate: null, city: 'Шымкент', published: true };
+    const works = [{ title: 'Кофейня «Зерно»', url: 'https://zerno.kz/' }, { title: 'Пекарня на углу', url: null }];
+    await catalog!.saveMine(specialist.id, base, works);
+    const profileId = (await catalog!.mine(specialist.id)).data.profile!.id;
+    const found = async (q: string) => (await catalog!.list(null, q)).data.specialists.some((card) => card.id === profileId);
+    assert.ok(await found(`${tag} пекарня`)); // a word from a work title
+    assert.ok(await found(`${tag} елке шымкент`)); // about and city, ё = е
+    assert.ok(!(await found(`${tag} лендинг`)));
+    await assert.rejects(catalog!.list(null, 'x'.repeat(81)), /CATALOG_QUERY_TOO_LONG/);
+
+    await assert.rejects(catalog!.reportProfile(specialist.id, profileId, { target: 'card', reason: 'other', text: 'Жалоба на себя' }), /PROFILE_REPORT_OWN/);
+    await catalog!.reportProfile(reporter.id, profileId, { target: 'work', workIndex: 0, reason: 'not_theirs', text: 'Кофейню «Зерно» делала наша студия' });
+    await assert.rejects(catalog!.reportProfile(reporter.id, profileId, { target: 'card', reason: 'fake', text: 'И ещё одна жалоба' }), /PROFILE_REPORT_PENDING/);
+    const card = (await catalog!.get(profileId, reporter.id)).data as { canReport?: boolean; reportPending?: boolean; blocked?: unknown };
+    assert.equal(card.reportPending, true);
+    assert.equal(card.blocked, undefined); // a stranger never sees moderation state
+
+    const email = `staff-${randomUUID()}@test.local`;
+    const staffId = (await prisma!.staffAccount.create({ data: { email, emailNormalized: email, passwordHash: 'x', displayName: 'Support', role: 'super_admin' } })).id;
+    try {
+      const pending = (await catalog!.staffProfileReports('pending')).data.find((row) => row.profile.id === profileId)!;
+      assert.deepEqual(pending.work, { title: 'Кофейня «Зерно»', url: 'https://zerno.kz/', stillShown: true });
+      assert.ok(!JSON.stringify(pending).includes(reporter.email)); // staff decide on the content, not on who complained
+      await assert.rejects(catalog!.staffDecideProfileReport(staffId, pending.id, 'remove_work', 'ok'), /MODERATION_NOTE_REQUIRED/);
+      await catalog!.staffDecideProfileReport(staffId, pending.id, 'remove_work', 'Студия подтвердила авторство');
+      await assert.rejects(catalog!.staffDecideProfileReport(staffId, pending.id, 'dismiss', 'Повторное решение'), /REPORT_ALREADY_DECIDED/);
+      assert.deepEqual(((await catalog!.mine(specialist.id)).data.profile!.portfolio as unknown as Array<{ title: string }>).map((item) => item.title), ['Пекарня на углу']);
+
+      // The whole card: hidden, cannot be published again until support restores it.
+      await catalog!.reportProfile(reporter.id, profileId, { target: 'card', reason: 'offensive', text: 'Грубые слова в описании' });
+      const second = (await catalog!.staffProfileReports('pending')).data.find((row) => row.profile.id === profileId)!;
+      await catalog!.staffDecideProfileReport(staffId, second.id, 'hide_card', 'Оскорбительный текст');
+      assert.ok(!(await found(tag)));
+      await assert.rejects(catalog!.get(profileId, reporter.id), /PROFILE_NOT_FOUND/);
+      assert.equal(((await catalog!.get(profileId, specialist.id)).data as { blocked?: { reason: string } | null }).blocked?.reason, 'Оскорбительный текст');
+      await assert.rejects(catalog!.saveMine(specialist.id, { ...base, about: null }), /PROFILE_BLOCKED/);
+      await catalog!.saveMine(specialist.id, { ...base, about: null, published: false }); // can still edit privately
+      await catalog!.staffUnblockProfile(staffId, profileId, 'Текст исправлен');
+      await assert.rejects(catalog!.staffUnblockProfile(staffId, profileId, 'Ещё раз'), /PROFILE_NOT_BLOCKED/);
+      await catalog!.saveMine(specialist.id, { ...base, about: null });
+      assert.ok(await found(tag));
+      assert.equal(await prisma!.adminAuditEvent.count({ where: { staffId } }), 3);
+    } finally {
+      await prisma!.adminAuditEvent.deleteMany({ where: { staffId } });
+      await prisma!.staffAccount.deleteMany({ where: { id: staffId } });
+    }
+  });
 });

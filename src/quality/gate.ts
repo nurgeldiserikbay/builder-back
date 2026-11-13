@@ -3,7 +3,7 @@
  * in the console). A required category fails when it has more open critical or high findings than the profile allows, or
  * when a finding has a blocking severity. Not measured items never pass or fail — they are shown as «not measured».
  */
-import type { QualityPolicy } from '../admin/quality-profiles.service.js';
+import type { BrowserRule, QualityPolicy } from '../admin/quality-profiles.service.js';
 import { tr } from '../i18n/i18n.js';
 import type { Category, Finding, Unmeasured } from './site-audit.js';
 
@@ -20,6 +20,8 @@ export type QualityReport = {
   unmeasured: Unmeasured[];
   pages: Array<{ path: string; htmlKb: number; imagesKb: number }>;
   summary: string;
+  /** Browser thresholds the build must also meet before it is accepted or published (null: browser check is advice only). */
+  browserRule?: BrowserRule | null;
 };
 
 export function evaluateGate(input: { findings: Finding[]; unmeasured: Unmeasured[]; pages: QualityReport['pages']; auditVersion: string }, policy: QualityPolicy, profile: QualityReport['profile']): QualityReport {
@@ -42,5 +44,5 @@ export function evaluateGate(input: { findings: Finding[]; unmeasured: Unmeasure
   const summary = status === 'failed'
     ? tr('Сайт не готов к публикации: {0} обязательных замечаний. Исправьте их и соберите сайт заново.', [Math.max(blocking, 1)])
     : findings.length ? tr('Готов к публикации. Есть {0} необязательных замечаний — их можно исправить позже.', [findings.length]) : tr('Готов к публикации: автоматические проверки замечаний не нашли.');
-  return { auditVersion: input.auditVersion, profile, status, categories, findings, unmeasured: input.unmeasured, pages: input.pages, summary };
+  return { auditVersion: input.auditVersion, profile, status, categories, findings, unmeasured: input.unmeasured, pages: input.pages, summary, browserRule: policy.browser?.required ? policy.browser : null };
 }

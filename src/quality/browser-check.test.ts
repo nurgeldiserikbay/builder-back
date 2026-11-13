@@ -65,5 +65,10 @@ describe('browser check', () => {
     assert.match(result.tool.lighthouse, /^\d+\.\d+\.\d+$/);
     // The outside image was not loaded: the browser logs a network error.
     assert.ok(home.issues.some((issue) => issue.id === 'errors-in-console'));
+    // The home page is measured once more at a laptop size.
+    assert.equal(result.version, '1.1.0');
+    assert.equal(result.desktop?.path, '/');
+    assert.equal(result.desktop?.error, null);
+    assert.ok(typeof result.desktop?.scores.performance === 'number');
   });
 });

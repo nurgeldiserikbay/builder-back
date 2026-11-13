@@ -126,14 +126,14 @@ describe('site monitoring (database)', async () => {
       let next = result('passed');
       monitoring.inspect = async () => next;
       const t0 = new Date('2026-11-20T03:00:00Z');
-      const only = async (at: Date) => { await monitoring.dailyLiveChecks(at, 500); return prisma!.sitePublication.findUniqueOrThrow({ where: { id: site.id } }); };
+      const only = async (at: Date) => { await monitoring.dailyLiveChecks(at, 500, [site.id]); return prisma!.sitePublication.findUniqueOrThrow({ where: { id: site.id } }); };
       assert.ok((await only(t0)).liveCheckedAt);
       next = result('failed');
       await only(new Date(t0.getTime() + 3600_000)); // not due yet: still yesterday's result
       assert.equal(((await prisma!.sitePublication.findUniqueOrThrow({ where: { id: site.id } })).liveCheck as LiveCheck).items[1]!.status, 'passed');
-      const day = await monitoring.dailyLiveChecks(new Date(t0.getTime() + 25 * 3600_000), 500);
-      assert.ok(day.alerts >= 1);
-      await monitoring.dailyLiveChecks(new Date(t0.getTime() + 50 * 3600_000), 500); // still failing: no second message
+      const day = await monitoring.dailyLiveChecks(new Date(t0.getTime() + 25 * 3600_000), 500, [site.id]);
+      assert.deepEqual(day, { checked: 1, alerts: 1 });
+      await monitoring.dailyLiveChecks(new Date(t0.getTime() + 50 * 3600_000), 500, [site.id]); // still failing: no second message
       await new Promise((resolve) => setTimeout(resolve, 200));
       const mine = await prisma!.projectEvent.count({ where: { projectId: project.id } });
       assert.equal(mine, 0);

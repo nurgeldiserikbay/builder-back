@@ -27,8 +27,14 @@ export class CatalogController {
 
   @Get('specialists')
   @Header('Cache-Control', 'no-store')
-  list(@Query('stage') stage?: string) {
-    return this.catalog.list(stage?.trim() ? stage.trim() : null);
+  list(@Query('stage') stage?: string, @Query('q') query?: string) {
+    return this.catalog.list(stage?.trim() ? stage.trim() : null, query ?? null);
+  }
+
+  @Post('specialists/:profileId/report')
+  @HttpCode(200)
+  reportProfile(@Req() request: AuthenticatedRequest, @Param('profileId') profileId: string, @Body() raw: unknown) {
+    return this.catalog.reportProfile(request.user.id, profileId, body(raw, ['target', 'workIndex', 'reason', 'text']));
   }
 
   @Get('specialists/:profileId')
@@ -114,5 +120,34 @@ export class AdminReviewsController {
   decide(@Param('reviewId') reviewId: string, @Body() raw: unknown, @Req() request: StaffRequest) {
     const input = body(raw, ['decision', 'note']);
     return this.catalog.staffDecide(request.staff.id, reviewId, input.decision, input.note);
+  }
+}
+
+/** Complaints about catalog cards: super admins decide, operations auditors read. */
+@Controller('admin')
+@UseGuards(StaffAuthGuard, StaffRolesGuard)
+export class AdminSpecialistReportsController {
+  constructor(private readonly catalog: CatalogService) {}
+
+  @Get('specialist-reports')
+  @Header('Cache-Control', 'no-store')
+  @StaffRoles('super_admin', 'operations_auditor')
+  list(@Query('status') status?: string) {
+    return this.catalog.staffProfileReports(status === 'decided' ? 'decided' : 'pending');
+  }
+
+  @Post('specialist-reports/:reportId/decide')
+  @HttpCode(200)
+  @StaffRoles('super_admin')
+  decide(@Param('reportId') reportId: string, @Body() raw: unknown, @Req() request: StaffRequest) {
+    const input = body(raw, ['decision', 'note']);
+    return this.catalog.staffDecideProfileReport(request.staff.id, reportId, input.decision, input.note);
+  }
+
+  @Post('specialist-profiles/:profileId/unblock')
+  @HttpCode(200)
+  @StaffRoles('super_admin')
+  unblock(@Param('profileId') profileId: string, @Body() raw: unknown, @Req() request: StaffRequest) {
+    return this.catalog.staffUnblockProfile(request.staff.id, profileId, body(raw, ['note']).note);
   }
 }

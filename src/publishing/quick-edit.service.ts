@@ -169,6 +169,12 @@ export class QuickEditService {
       await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'quick_edit_checks_failed', stageKey: 'build', details: { source, checks: failed } } });
       throw new UnprocessableEntityException('QUICK_EDIT_CHECKS_FAILED');
     }
+    if (built.data.quality.browserRule?.required) {
+      // The project's rules also need the browser check, which takes a while: the new build waits on the «Сборка» stage
+      // and the live site keeps the old version until the owner accepts and publishes it there.
+      await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'quick_edit_waits_for_browser_check', stageKey: 'build', details: { source, versionId: built.data.versionId } } });
+      throw new ConflictException('QUICK_EDIT_WAITS_FOR_BROWSER_CHECK');
+    }
     await this.journey.accept(userId, projectId, 'build', built.data.versionId);
     await this.publishing.publish(userId, projectId, { slug, confirm: true });
     return { buildVersion: built.data.versionNumber };
