@@ -1,6 +1,6 @@
 // Untrusted photo -> safe WebP: signature check, pixel limit, auto-rotate, resize, re-encode without metadata (EXIF/GPS).
 import { createHash } from 'node:crypto';
-import sharp from 'sharp';
+import sharp, { type OutputInfo } from 'sharp';
 
 export const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 export const MAX_OUTPUT_BYTES = 2_000_000;
@@ -22,7 +22,7 @@ export async function processImage(bytes: Buffer): Promise<{ data: Buffer; width
   if (bytes.length > MAX_UPLOAD_BYTES) throw new ImageRejectedError('IMAGE_TOO_LARGE');
   if (!detectImageType(bytes)) throw new ImageRejectedError('IMAGE_TYPE_NOT_SUPPORTED');
   for (const quality of [80, 65, 50]) {
-    let result: { data: Buffer; info: sharp.OutputInfo };
+    let result: { data: Buffer; info: OutputInfo };
     try {
       result = await sharp(bytes, { limitInputPixels: 50_000_000, failOn: 'error', animated: false })
         .rotate()
