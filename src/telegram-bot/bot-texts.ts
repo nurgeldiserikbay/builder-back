@@ -70,7 +70,15 @@ export function artifactSummary(type: string, content: unknown): string {
     const design = content as DesignArtifact;
     return tr("Цвета: {0}, шрифт: {1}", [tr(palettes.find((item) => item.id === design.palette)?.label ?? design.palette), tr(fonts.find((item) => item.id === design.font)?.label ?? design.font)]);
   }
-  if (type === 'site') {
+  if (type === 'features') {
+    const value = content as { roles?: Array<{ name: string }>; features?: Array<{ title: string; priority: string }> };
+    return [tr("Роли: {0}", [(value.roles ?? []).map((role) => role.name).join(', ')]), tr("Обязательные функции: {0}", [(value.features ?? []).filter((feature) => feature.priority === 'must').map((feature) => feature.title).join(' · ')])].join('\n');
+  }
+  if (type === 'screens') {
+    const value = content as { screens?: Array<{ title: string }> };
+    return tr("Экраны: {0}", [(value.screens ?? []).map((screen) => screen.title).join(' · ')]);
+  }
+  if (type === 'site' || type === 'handoff') {
     const site = content as { checks?: Array<{ status: string; required: boolean; title: string }> };
     const failed = site.checks?.filter((check) => check.status === 'failed') ?? [];
     return failed.length ? tr("Не пройдено проверок: {0} ({1})", [failed.length, failed.map((check) => check.title).join(', ')]) : tr("Все обязательные проверки пройдены.");

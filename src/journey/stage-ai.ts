@@ -3,6 +3,7 @@ import type { ArtifactType, StageDefinition } from './catalog.js';
 import { sectionTypes } from './artifacts.js';
 import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
 import { ACTOR_KINDS, CAPABILITIES } from './process.js';
+import { BLOCK_KINDS, PRIORITIES, SENSITIVITY } from './webapp.js';
 
 export interface StageAiRequest { system: string; user: string; schemaName: string; schema: Record<string, unknown> }
 export interface StageAiUsage { inputTokens: number | null; outputTokens: number | null }
@@ -95,6 +96,32 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
           data: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'name', 'fields', 'links'], properties: {
             key: { type: 'string' }, name: { type: 'string' }, fields: strings,
             links: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['to', 'kind', 'label'], properties: { to: { type: 'string' }, kind: { type: 'string', enum: ['one', 'many'] }, label: { type: 'string' } } } },
+          } } },
+        },
+      };
+    }
+    case 'features': {
+      const strings = { type: 'array', items: { type: 'string' } };
+      return {
+        type: 'object', additionalProperties: false, required: ['roles', 'features', 'sensitivity', 'integrations'],
+        properties: {
+          roles: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'name', 'description'], properties: { key: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' } } } },
+          features: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'title', 'description', 'roles', 'priority', 'acceptance'], properties: {
+            key: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, roles: strings, priority: { type: 'string', enum: [...PRIORITIES] }, acceptance: strings,
+          } } },
+          sensitivity: { type: 'string', enum: [...SENSITIVITY] },
+          integrations: strings,
+        },
+      };
+    }
+    case 'screens': {
+      const strings = { type: 'array', items: { type: 'string' } };
+      return {
+        type: 'object', additionalProperties: false, required: ['screens'],
+        properties: {
+          screens: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'title', 'role', 'purpose', 'features', 'blocks', 'links'], properties: {
+            key: { type: 'string' }, title: { type: 'string' }, role: { type: 'string' }, purpose: { type: 'string' }, features: strings, links: strings,
+            blocks: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['kind', 'title', 'fields'], properties: { kind: { type: 'string', enum: [...BLOCK_KINDS] }, title: { type: 'string' }, fields: strings } } },
           } } },
         },
       };

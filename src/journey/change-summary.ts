@@ -2,6 +2,7 @@
 import { processChanges, type BusinessProcess } from './process.js';
 import { sitemapChanges, type Sitemap } from './sitemap.js';
 import { catalogChanges, type Catalog } from './products.js';
+import { featuresChanges, screensChanges, type AppFeatures, type AppScreens } from './webapp.js';
 import { tr } from '../i18n/i18n.js';
 import { stageDefinitions, type StageKey } from './catalog.js';
 
@@ -100,6 +101,8 @@ export function describeChanges(key: StageKey, beforeRaw: unknown, afterRaw: unk
           : type === 'process' ? processChanges(beforeRaw as BusinessProcess, afterRaw as BusinessProcess)
           : type === 'sitemap' ? sitemapChanges(beforeRaw as Sitemap, afterRaw as Sitemap)
           : type === 'catalog' ? catalogChanges(beforeRaw as Catalog, afterRaw as Catalog)
+          : type === 'features' ? featuresChanges(beforeRaw as AppFeatures, afterRaw as AppFeatures)
+          : type === 'screens' ? screensChanges(beforeRaw as AppScreens, afterRaw as AppScreens)
           : type === 'techplan' ? [
             ...(JSON.stringify({ ...before, ownerNotes: null }) !== JSON.stringify({ ...after, ownerNotes: null }) ? ['План обновлён по новым данным'] : []),
             ...(before.ownerNotes !== after.ownerNotes ? ['Изменены заметки владельца'] : []),

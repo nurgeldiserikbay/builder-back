@@ -1,3 +1,4 @@
+import { buildAppPlan, type AppFeatures, type AppScreens } from './webapp.js';
 // Shared ground of the stage workflow: loading a project with the viewer's access, stage and version helpers,
 // events, notifications and the AI provider with its per-project hold. Used by JourneyService, StageAiService and
 // ChangeNoticesService.
@@ -177,7 +178,9 @@ export class JourneyCore {
   }
 
   /** Accepted inputs a completeness check needs: texts of a multi-page site are checked against the accepted map. */
-  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null }> {
+  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null }> {
+    // Screens are checked against the accepted functions: every role has screens, every must function is shown.
+    if (key === 'screens') return { sitemap: null, features: ((await this.acceptedInputs(ctx, key)).features?.content as AppFeatures | undefined) ?? null };
     if (key !== 'content' || !ctx.route.includes('sitemap')) return { sitemap: null };
     return { sitemap: ((await this.acceptedInputs(ctx, key)).sitemap?.content as Sitemap | undefined) ?? null };
   }
@@ -241,6 +244,12 @@ export class JourneyCore {
     const schedule = inputs.schedule?.content as Schedule | undefined;
     if (ctx.route.includes('schedule') && !schedule) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     // Built in the project's language, so every viewer gets the same plan whatever their interface language.
+    if (ctx.type.key === 'web_app') {
+      return inProject(ctx, () => buildAppPlan({
+        brief: (inputs.goal?.content as Brief | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
+        features: (inputs.features?.content as AppFeatures | undefined) ?? null, screens: (inputs.screens?.content as AppScreens | undefined) ?? null,
+      }, notes));
+    }
     return inProject(ctx, () => buildTechPlan({
       projectType: ctx.type.key, brief: (inputs.goal?.content as Brief | undefined) ?? null, schedule: schedule ?? null,
       process: (inputs.process?.content as BusinessProcess | undefined) ?? null, sitemap: (inputs.sitemap?.content as Sitemap | undefined) ?? null,
