@@ -94,6 +94,13 @@ export class BillingService {
     if (!plan.specialists) throw new PlanLimitException('PLAN_NO_SPECIALISTS');
   }
 
+  /** A new owner's plan must hold the project: a project slot, a live-site slot if it is published, a team if it has one. */
+  async assertCanReceiveProject(userId: string, project: { counts: boolean; live: boolean; team: boolean }) {
+    if (project.counts) await this.ensure(userId, 'projects', 'PLAN_LIMIT_PROJECTS');
+    if (project.live) await this.ensure(userId, 'liveSites', 'PLAN_LIMIT_SITES');
+    if (project.team && !(await this.planFor(userId)).plan.specialists) throw new PlanLimitException('PLAN_NO_TEAM');
+  }
+
   /** A team (members beyond the owner) is part of the same paid plans as specialists. */
   async assertCanInviteTeam(projectId: string) {
     const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { ownerUserId: true } });
