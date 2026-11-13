@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { decryptToken, tokenKey } from '../security/token-crypto.js';
 import { analyzeArchive } from './code-analysis.js';
+import { analyzeDocument, docxParagraphs, DocumentError, pdfParagraphs, textParagraphs } from './document-analysis.js';
 import { ArchiveFetchError, fetchGithubArchive, fetchGitlabArchive } from './repo-archive.js';
 import { ZipError } from './zip-reader.js';
 import { GitProviderError, parseRepoUrl } from '../choices/git-providers.js';
@@ -68,12 +69,16 @@ export class AnalysisRunner {
     return true;
   }
 
-  private async source(run: { projectId: string; sourceKind: string; sourceFileId: string | null; sourceLabel: string; sourceRef: string | null }): Promise<Buffer> {
+  private async source(run: { projectId: string; sourceKind: string; sourceFileId: string | null; sourceLabel: string; sourceRef: string | null }): Promise<{ bytes: Buffer; kind: string }> {
     if (run.sourceKind === 'stage_file') {
-      const file = run.sourceFileId ? await this.prisma.stageFile.findFirst({ where: { id: run.sourceFileId, projectId: run.projectId, kind: 'zip' }, select: { data: true } }) : null;
+      const file = run.sourceFileId ? await this.prisma.stageFile.findFirst({ where: { id: run.sourceFileId, projectId: run.projectId }, select: { data: true, kind: true } }) : null;
       if (!file) throw new ArchiveFetchError('SOURCE_FILE_GONE');
-      return Buffer.from(file.data);
+      return { bytes: Buffer.from(file.data), kind: file.kind };
     }
+    return { bytes: await this.repositoryArchive(run), kind: 'zip' };
+  }
+
+  private async repositoryArchive(run: { projectId: string; sourceKind: string; sourceLabel: string; sourceRef: string | null }): Promise<Buffer> {
     if (run.sourceKind === 'public_repo') {
       const { baseUrl, repoPath } = parseRepoUrl('github', run.sourceLabel, allowLocalRepos());
       return fetchGithubArchive(githubApiFor(baseUrl), repoPath, run.sourceRef ?? '', null, this.fetchImpl);
@@ -93,14 +98,20 @@ export class AnalysisRunner {
     const run = await this.prisma.analysisRun.findUnique({ where: { id }, select: { id: true, projectId: true, status: true, sourceKind: true, sourceFileId: true, sourceLabel: true, sourceRef: true } });
     if (!run || run.status !== 'running') return;
     try {
-      const bytes = await this.source(run);
-      const report = analyzeArchive(bytes, { kind: run.sourceKind, label: run.sourceLabel, revision: run.sourceRef });
+      const { bytes, kind } = await this.source(run);
+      const source = { kind: run.sourceKind, label: run.sourceLabel, revision: run.sourceRef };
+      let report;
+      if (kind === 'zip') report = analyzeArchive(bytes, source);
+      else if (kind === 'pdf') { const pdf = await pdfParagraphs(bytes); report = analyzeDocument({ paragraphs: pdf.paragraphs, bytes, source, format: 'pdf', pdf }); }
+      else if (kind === 'docx') report = analyzeDocument({ paragraphs: docxParagraphs(bytes), bytes, source, format: 'docx' });
+      else if (kind === 'text') report = analyzeDocument({ paragraphs: textParagraphs(bytes.toString('utf8')), bytes, source, format: 'text' });
+      else throw new DocumentError('ANALYSIS_FILE_NOT_SUPPORTED');
       await this.prisma.analysisRun.updateMany({
         where: { id, status: 'running' },
         data: { status: report.status, report: report as never, sourceSha256: report.source.sha256, finishedAt: new Date(), errorCode: null },
       });
     } catch (error) {
-      const code = error instanceof ArchiveFetchError || error instanceof ZipError || error instanceof GitProviderError ? error.code : 'ANALYSIS_FAILED';
+      const code = error instanceof ArchiveFetchError || error instanceof ZipError || error instanceof GitProviderError || error instanceof DocumentError ? error.code : 'ANALYSIS_FAILED';
       if (code === 'ANALYSIS_FAILED') this.logger.error('Analysis run failed unexpectedly');
       await this.prisma.analysisRun.updateMany({ where: { id, status: 'running' }, data: { status: 'failed', errorCode: code, finishedAt: new Date() } });
     }

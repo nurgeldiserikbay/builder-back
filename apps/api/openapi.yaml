@@ -3470,7 +3470,7 @@ paths:
       tags: [Analysis]
       operationId: uploadAnalysisSource
       summary: Upload a ZIP straight to code analysis, without a stage (projects started as «Только анализ» have no stages)
-      description: Same checks and limits as stage files (type from bytes, malware scan before storing, 15 MB, 150 MB per project); only ZIP archives. Owner, manager or contributor of an open project.
+      description: Same checks and limits as stage files (type from bytes, malware scan before storing, 15 MB, 150 MB per project); ZIP archives, PDF, Word (.docx) and text. Owner, manager or contributor of an open project.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -3484,7 +3484,7 @@ paths:
         '201': { description: createdId }
         '403': { description: STAGE_WRITE_FORBIDDEN }
         '409': { description: 'FILE_LIMIT_REACHED, FILE_STORAGE_FULL, PROJECT_NOT_ACTIVE' }
-        '422': { description: 'FILE_TOO_LARGE, ANALYSIS_NEEDS_ZIP, FILE_REJECTED_BY_SCAN' }
+        '422': { description: 'FILE_TOO_LARGE, ANALYSIS_FILE_NOT_SUPPORTED, FILE_REJECTED_BY_SCAN' }
         '503': { description: FILE_SCAN_UNAVAILABLE }
   /projects/{projectId}/analysis-sources/{fileId}:
     delete:
@@ -3504,7 +3504,7 @@ paths:
     get:
       tags: [Analysis]
       operationId: listAnalysisRuns
-      summary: Read-only code analyses of the project and the sources available for a new one (project members)
+      summary: Read-only code and document analyses of the project and the sources available for a new one (project members)
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -3515,8 +3515,11 @@ paths:
     post:
       tags: [Analysis]
       operationId: createAnalysisRun
-      summary: Request a read-only analysis of an uploaded ZIP, the connected repository or an open GitHub repository
+      summary: Request a read-only analysis of a ZIP, PDF, Word or text file, the connected repository or an open GitHub repository
       description: |
+        A ZIP or repository gets the code profile (code-archive-1.0); PDF, Word and text get the document profile (document-1.0: usual
+        brief sections, vague wording, open questions, personal data, with paragraph numbers; PDF text via pdf.js without eval; report.type
+        is code or document).
         Nothing is executed, installed or built, and nothing is sent to an AI provider: findings come from deterministic rules over file
         names and the text of small files, each with file and line evidence. The source and the project are not changed. The run is
         asynchronous (queued → running → succeeded | partial | failed) and idempotent by idempotencyKey. The connected repository is
@@ -3542,7 +3545,7 @@ paths:
                 idempotencyKey: { type: [string, 'null'], pattern: '^[A-Za-z0-9_-]{8,80}$' }
       responses:
         '201': { description: 'The run, as GET /analysis-runs/{runId}' }
-        '400': { description: 'ANALYSIS_SOURCE_INVALID, ANALYSIS_NEEDS_ZIP, REPO_URL_INVALID, REPO_URL_NOT_GITHUB, REPO_REF_INVALID' }
+        '400': { description: 'ANALYSIS_SOURCE_INVALID, ANALYSIS_FILE_NOT_SUPPORTED, REPO_URL_INVALID, REPO_URL_NOT_GITHUB, REPO_REF_INVALID' }
         '403': { description: 'STAGE_WRITE_FORBIDDEN, ANALYSIS_REPOSITORY_FORBIDDEN' }
         '404': { description: 'FILE_NOT_FOUND, REPO_NOT_CONNECTED' }
         '409': { description: 'ANALYSIS_ALREADY_RUNNING, ANALYSIS_DAILY_LIMIT' }

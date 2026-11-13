@@ -78,6 +78,41 @@ const findingTexts: Record<string, { title: string; explanation: string; remedia
     explanation: 'По именам файлов и папок тестов не видно. Возможно, они лежат в необычном месте.',
     remediation: 'Добавьте хотя бы проверки главных сценариев.',
   },
+  DOC_NO_TEXT: {
+    title: 'В PDF нет текста',
+    explanation: 'Похоже, это скан или картинки: текст из документа не извлекается, поэтому проверить его нельзя.',
+    remediation: 'Загрузите документ в Word или PDF с текстом (экспорт из редактора, а не скан).',
+  },
+  DOC_TOO_SHORT: {
+    title: 'Документ очень короткий ({words} слов)',
+    explanation: 'По такому описанию исполнитель будет додумывать почти всё сам.',
+    remediation: 'Опишите хотя бы цель, для кого продукт, что он должен делать и как вы поймёте, что работа принята.',
+  },
+  DOC_NO_STRUCTURE: {
+    title: 'В документе нет заголовков',
+    explanation: 'Текст идёт сплошным потоком — на него трудно ссылаться и легко что-то пропустить.',
+    remediation: 'Разбейте документ на разделы с заголовками: цель, аудитория, функции, страницы, сроки, приёмка.',
+  },
+  DOC_SECTION_MISSING: {
+    title: 'Не найден раздел: {sectionLabel}',
+    explanation: 'Ни в заголовках, ни в тексте не нашлось слов, которыми обычно описывают этот раздел. Возможно, он назван иначе.',
+    remediation: 'Если раздела нет — добавьте его; если он есть под другим названием, назовите его привычнее.',
+  },
+  DOC_VAGUE_WORDING: {
+    title: 'Размытые формулировки',
+    explanation: 'Слова вроде «удобный», «современный», «быстро», «и т.д.» нельзя проверить при приёмке: каждый поймёт их по-своему.',
+    remediation: 'Замените их измеримым: «страница открывается за 2 секунды на телефоне», «заявка — за 3 шага», перечислите всё вместо «и т.д.».',
+  },
+  DOC_OPEN_QUESTIONS: {
+    title: 'Остались открытые вопросы',
+    explanation: 'В документе есть пометки «уточнить», «обсудить», «TBD» или «???» — по этим местам решения ещё нет.',
+    remediation: 'Решите вопросы до начала работ или отметьте, кто и когда их решит.',
+  },
+  DOC_PERSONAL_DATA: {
+    title: 'В документе есть контакты или личные данные',
+    explanation: 'Найдены адреса почты, телефоны или похожие на ИИН номера. Документ стоит передавать только тем, кому он нужен.',
+    remediation: 'Проверьте, нужны ли эти данные исполнителю; лишнее уберите.',
+  },
   GITIGNORE_MISSING: {
     title: 'Нет .gitignore',
     explanation: 'Без него в репозиторий легко попадают секреты, зависимости и результаты сборки.',
@@ -85,11 +120,16 @@ const findingTexts: Record<string, { title: string; explanation: string; remedia
   },
 };
 
+const sectionLabels: Record<string, string> = {
+  goal: 'Цель', audience: 'Для кого', features: 'Функции и требования', pages: 'Страницы и экраны', content: 'Тексты и материалы', design: 'Дизайн',
+  integrations: 'Интеграции и оплата', deadline: 'Сроки', budget: 'Бюджет', acceptance: 'Критерии приёмки',
+};
 const severityLabels: Record<string, string> = { high: 'Важно', medium: 'Средне', low: 'Мелочь', info: 'К сведению' };
 const categoryLabels: Record<string, string> = { security: 'Безопасность', structure: 'Структура', dependencies: 'Зависимости', docs: 'Документация', quality: 'Качество' };
 const checkLabels: Record<string, string> = {
   inventory: 'Состав файлов и языки', stack: 'Технологии', secrets: 'Секреты и ключи в коде', structure: 'Структура репозитория',
   dependencies: 'Файлы зависимостей', docs: 'README и лицензия', vulnerabilities: 'Уязвимости библиотек', build_and_tests: 'Сборка и тесты',
+  doc_text: 'Текст документа', doc_sections: 'Обычные разделы ТЗ', doc_wording: 'Размытые формулировки', doc_open_questions: 'Открытые вопросы', doc_meaning: 'Смысл и противоречия',
 };
 const checkStatusLabels: Record<string, string> = { run: 'Проверено', partial: 'Проверено частично', skipped: 'Не проверялось' };
 const unverifiedLabels: Record<string, string> = {
@@ -101,6 +141,9 @@ const unverifiedLabels: Record<string, string> = {
   encrypted: 'Зашифрованные файлы архива: их содержимое не читалось.',
   large_files: 'Большие текстовые файлы: прочитаны не все, чтобы не превысить лимит разбора.',
   long_lines: 'Очень длинные строки (сжатый код): в них не искались ключи и пароли.',
+  doc_meaning: 'Смысл документа и противоречия: проверка идёт по словам и разделам, содержание не оценивалось.',
+  doc_images: 'Рисунки, схемы и таблицы-картинки: из них текст не извлекается.',
+  doc_scanned: 'Страницы PDF без текста (сканы): их содержимое не проверялось.',
   binary_files: 'Двоичные файлы (картинки, шрифты, архивы): их содержимое не разбиралось.',
 };
 const stackLabels: Record<string, string> = {
@@ -120,7 +163,8 @@ function secretKind(key: string): string {
 
 function findingView(finding: Finding) {
   const texts = findingTexts[finding.code] ?? { title: finding.code, explanation: '', remediation: '' };
-  const params = { ...(finding.params ?? {}), ...(typeof finding.params?.kind === 'string' ? { kind: secretKind(finding.params.kind) } : {}) };
+  const params: Record<string, string | number> = { ...(finding.params ?? {}), ...(typeof finding.params?.kind === 'string' ? { kind: secretKind(finding.params.kind) } : {}) };
+  if (typeof params.section === 'string') params.sectionLabel = tr(sectionLabels[params.section] ?? params.section);
   return {
     id: finding.id, code: finding.code, category: finding.category, categoryLabel: tr(categoryLabels[finding.category] ?? finding.category),
     severity: finding.severity, severityLabel: tr(severityLabels[finding.severity]), confidence: finding.confidence,
@@ -130,6 +174,8 @@ function findingView(finding: Finding) {
 
 export function reportView(report: AnalysisReport) {
   return {
+    type: report.type ?? 'code',
+    document: report.document ? { ...report.document, sections: report.document.sections.map((item) => ({ ...item, label: tr(sectionLabels[item.key] ?? item.key) })) } : null,
     profile: report.profile, status: report.status, source: { ...report.source, kindLabel: tr(sourceKindLabels[report.source.kind] ?? report.source.kind) },
     summary: { ...report.summary, stack: report.summary.stack.map((item) => ({ ...item, label: tr(stackLabels[item.key] ?? item.key) })) },
     findings: report.findings.map(findingView),
@@ -137,7 +183,9 @@ export function reportView(report: AnalysisReport) {
     checks: report.checks.map((check) => ({ ...check, label: tr(checkLabels[check.key] ?? check.key), statusLabel: tr(checkStatusLabels[check.status]) })),
     skipped: report.skipped,
     unverified: report.unverified.map((key) => ({ key, text: tr(unverifiedLabels[key] ?? key) })),
-    disclaimer: tr('Это разбор по файлам, а не сертификат: отсутствие находок не гарантирует, что ошибок нет. Исходный код не менялся.'),
+    disclaimer: report.type === 'document'
+      ? tr('Это проверка по словам и разделам, а не экспертиза: отсутствие находок не значит, что документ полный и без противоречий. Документ не менялся и не отправлялся в ИИ.')
+      : tr('Это разбор по файлам, а не сертификат: отсутствие находок не гарантирует, что ошибок нет. Исходный код не менялся.'),
   };
 }
 
@@ -146,11 +194,14 @@ const escapeMd = (value: string) => value.replace(/([\\`*_[\]<>|])/g, '\\$1');
 export function reportMarkdown(projectName: string, run: { createdAt: Date; finishedAt: Date | null }, report: AnalysisReport): string {
   const view = reportView(report);
   const out: string[] = [];
-  out.push(`# ${tr('Разбор кода: {0}', [escapeMd(projectName)])}`, '');
+  out.push(`# ${view.type === 'document' ? tr('Разбор документа: {0}', [escapeMd(projectName)]) : tr('Разбор кода: {0}', [escapeMd(projectName)])}`, '');
   out.push(`- ${tr('Источник')}: ${view.source.kindLabel} — ${escapeMd(view.source.label)}${view.source.revision ? ` (${escapeMd(view.source.revision)})` : ''}`);
   out.push(`- SHA-256: \`${view.source.sha256}\``, `- ${tr('Профиль проверки')}: ${view.profile}`, `- ${tr('Готово')}: ${(run.finishedAt ?? run.createdAt).toISOString()}`, '');
   out.push(`## ${tr('Коротко')}`, '');
-  out.push(tr('Файлов: {0}, прочитано текстовых: {1}, строк: {2}.', [view.summary.files, view.summary.textFilesRead, view.summary.lines]));
+  if (view.document) {
+    out.push(tr('Слов: {0}, абзацев: {1}.', [view.document.words, view.document.paragraphs]));
+    out.push(tr('Разделы: {0}.', [view.document.sections.map((item) => `${item.found ? '✓' : '✗'} ${item.label}`).join(', ')]));
+  } else out.push(tr('Файлов: {0}, прочитано текстовых: {1}, строк: {2}.', [view.summary.files, view.summary.textFilesRead, view.summary.lines]));
   if (view.summary.stack.length) out.push(tr('Технологии: {0}.', [view.summary.stack.map((item) => item.label).join(', ')]));
   if (view.summary.languages.length) out.push(tr('Языки: {0}.', [view.summary.languages.slice(0, 8).map((item) => `${item.name} (${item.files})`).join(', ')]));
   if (view.summary.routes.length) out.push(tr('Страницы по именам файлов: {0}.', [view.summary.routes.slice(0, 30).join(', ')]));
@@ -158,7 +209,7 @@ export function reportMarkdown(projectName: string, run: { createdAt: Date; fini
   if (!view.findings.length) out.push(tr('Находок нет.'));
   for (const finding of view.findings) {
     out.push(`### ${finding.severityLabel} · ${finding.categoryLabel}: ${escapeMd(finding.title)}`, '', escapeMd(finding.explanation), '', `**${tr('Что сделать')}:** ${escapeMd(finding.remediation)}`, '');
-    out.push(`${tr('Где')}: ${finding.evidence.map((item) => `\`${item.path.replace(/`/g, "'")}${item.line ? `:${item.line}` : ''}\``).join(', ')}`, '');
+    out.push(`${tr('Где')}: ${finding.evidence.map((item) => (view.type === 'document' ? (item.line ? tr('абзац {0}', [item.line]) : escapeMd(item.path)) : `\`${item.path.replace(/`/g, "'")}${item.line ? `:${item.line}` : ''}\``)).join(', ')}`, '');
   }
   out.push(`## ${tr('Проверки')}`, '');
   for (const check of view.checks) out.push(`- ${check.label}: ${check.statusLabel}`);

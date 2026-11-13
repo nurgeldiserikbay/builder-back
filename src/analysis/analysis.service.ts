@@ -7,6 +7,8 @@ import { allowLocalRepos, AnalysisRunner } from './analysis-runner.js';
 import { ANALYSIS_PROFILE, type AnalysisReport } from './code-analysis.js';
 import { reportMarkdown, reportView, sourceKindLabels } from './report-view.js';
 
+/** Archives get the code analysis; PDF, Word and text get the document check. */
+export const ANALYSABLE_KINDS = ['zip', 'pdf', 'docx', 'text'] as const;
 export const ANALYSIS_RUN_LIMITS = { active: 2, perDay: 20, list: 30 };
 const refPattern = /^[A-Za-z0-9._/-]{1,200}$/;
 
@@ -29,6 +31,9 @@ const errorLabels: Record<string, string> = {
   REPO_RECONNECT_REQUIRED: 'Подключите репозиторий заново.',
   REPO_REF_INVALID: 'Неверное имя ветки.',
   ANALYSIS_FAILED: 'Разбор прервался из-за внутренней ошибки.',
+  DOCUMENT_UNREADABLE: 'Документ не удалось прочитать: он повреждён или защищён паролем.',
+  DOCUMENT_TOO_LARGE: 'Документ слишком большой для разбора (больше 200 страниц).',
+  ANALYSIS_FILE_NOT_SUPPORTED: 'Такой файл не разбирается: подойдут ZIP, PDF, Word и текст.',
 };
 
 /**
@@ -79,7 +84,7 @@ export class AnalysisService implements OnApplicationBootstrap {
     const { project, role, canWrite } = await this.member(userId, projectId);
     const [runs, files, repo] = await Promise.all([
       this.prisma.analysisRun.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' }, take: ANALYSIS_RUN_LIMITS.list, select: { id: true, status: true, sourceKind: true, sourceLabel: true, sourceRef: true, sourceSha256: true, errorCode: true, createdAt: true, startedAt: true, finishedAt: true, requestedByUserId: true } }),
-      this.prisma.stageFile.findMany({ where: { projectId, kind: 'zip' }, orderBy: { createdAt: 'desc' }, select: { id: true, name: true, sizeBytes: true, createdAt: true, createdByUserId: true, stage: { select: { stageKey: true } } } }),
+      this.prisma.stageFile.findMany({ where: { projectId, kind: { in: [...ANALYSABLE_KINDS] } }, orderBy: { createdAt: 'desc' }, select: { id: true, name: true, kind: true, sizeBytes: true, createdAt: true, createdByUserId: true, stage: { select: { stageKey: true } } } }),
       this.prisma.codeRepository.findUnique({ where: { projectId }, select: { provider: true, repoPath: true, defaultBranch: true } }),
     ]);
     const people = await this.people(runs.map((run) => run.requestedByUserId));
@@ -88,7 +93,7 @@ export class AnalysisService implements OnApplicationBootstrap {
         project: { name: project.name, analysisOnly: !project.projectType, startMode: project.startMode },
         runs: runs.map((run) => this.runView(run, people)),
         sources: {
-          files: files.map((file) => ({ id: file.id, name: file.name, sizeBytes: file.sizeBytes, stageKey: file.stage?.stageKey ?? null, createdAt: file.createdAt, canDelete: canWrite && !file.stage && (acceptRoles.has(role) || file.createdByUserId === userId) })),
+          files: files.map((file) => ({ id: file.id, name: file.name, kind: file.kind, sizeBytes: file.sizeBytes, stageKey: file.stage?.stageKey ?? null, createdAt: file.createdAt, canDelete: canWrite && !file.stage && (acceptRoles.has(role) || file.createdByUserId === userId) })),
           repository: repo ? { provider: repo.provider, repoPath: repo.repoPath, defaultBranch: repo.defaultBranch, canUse: canWrite && acceptRoles.has(role) } : null,
           publicRepo: canWrite,
           canUpload: canWrite,
@@ -110,7 +115,7 @@ export class AnalysisService implements OnApplicationBootstrap {
       if (!input.fileId || !isUuid(input.fileId)) throw new NotFoundException('FILE_NOT_FOUND');
       const file = await this.prisma.stageFile.findFirst({ where: { id: input.fileId, projectId }, select: { id: true, name: true, kind: true } });
       if (!file) throw new NotFoundException('FILE_NOT_FOUND');
-      if (file.kind !== 'zip') throw new BadRequestException('ANALYSIS_NEEDS_ZIP');
+      if (!ANALYSABLE_KINDS.includes(file.kind as never)) throw new BadRequestException('ANALYSIS_FILE_NOT_SUPPORTED');
       data = { sourceKind: 'stage_file', sourceFileId: file.id, sourceLabel: file.name, sourceRef: null };
     } else if (input.source === 'repository') {
       if (!acceptRoles.has(role)) throw new ForbiddenException('ANALYSIS_REPOSITORY_FORBIDDEN');
