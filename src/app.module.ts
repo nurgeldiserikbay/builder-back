@@ -20,9 +20,10 @@ import { CatalogModule } from './catalog/catalog.module.js';
 import { InsightsModule } from './insights/insights.module.js';
 import { MonitoringModule } from './monitoring/monitoring.module.js';
 import { TeamModule } from './team/team.module.js';
+import { AnalysisModule } from './analysis/analysis.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule, MonitoringModule, TeamModule],
+  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule, MonitoringModule, TeamModule, AnalysisModule],
   controllers: [HealthController, WorkspacesController],
 })
 export class AppModule {}

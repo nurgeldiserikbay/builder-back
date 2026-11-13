@@ -329,6 +329,8 @@ model Project {
   assignments      StageAssignment[]
   telegramChats    TelegramChatState[]
   images           ProjectImage[]
+  stageFiles       StageFile[]
+  analysisRuns     AnalysisRun[]
   leads            SiteLead[]
   bookings         Booking[]
   orders           StoreOrder[]
@@ -845,6 +847,7 @@ model ProjectStage {
   outgoingChanges   ChangeNotice[]         @relation("ChangeNoticeSource")
   approvals         StageApproval[]
   comments          StageComment[]
+  files             StageFile[]
   /// Who must approve a version before the stage is accepted; null — the owner or a manager accepts alone.
   approvalPolicy    Json?              @map("approval_policy")
   /// Bumped whenever the policy changes or changes are requested: earlier approvals stop counting.
@@ -1734,4 +1737,54 @@ model StageComment {
 
   @@index([stageId, createdAt], map: "stage_comments_stage_created_idx")
   @@map("stage_comments")
+}
+
+/// A file attached to a stage for people to read: private, scanned before it is stored, never passed to an AI provider
+/// and never used to build. A ZIP archive can be analysed read-only (AnalysisRun).
+model StageFile {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String       @map("project_id") @db.Uuid
+  stageId         String       @map("stage_id") @db.Uuid
+  name            String       @db.VarChar(200)
+  kind            String       @db.VarChar(20)
+  mime            String       @db.VarChar(100)
+  sizeBytes       Int          @map("size_bytes")
+  sha256          String       @db.VarChar(64)
+  note            String       @default("") @db.VarChar(500)
+  data            Bytes
+  createdByUserId String       @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  project         Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage           ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([stageId, createdAt(sort: Desc)], map: "stage_files_stage_created_idx")
+  @@index([projectId], map: "stage_files_project_idx")
+  @@map("stage_files")
+}
+
+/// Read-only analysis of a source archive (an uploaded ZIP or a repository snapshot). The report is immutable once written.
+model AnalysisRun {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId         String    @map("project_id") @db.Uuid
+  status            String    @default("queued") @db.VarChar(20)
+  sourceKind        String    @map("source_kind") @db.VarChar(20)
+  sourceFileId      String?   @map("source_file_id") @db.Uuid
+  sourceLabel       String    @map("source_label") @db.VarChar(300)
+  sourceRef         String?   @map("source_ref") @db.VarChar(200)
+  sourceSha256      String?   @map("source_sha256") @db.VarChar(64)
+  profile           String    @db.VarChar(40)
+  idempotencyKey    String?   @map("idempotency_key") @db.VarChar(80)
+  report            Json?
+  errorCode         String?   @map("error_code") @db.VarChar(60)
+  attemptCount      Int       @default(0) @map("attempt_count")
+  requestedByUserId String    @map("requested_by_user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt         DateTime? @map("started_at") @db.Timestamptz(3)
+  finishedAt        DateTime? @map("finished_at") @db.Timestamptz(3)
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, idempotencyKey], map: "analysis_runs_project_idempotency_key")
+  @@index([projectId, createdAt(sort: Desc)], map: "analysis_runs_project_created_idx")
+  @@index([status, createdAt], map: "analysis_runs_status_created_idx")
+  @@map("analysis_runs")
 }

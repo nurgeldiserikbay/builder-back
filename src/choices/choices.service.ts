@@ -1,6 +1,7 @@
 import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { decryptToken, encryptToken, tokenKey } from '../security/token-crypto.js';
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 import { PrismaService } from '../database/prisma.service.js';
@@ -29,28 +30,17 @@ export class ChoicesService {
   }
 
   private key(): Buffer | null {
-    const raw = process.env.CODE_HOSTING_TOKEN_ENCRYPTION_KEY;
-    if (!raw) return null;
-    const key = Buffer.from(raw, 'base64');
-    return key.length === 32 ? key : null;
+    return tokenKey();
   }
 
   private encrypt(token: string, key: Buffer): string {
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', key, iv);
-    const data = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
-    return [iv, cipher.getAuthTag(), data].map((part) => part.toString('base64url')).join('.');
+    return encryptToken(token, key);
   }
 
   private decrypt(payload: string, key: Buffer): string {
-    const [iv, tag, data] = payload.split('.');
-    try {
-      const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'));
-      decipher.setAuthTag(Buffer.from(tag, 'base64url'));
-      return Buffer.concat([decipher.update(Buffer.from(data, 'base64url')), decipher.final()]).toString('utf8');
-    } catch {
-      throw new ServiceUnavailableException('REPO_RECONNECT_REQUIRED');
-    }
+    const token = decryptToken(payload, key);
+    if (token === null) throw new ServiceUnavailableException('REPO_RECONNECT_REQUIRED');
+    return token;
   }
 
   private allowLocal(): boolean {
