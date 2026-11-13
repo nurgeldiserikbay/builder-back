@@ -129,6 +129,7 @@ describe('web application route (database)', async () => {
     const view = await journey.stage(owner.id, projectId, 'handoff');
     assert.ok((view.data.current!.content as { files: Array<{ name: string }> }).files.some((file) => file.name === 'spec.md'));
     await assert.rejects(journey.saveDraft(owner.id, projectId, 'handoff', { content: {}, baseVersionId: built.data.versionId }), /STAGE_NOT_EDITABLE/);
+    assert.ok((await journey.handoffFiles(owner.id, projectId)).data.files.some((file) => file.name === 'README.md'));
     await accept('handoff');
     const result = await journey.result(owner.id, projectId);
     assert.equal(result.data.complete, true);

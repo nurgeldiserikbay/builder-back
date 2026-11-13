@@ -299,6 +299,11 @@ export class JourneyController {
     return this.journey.buildHandoff(request.user.id, projectId);
   }
 
+  @Get('projects/:projectId/handoff')
+  handoffFiles(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.journey.handoffFiles(request.user.id, projectId);
+  }
+
   @Get('projects/:projectId/prototype')
   prototype(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Query('screen') screen?: string) {
     return this.journey.prototype(request.user.id, projectId, typeof screen === 'string' && /^[a-z][a-z0-9_]{0,23}$/.test(screen) ? screen : null);

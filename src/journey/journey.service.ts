@@ -436,6 +436,16 @@ export class JourneyService {
     return { data: { versionId: version.id, versionNumber: version.versionNumber, checks: artifact.checks } };
   }
 
+  /** Files of the current package version, so the owner can read the specification before accepting it. */
+  async handoffFiles(userId: string, projectId: string) {
+    const ctx = await this.core.load(userId, projectId, 'read', 'handoff');
+    if (ctx.type.key !== 'web_app') throw new NotFoundException('STAGE_NOT_FOUND');
+    const version = await this.core.versionContent(this.core.stageOf(ctx, 'handoff').currentVersionId);
+    if (!version) throw new NotFoundException('VERSION_NOT_FOUND');
+    const pack = version.content as unknown as HandoffArtifact;
+    return { data: { versionNumber: version.versionNumber, files: pack.files } };
+  }
+
   async preview(userId: string, projectId: string, versionId: string | null, pagePath: string | null = null) {
     const ctx = await this.core.load(userId, projectId, 'read');
     const own = ctx.viewer.kind === 'specialist' ? ctx.viewer.assignments.map((item) => item.stageKey) : undefined;

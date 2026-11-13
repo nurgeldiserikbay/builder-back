@@ -3103,6 +3103,17 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/handoff:
+    get:
+      tags: [Journey]
+      operationId: getHandoffFiles
+      summary: Files of the current package version (to read before accepting)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'versionNumber, files[] (name, mimeType, content)' }
+        '404': { description: 'STAGE_NOT_FOUND, VERSION_NOT_FOUND' }
     post:
       tags: [Journey]
       operationId: buildHandoffPackage
