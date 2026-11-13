@@ -71,11 +71,13 @@ describe('stage files and code analysis (database)', async () => {
     const archive = await files.upload(owner.id, project.id, 'goal', { buffer: zip, size: zip.length, originalname: 'site.zip' }, {});
     assert.equal(archive.data.files[0].canAnalyze, true);
     // A contributor reads every stage, so the archive is among their sources; the repository is for the owner and managers.
-    assert.equal((await analysis.list(writer.id, project.id)).data.sources.files.length, 1);
+    assert.equal((await analysis.list(writer.id, project.id)).data.sources.files.length, 2);
     await assert.rejects(analysis.create(writer.id, project.id, { source: 'repository', fileId: null, url: null, ref: null, idempotencyKey: null }), /ANALYSIS_REPOSITORY_FORBIDDEN/);
     await assert.rejects(analysis.create(owner.id, project.id, { source: 'file', fileId: randomUUID(), url: null, ref: null, idempotencyKey: null }), /FILE_NOT_FOUND/);
     await assert.rejects(analysis.create(watcher.id, project.id, { source: 'file', fileId: archive.data.createdId, url: null, ref: null, idempotencyKey: null }), /STAGE_WRITE_FORBIDDEN/);
-    await assert.rejects(analysis.create(owner.id, project.id, { source: 'file', fileId: uploaded.data.createdId, url: null, ref: null, idempotencyKey: null }), /ANALYSIS_NEEDS_ZIP/);
+    // A PDF is a document: it can be analysed too.
+    await analysis.create(owner.id, project.id, { source: 'file', fileId: uploaded.data.createdId, url: null, ref: null, idempotencyKey: null });
+    await runner.processNext();
     await assert.rejects(analysis.create(owner.id, project.id, { source: 'public_repo', fileId: null, url: 'https://gitlab.com/a/b', ref: null, idempotencyKey: null }), /REPO_URL_NOT_GITHUB/);
     await assert.rejects(analysis.create(owner.id, project.id, { source: 'repository', fileId: null, url: null, ref: null, idempotencyKey: null }), /REPO_NOT_CONNECTED/);
 
@@ -127,7 +129,7 @@ describe('stage files and code analysis (database)', async () => {
     const zip = buildZip([{ name: 'README.md', data: '# Сайт' }, { name: 'index.html', data: '<h1>Hi</h1>' }]);
     const upload = { buffer: zip, size: zip.length, originalname: 'site.zip' };
     await assert.rejects(files.uploadSource(watcher.id, project.id, upload, {}), /STAGE_WRITE_FORBIDDEN/);
-    await assert.rejects(files.uploadSource(owner.id, project.id, { buffer: Buffer.from('%PDF-1.7'), size: 8, originalname: 'a.pdf' }, {}), /ANALYSIS_NEEDS_ZIP/);
+    await assert.rejects(files.uploadSource(owner.id, project.id, { buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]), size: 8, originalname: 'a.png' }, {}), /ANALYSIS_FILE_NOT_SUPPORTED/);
     const source = await files.uploadSource(owner.id, project.id, upload, {});
     const listed = await analysis.list(watcher.id, project.id);
     assert.equal(listed.data.project.analysisOnly, true);
@@ -138,6 +140,14 @@ describe('stage files and code analysis (database)', async () => {
     const done = await analysis.get(owner.id, project.id, run.data.id);
     assert.equal(done.data.status, 'succeeded');
     assert.deepEqual(done.data.report!.summary.stack.map((item) => item.key), ['static_html']);
+    // A brief in Word gets the document check.
+    const brief = buildZip([{ name: '[Content_Types].xml', data: '<x/>' }, { name: 'word/document.xml', data: '<w:document><w:body><w:p><w:r><w:t>Нужен удобный сайт, сроки уточнить.</w:t></w:r></w:p></w:body></w:document>' }]);
+    const doc = await files.uploadSource(owner.id, project.id, { buffer: brief, size: brief.length, originalname: 'ТЗ.docx' }, {});
+    const docRun = await analysis.create(owner.id, project.id, { source: 'file', fileId: doc.data.createdId, url: null, ref: null, idempotencyKey: null });
+    await runner.processNext();
+    const docReport = (await analysis.get(owner.id, project.id, docRun.data.id)).data.report!;
+    assert.equal(docReport.type, 'document');
+    assert.ok(docReport.findings.some((finding) => finding.code === 'DOC_TOO_SHORT'));
     await assert.rejects(files.removeSource(watcher.id, project.id, source.data.createdId), /FILE_DELETE_FORBIDDEN/);
     await files.removeSource(owner.id, project.id, source.data.createdId);
     assert.equal((await analysis.get(owner.id, project.id, run.data.id)).data.status, 'succeeded');

@@ -42,7 +42,7 @@ export class StageFilesService {
         files: rows.map((row) => ({
           id: row.id, name: row.name, kind: row.kind, mime: row.mime, sizeBytes: row.sizeBytes, sha256: row.sha256, note: row.note, createdAt: row.createdAt,
           author: people.get(row.createdByUserId)?.name ?? tr('Участник'), mine: row.createdByUserId === userId,
-          canDelete: canUpload && (managing || row.createdByUserId === userId), canAnalyze: row.kind === 'zip' && ctx.viewer.kind === 'member' && ctx.role !== 'viewer',
+          canDelete: canUpload && (managing || row.createdByUserId === userId), canAnalyze: ['zip', 'pdf', 'docx', 'text'].includes(row.kind) && ctx.viewer.kind === 'member' && ctx.role !== 'viewer',
         })),
         canUpload, limits: { fileBytes: STAGE_FILE_LIMITS.fileBytes, perStage: STAGE_FILE_LIMITS.perStage, note: STAGE_FILE_LIMITS.note },
         accepted: ['pdf', 'png', 'jpg', 'webp', 'txt', 'md', 'csv', 'json', 'docx', 'xlsx', 'pptx', 'zip'],
@@ -95,7 +95,7 @@ export class StageFilesService {
     if (!name) throw new BadRequestException('FILE_NAME_INVALID');
     const note = cleanNote(body?.note);
     const type = detectStageFile(file.buffer, name);
-    if (!type || (onlyZip && type.kind !== 'zip')) throw new UnprocessableEntityException(onlyZip ? 'ANALYSIS_NEEDS_ZIP' : 'FILE_TYPE_NOT_SUPPORTED');
+    if (!type || (onlyZip && !['zip', 'pdf', 'docx', 'text'].includes(type.kind))) throw new UnprocessableEntityException(onlyZip ? 'ANALYSIS_FILE_NOT_SUPPORTED' : 'FILE_TYPE_NOT_SUPPORTED');
     const [count, used] = await Promise.all([
       this.prisma.stageFile.count({ where: stage ? { stageId: stage.id } : { projectId, stageId: null } }),
       this.prisma.stageFile.aggregate({ where: { projectId }, _sum: { sizeBytes: true } }),

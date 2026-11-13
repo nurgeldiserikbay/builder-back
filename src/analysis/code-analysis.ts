@@ -12,7 +12,11 @@ export type Severity = 'high' | 'medium' | 'low' | 'info';
 export type Evidence = { path: string; line?: number };
 export type Finding = { id: string; code: string; category: 'security' | 'structure' | 'dependencies' | 'docs' | 'quality'; severity: Severity; confidence: 'confirmed' | 'likely'; evidence: Evidence[]; params?: Record<string, string | number> };
 export type CheckRecord = { key: string; status: 'run' | 'partial' | 'skipped' };
+export type DocumentSummary = { format: 'pdf' | 'docx' | 'text'; words: number; paragraphs: number; pages: number | null; headings: string[]; sections: { key: string; found: boolean; paragraph: number | null }[] };
 export type AnalysisReport = {
+  /** Missing in reports made before documents could be analysed: those are code reports. */
+  type?: 'code' | 'document';
+  document?: DocumentSummary;
   profile: string;
   source: { kind: string; label: string; revision: string | null; sha256: string; bytes: number };
   status: 'succeeded' | 'partial';
@@ -218,6 +222,7 @@ export function analyzeArchive(buffer: Buffer, source: { kind: string; label: st
   findings.sort((a, b) => order[a.severity] - order[b.severity] || a.code.localeCompare(b.code));
 
   return {
+    type: 'code',
     profile: ANALYSIS_PROFILE,
     source: { ...source, sha256: createHash('sha256').update(buffer).digest('hex'), bytes: buffer.length },
     status: anySkipped ? 'partial' : 'succeeded',
