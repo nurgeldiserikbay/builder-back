@@ -135,10 +135,12 @@ export function templateFeatures(brief: Brief | null, process: BusinessProcess |
     : [{ key: 'user', name: tr('Пользователь'), description: brief?.audience?.slice(0, 200) ?? '' }, { key: 'admin', name: tr('Администратор'), description: tr('Управляет приложением и видит всё.') }];
   const roleKeys = new Set(roles.map((role) => role.key));
   const features: AppFeature[] = [{ key: 'signin', title: tr('Вход в аккаунт'), description: tr('Регистрация, вход и выход; восстановление пароля.'), roles: roles.map((role) => role.key), priority: 'must', acceptance: [tr('Можно зарегистрироваться, войти и выйти.'), tr('Пароль можно восстановить по почте.'), tr('Каждый видит только то, что разрешено его роли.')] }];
-  for (const scenario of (process?.scenarios ?? []).slice(0, APP_LIMITS.features - 1)) {
+  // The app keeps people's contacts, so consent and deletion on request are part of the first version.
+  features.push({ key: 'privacy', title: tr('Согласие и удаление данных'), description: tr('Согласие на обработку данных при регистрации; удаление аккаунта и данных по просьбе.'), roles: roles.map((role) => role.key), priority: 'must', acceptance: [tr('При регистрации пользователь даёт согласие на обработку персональных данных.'), tr('Пользователь может удалить аккаунт, и его данные удаляются.')] });
+  for (const scenario of (process?.scenarios ?? []).slice(0, APP_LIMITS.features - 2)) {
     const actors = [...new Set(scenario.steps.map((step) => step.actor))].filter((key) => roleKeys.has(key));
     features.push({
-      key: `f_${scenario.key}`.slice(0, 24), title: scenario.title.slice(0, 80), description: scenario.goal.slice(0, 400), roles: actors.length ? actors : [roles[0]!.key], priority: features.length <= 3 ? 'must' : 'should',
+      key: `f_${scenario.key}`.slice(0, 24), title: scenario.title.slice(0, 80), description: scenario.goal.slice(0, 400), roles: actors.length ? actors : [roles[0]!.key], priority: features.length <= 4 ? 'must' : 'should',
       acceptance: scenario.steps.filter((step) => step.capability !== 'offline').slice(0, APP_LIMITS.acceptance).map((step) => tr('{0}: {1}', [process!.actors.find((actor) => actor.key === step.actor)?.name ?? step.actor, step.action]).slice(0, 200)),
     });
   }
@@ -150,7 +152,7 @@ export function templateScreens(features: AppFeatures | null): AppScreens {
   const value = features ?? templateFeatures(null, null);
   const screens: AppScreen[] = [];
   for (const role of value.roles) {
-    const own = value.features.filter((feature) => feature.roles.includes(role.key) && feature.key !== 'signin');
+    const own = value.features.filter((feature) => feature.roles.includes(role.key) && feature.key !== 'signin' && feature.key !== 'privacy');
     const home = `home_${role.key}`.slice(0, 24);
     const children = own.slice(0, 4).map((feature) => ({
       key: `${role.key}_${feature.key}`.slice(0, 24), title: feature.title.slice(0, 60), role: role.key, purpose: feature.description.slice(0, 300), features: [feature.key],
@@ -158,7 +160,7 @@ export function templateScreens(features: AppFeatures | null): AppScreens {
       links: [home],
     }));
     screens.push({
-      key: home, title: tr('Главная — {0}', [role.name]).slice(0, 60), role: role.key, purpose: role.description.slice(0, 300), features: ['signin'],
+      key: home, title: tr('Главная — {0}', [role.name]).slice(0, 60), role: role.key, purpose: role.description.slice(0, 300), features: value.features.some((feature) => feature.key === 'privacy') ? ['signin', 'privacy'] : ['signin'],
       blocks: [{ kind: 'stats', title: tr('Коротко'), fields: own.slice(0, 3).map((feature) => feature.title.slice(0, 60)) }, { kind: 'actions', title: tr('Что можно сделать'), fields: own.slice(0, 4).map((feature) => feature.title.slice(0, 60)) }],
       links: children.map((child) => child.key),
     }, ...children);

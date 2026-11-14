@@ -16,6 +16,7 @@ import { BillingService } from '../billing/billing.service.js';
 import { canEdit, directDependents, inputsSatisfied, isSatisfied, nextStage, reopenStage, unlockDependents } from './stage-state.js';
 import { JourneyCore } from './journey-core.js';
 import { StageAiService } from './stage-ai.service.js';
+import { StageReviewService } from './stage-review.service.js';
 import { ChangeNoticesService } from './change-notices.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { APPROVER_ROLES, approvalState, approveBlocker, checkPolicy, policyText, readPolicy, type ApprovalPolicy } from '../team/team-rules.js';
@@ -31,6 +32,7 @@ export class JourneyService {
   constructor(
     private readonly prisma: PrismaService, private readonly billing: BillingService, private readonly worktime: WorktimeService,
     private readonly core: JourneyCore, private readonly stageAi: StageAiService, private readonly changes: ChangeNoticesService,
+    private readonly review: StageReviewService,
   ) {}
 
   catalog() {
@@ -180,6 +182,8 @@ export class JourneyService {
     const approval = await this.approvalView(ctx, userId, key, current);
     const policyActive = Boolean(approval.policy);
     const blockingComments = await CommentsService.openBlocking(this.prisma, stage.id);
+    const review = current && definition.artifactType !== 'site' && definition.artifactType !== 'handoff'
+      ? await this.review.view(ctx, userId, projectId, stageKey, stage.id, current) : null;
     const suggestions = await this.prisma.stageInstruction.findMany({
       where: { stageId: stage.id, kind: 'suggestion' }, orderBy: { createdAt: 'desc' }, take: 30,
       select: { id: true, text: true, targetKey: true, status: true, authorUserId: true, createdAt: true },
@@ -200,7 +204,7 @@ export class JourneyService {
           fields: definition.fields ?? null, lockedKeys: stage.lockedKeys, acceptedVersionId: stage.approvedVersionId,
           canEdit: writable,
           blockingComments,
-          canAccept: owner && !policyActive && blockingComments === 0 && Boolean(stage.currentVersionId) && !changesPending && waiting.length === 0 && !techPlanOutdated
+          canAccept: owner && !policyActive && blockingComments === 0 && (review?.uncoveredBlocking.length ?? 0) === 0 && Boolean(stage.currentVersionId) && !changesPending && waiting.length === 0 && !techPlanOutdated
             && ['in_progress', 'stale', 'changes_requested', 'in_review'].includes(stage.status) && inputsSatisfied(ctx.route, ctx.dep, stageKey),
           changesPending,
           contract: definition.contract ?? null,
@@ -213,7 +217,8 @@ export class JourneyService {
           canImport: Boolean(definition.importHint) && writable,
           canSubmit: (Boolean(assignment) || (policyActive && ctx.viewer.kind === 'member')) && writable && Boolean(stage.currentVersionId) && stage.status !== 'in_review' && !changesPending,
           canRequestChanges: (owner || Boolean(approval.isReviewer)) && stage.status === 'in_review' && editableProject(ctx.project.status),
-          approval: { ...approval, canApprove: Boolean(approval.canApprove) && blockingComments === 0 },
+          approval: { ...approval, canApprove: Boolean(approval.canApprove) && blockingComments === 0 && (review?.uncoveredBlocking.length ?? 0) === 0 },
+          canOverrideReview: owner && editableProject(ctx.project.status),
           canInvite: owner,
           canSuggest: assignment?.role === 'consultant' && assignment.status === 'active' && !['approved', 'imported'].includes(stage.status),
           reviewNote: stage.reviewNote,
@@ -228,6 +233,7 @@ export class JourneyService {
           content: site ? { checks: site.checks, quality: site.quality ?? null, compiledAt: site.compiledAt, sourceVersionIds: site.sourceVersionIds }
             : definition.artifactType === 'handoff' ? handoffView(current.content as unknown as HandoffArtifact) : current.content,
         } : null,
+        review,
         issues: current && definition.artifactType !== 'site' && definition.artifactType !== 'handoff' ? completenessIssues(definition.artifactType, current.content, await this.core.checkContext(ctx, stageKey)) : [],
         versions: versions.map((version) => {
           const run = runs.find((item) => item.id === version.generationRunId);
@@ -518,6 +524,8 @@ export class JourneyService {
     } else {
       const issues = completenessIssues(definition.artifactType, version.content, await this.core.checkContext(ctx, key as StageKey));
       if (issues.length) throw new UnprocessableEntityException(`STAGE_INCOMPLETE:${issues.map((issue) => issue.key).join(',')}`);
+      // The quality review: each blocking finding is fixed or explained by the owner for this very version.
+      await this.review.assertPasses(ctx, stageKey, stage.id, version);
     }
     return version;
   }

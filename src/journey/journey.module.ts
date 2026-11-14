@@ -10,11 +10,12 @@ import { ChangeNoticesService } from './change-notices.service.js';
 import { WorktimeService } from './worktime.service.js';
 import { ChangeDeadlinesService } from './change-deadlines.service.js';
 import { CommentsService } from './comments.service.js';
+import { StageReviewService } from './stage-review.service.js';
 
 @Module({
   imports: [AuthModule, CatalogModule],
   controllers: [JourneyController, InviteInfoController],
-  providers: [JourneyCore, StageAiService, ChangeNoticesService, JourneyService, SpecialistsService, WorktimeService, ChangeDeadlinesService, CommentsService],
-  exports: [JourneyService, SpecialistsService, WorktimeService, JourneyCore, CommentsService],
+  providers: [JourneyCore, StageAiService, ChangeNoticesService, JourneyService, SpecialistsService, WorktimeService, ChangeDeadlinesService, CommentsService, StageReviewService],
+  exports: [JourneyService, SpecialistsService, WorktimeService, JourneyCore, CommentsService, StageReviewService],
 })
 export class JourneyModule {}

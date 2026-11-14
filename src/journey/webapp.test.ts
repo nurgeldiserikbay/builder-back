@@ -1,3 +1,4 @@
+import { StageReviewService } from './stage-review.service.js';
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -102,7 +103,7 @@ describe('web application route (database)', async () => {
     const core = new JourneyCore(prisma!, billing);
     core.provider = null;
     const worktime = new WorktimeService(prisma!);
-    const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core));
+    const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core), new StageReviewService(prisma!, core, new StageAiService(prisma!, core, worktime)));
     const email = `app-${randomUUID()}@test.local`;
     const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), name: 'Owner' } });
     users.push(owner.id);
@@ -135,5 +136,48 @@ describe('web application route (database)', async () => {
     assert.equal(result.data.complete, true);
     assert.ok(result.data.files.some((file) => file.name === 'handoff/spec.md'));
     assert.ok(result.data.files.some((file) => file.name.startsWith('handoff/prototype/')));
+  });
+
+  it('holds a stage on a blocking review finding until it is fixed or explained in writing', { skip }, async () => {
+    const billing = new BillingService(prisma!);
+    const core = new JourneyCore(prisma!, billing);
+    core.provider = null;
+    const worktime = new WorktimeService(prisma!);
+    const stageAi = new StageAiService(prisma!, core, worktime);
+    const review = new StageReviewService(prisma!, core, stageAi);
+    const journey = new JourneyService(prisma!, billing, worktime, core, stageAi, new ChangeNoticesService(prisma!, core), review);
+    const email = `review-${randomUUID()}@test.local`;
+    const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), name: 'Owner' } });
+    users.push(owner.id);
+    const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
+    await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
+    const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Ревью', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
+    const versionOf = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId!;
+    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'goal', await versionOf('goal'));
+    await journey.generate(owner.id, projectId, 'process', { instruction: null, saveAs: 'one_off', targetKey: null });
+    const draft = (await journey.stage(owner.id, projectId, 'process')).data.current!.content as { rules: string[] };
+    // Without the consent rule the review blocks acceptance.
+    await journey.saveDraft(owner.id, projectId, 'process', { content: { ...draft, rules: [] }, baseVersionId: await versionOf('process') });
+    const view = await journey.stage(owner.id, projectId, 'process');
+    assert.deepEqual(view.data.review!.uncoveredBlocking, ['PROCESS_PERSONAL_DATA_NO_RULE:rules']);
+    assert.equal(view.data.stage.canAccept, false);
+    const versionId = await versionOf('process');
+    await assert.rejects(journey.accept(owner.id, projectId, 'process', versionId), /REVIEW_BLOCKING_OPEN:PROCESS_PERSONAL_DATA_NO_RULE:rules/);
+    // «Let the AI fix it» needs AI; without a provider the platform says so instead of pretending.
+    await assert.rejects(review.fix(owner.id, projectId, 'process', { findingIds: ['PROCESS_PERSONAL_DATA_NO_RULE:rules'] }), /AI_NOT_CONFIGURED/);
+    await assert.rejects(review.fix(owner.id, projectId, 'process', { findingIds: ['NOPE:x'] }), /FINDINGS_NOT_FOUND/);
+    // Only blocking findings of this version can be explained, and the reason must say something.
+    await assert.rejects(review.override(owner.id, projectId, 'process', { versionId, findingIds: ['PROCESS_PERSONAL_DATA_NO_RULE:rules'], reason: 'надо' }), /REASON_TOO_SHORT/);
+    await assert.rejects(review.override(owner.id, projectId, 'process', { versionId, findingIds: ['PROCESS_ACTOR_IDLE:x'], reason: 'Это не важно сейчас вообще' }), /FINDING_NOT_BLOCKING/);
+    await review.override(owner.id, projectId, 'process', { versionId, findingIds: ['PROCESS_PERSONAL_DATA_NO_RULE:rules'], reason: 'Контакты храним только в WhatsApp, согласие берём там' });
+    const explained = await journey.stage(owner.id, projectId, 'process');
+    assert.deepEqual(explained.data.review!.uncoveredBlocking, []);
+    assert.equal(explained.data.review!.overrides[0]!.reason, 'Контакты храним только в WhatsApp, согласие берём там');
+    assert.equal(explained.data.review!.findings.find((finding) => finding.id === 'PROCESS_PERSONAL_DATA_NO_RULE:rules')!.overridden, true);
+    assert.equal(explained.data.stage.canAccept, true);
+    await journey.accept(owner.id, projectId, 'process', versionId);
+    const event = await prisma!.projectEvent.findFirst({ where: { projectId, type: 'review_override' } });
+    assert.deepEqual((event!.details as { findingIds: string[] }).findingIds, ['PROCESS_PERSONAL_DATA_NO_RULE:rules']);
   });
 });

@@ -853,6 +853,7 @@ model ProjectStage {
   outgoingChanges   ChangeNotice[]         @relation("ChangeNoticeSource")
   approvals         StageApproval[]
   comments          StageComment[]
+  reviewOverrides   StageReviewOverride[]
   files             StageFile[]
   /// Who must approve a version before the stage is accepted; null — the owner or a manager accepts alone.
   approvalPolicy    Json?              @map("approval_policy")
@@ -1807,6 +1808,24 @@ model StageComment {
 
   @@index([stageId, createdAt], map: "stage_comments_stage_created_idx")
   @@map("stage_comments")
+}
+
+/// The owner's written explanation for moving a stage on although the quality review has blocking findings.
+/// Bound to one version and the finding ids it covers; a new version is reviewed again. Nothing is edited or deleted.
+model StageReviewOverride {
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId    String       @map("project_id") @db.Uuid
+  stageId      String       @map("stage_id") @db.Uuid
+  versionId    String       @map("version_id") @db.Uuid
+  rulesVersion String       @map("rules_version") @db.VarChar(20)
+  findingIds   String[]     @map("finding_ids") @db.VarChar(120)
+  reason       String       @db.VarChar(1000)
+  authorUserId String       @map("author_user_id") @db.Uuid
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  stage        ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([stageId, versionId], map: "stage_review_overrides_stage_version_idx")
+  @@map("stage_review_overrides")
 }
 
 /// A file attached to a stage for people to read: private, scanned before it is stored, never passed to an AI provider

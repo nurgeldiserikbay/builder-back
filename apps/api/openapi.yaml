@@ -3510,12 +3510,68 @@ paths:
         '200': { description: 'projectId, ownershipOffered (a hand-over invitation: the transfer offer was made; false when it could not be — the owner is told why)' }
         '403': { description: INVITE_EMAIL_MISMATCH }
         '410': { description: 'INVITE_EXPIRED, INVITE_NOT_AVAILABLE' }
+  /projects/{projectId}/stages/{stageKey}/review/override:
+    post:
+      tags: [Journey]
+      operationId: overrideStageReview
+      summary: Explain in writing why the stage goes on despite blocking review findings
+      description: Owner or manager. Covers only blocking findings of the current version (400 FINDING_NOT_BLOCKING; 409 STAGE_VERSION_CONFLICT). The reason (10–1000 characters) is kept in the stage history and a project event; a new version is reviewed again.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewOverrideRequest' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, properties: { overridden: { type: array, items: { type: string } } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/review/fix:
+    post:
+      tags: [Journey]
+      operationId: fixStageReview
+      summary: Let the AI fix the chosen review findings
+      description: Builds the AI instruction from the chosen findings' own texts only and asks for a new version that changes nothing else; answers like /generate. 503 AI_NOT_CONFIGURED without a provider; 400 FINDINGS_NOT_FOUND when none of the ids is a current finding.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReviewFixRequest' }
+      responses:
+        '200': { description: The new version, as for /generate }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/stages/{stageKey}/accept:
     post:
       tags: [Journey]
       operationId: acceptStage
       summary: Accept the current version of a stage
-      description: Requires owner or manager, accepted inputs, a complete artifact and, for the build stage, no failed required checks on a build from the currently accepted versions. For the build stage the quality report must have passed (422 QUALITY_GATE_FAILED; 409 BUILD_NOT_QUALITY_CHECKED for builds made before the gate) and, when the build's quality profile has a required browser rule, the browser check of that build must meet it (409 BROWSER_CHECK_PENDING; 422 BROWSER_CHECK_REQUIRED when the check failed or could not run; 422 BROWSER_GATE_FAILED). Refused with APPROVAL_POLICY_ACTIVE when the stage has an approval policy — then reviewers approve via /approve.
+      description: Requires owner or manager, accepted inputs, a complete artifact and, for the build stage, no failed required checks on a build from the currently accepted versions. For the build stage the quality report must have passed (422 QUALITY_GATE_FAILED; 409 BUILD_NOT_QUALITY_CHECKED for builds made before the gate) and, when the build's quality profile has a required browser rule, the browser check of that build must meet it (409 BROWSER_CHECK_PENDING; 422 BROWSER_CHECK_REQUIRED when the check failed or could not run; 422 BROWSER_GATE_FAILED). Refused with APPROVAL_POLICY_ACTIVE when the stage has an approval policy — then reviewers approve via /approve. Other stages must pass the quality review — 409 REVIEW_BLOCKING_OPEN with the finding ids while a blocking finding is neither fixed nor explained via /review/override.
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -6520,6 +6576,54 @@ components:
       required: [text]
       properties:
         text: { type: string, minLength: 2, maxLength: 20000 }
+    StageReview:
+      type: object
+      required: [rulesVersion, score, findings, blocking, uncoveredBlocking, overrides]
+      properties:
+        rulesVersion: { type: string }
+        score: { type: integer, minimum: 0, maximum: 100, description: 100 minus 25 per blocking, 10 per important and 3 per minor finding. }
+        blocking: { type: integer }
+        uncoveredBlocking: { type: array, items: { type: string }, description: Ids of blocking findings with no written explanation for this version. }
+        findings:
+          type: array
+          items:
+            type: object
+            required: [id, code, severity, category, target, where, message, fix, overridden]
+            properties:
+              id: { type: string, description: 'Stable while the problem stays: CODE:target[:n].' }
+              code: { type: string }
+              severity: { type: string, enum: [blocking, important, minor] }
+              category: { type: string, enum: [logic, security, clarity] }
+              target: { type: [string, 'null'] }
+              where: { type: string }
+              message: { type: string }
+              fix: { type: string }
+              overridden: { type: boolean }
+        overrides:
+          type: array
+          items:
+            type: object
+            required: [id, findingIds, reason, author, createdAt]
+            properties:
+              id: { type: string, format: uuid }
+              findingIds: { type: array, items: { type: string } }
+              reason: { type: string }
+              author: { type: string }
+              createdAt: { type: string, format: date-time }
+    ReviewOverrideRequest:
+      type: object
+      additionalProperties: false
+      required: [versionId, findingIds, reason]
+      properties:
+        versionId: { type: string, format: uuid }
+        findingIds: { type: array, minItems: 1, maxItems: 60, items: { type: string } }
+        reason: { type: string, minLength: 10, maxLength: 1000 }
+    ReviewFixRequest:
+      type: object
+      additionalProperties: false
+      required: [findingIds]
+      properties:
+        findingIds: { type: array, minItems: 1, maxItems: 60, items: { type: string } }
     AcceptStageRequest:
       type: object
       additionalProperties: false
@@ -6678,7 +6782,13 @@ components:
                 canReopen: { type: boolean }
                 canImport: { type: boolean }
                 inputsReady: { type: boolean }
+                canOverrideReview: { type: boolean, description: Owner or manager may explain in writing why the stage goes on despite blocking review findings. }
             inputs: { type: array, items: { type: object } }
+            review:
+              description: Deterministic quality review of the current version (null without a version and for the build and hand-over stages, which have their own gates). Blocking findings stop acceptance and approval until fixed or covered by an override for this version.
+              oneOf:
+                - type: 'null'
+                - $ref: '#/components/schemas/StageReview'
             current:
               type: [object, 'null']
               properties:

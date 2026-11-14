@@ -1,3 +1,4 @@
+import { StageReviewService } from '../journey/stage-review.service.js';
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -41,7 +42,7 @@ describe('release gate (database)', async () => {
     const core = new JourneyCore(prisma!, billing);
     core.provider = null;
     const worktime = new WorktimeService(prisma!);
-    const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core));
+    const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core), new StageReviewService(prisma!, core, new StageAiService(prisma!, core, worktime)));
     const publishing = new PublishingService(prisma!, billing);
     const email = `gate-${randomUUID()}@test.local`;
     const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), name: 'Owner' } });
@@ -127,7 +128,7 @@ describe('release gate (database)', async () => {
     const core = new JourneyCore(prisma!, billing);
     core.provider = null;
     const worktime = new WorktimeService(prisma!);
-    const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core));
+    const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core), new StageReviewService(prisma!, core, new StageAiService(prisma!, core, worktime)));
     const publishing = new PublishingService(prisma!, billing);
     const runner = new BrowserCheckRunner(prisma!);
     const checks = new BrowserChecksService(prisma!, core, runner);

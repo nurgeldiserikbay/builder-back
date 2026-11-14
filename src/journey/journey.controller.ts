@@ -1,4 +1,5 @@
 import { CommentsService } from './comments.service.js';
+import { StageReviewService } from './stage-review.service.js';
 import { BadRequestException, Body, Controller, Get, HttpCode, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
@@ -13,6 +14,11 @@ function body(value: unknown, fields: string[]): Record<string, unknown> {
   if (Object.keys(record).some((field) => !fields.includes(field))) throw new BadRequestException('UNKNOWN_FIELD');
   return record;
 }
+function findingIds(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 60 || value.some((item) => typeof item !== 'string' || !/^[A-Z_]{3,60}:[A-Za-z0-9_-]{1,40}(:\d{1,3})?$/.test(item))) throw new BadRequestException('INVALID_FINDING_IDS');
+  return value as string[];
+}
+
 function text(value: unknown, field: string, min: number, max: number, optional = false): string | null {
   if (optional && (value === undefined || value === null || value === '')) return null;
   if (typeof value !== 'string' || value.trim().length < min || value.length > max) throw new BadRequestException(`INVALID_${field.toUpperCase()}`);
@@ -51,7 +57,7 @@ function uuid(value: string, code: string): string {
 @Controller()
 @UseGuards(AuthGuard)
 export class JourneyController {
-  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService) {}
+  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService, private readonly review: StageReviewService) {}
 
   @Get('projects/:projectId/stages/:stageKey/comments')
   listComments(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
@@ -287,6 +293,22 @@ export class JourneyController {
   importText(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
     const input = body(raw, ['text']);
     return this.journey.importText(request.user.id, projectId, stageKey(key), text(input.text, 'text', 2, 20_000)!);
+  }
+
+  /** The owner explains in writing why the stage moves on although these blocking findings stay. */
+  @Post('projects/:projectId/stages/:stageKey/review/override')
+  @HttpCode(200)
+  overrideReview(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw, ['versionId', 'findingIds', 'reason']);
+    return this.review.override(request.user.id, projectId, stageKey(key), { versionId: text(input.versionId, 'versionId', 36, 36)!, findingIds: findingIds(input.findingIds), reason: text(input.reason, 'reason', 10, 1000)! });
+  }
+
+  /** The AI fixes the chosen findings and nothing else; the new version is reviewed again. */
+  @Post('projects/:projectId/stages/:stageKey/review/fix')
+  @HttpCode(200)
+  fixReview(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw, ['findingIds']);
+    return this.review.fix(request.user.id, projectId, stageKey(key), { findingIds: findingIds(input.findingIds) });
   }
 
   @Post('projects/:projectId/stages/:stageKey/accept')

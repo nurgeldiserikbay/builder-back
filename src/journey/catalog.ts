@@ -127,7 +127,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     importHint: null,
     contract: { explanation: 'Бизнес-процесс — договорённость о том, как работает дело. Архитектура строится по нему; если процесс изменится, архитектура получит уведомление и покажет, что поменялось.' },
     playbook: {
-      version: '1.0.0',
+      version: '1.1.0',
       instructions: [
         'Describe the real process of this business from the brief, in plain words, in the project language.',
         'Actors: the client, the business (owner), staff if any, the site as «system», external services only if mentioned. At most 6.',
@@ -135,6 +135,8 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
         'Tag every step with the closest capability; use «offline» for things people do outside the site and «other» if nothing fits. Never mark pay_online or account unless the user asked for them.',
         'Rules: business rules the user stated or that follow directly from the brief (cancellation, prepayment, working hours). Do not invent numbers.',
         'Data: the information the business keeps (client, booking, request, service…) with 2–6 simple fields in plain words and links between them.',
+        'When the data keeps people\'s contacts or other personal details, add a rule: they are kept with consent, only for the stated purpose, and deleted on request. With online payment, add a step that confirms the payment and a rule for refunds.',
+        'Every actor takes part in at least one step; every scenario has a goal saying how it ends; every link points to an entity in the list.',
       ],
     },
   },
@@ -252,13 +254,15 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     importHint: null,
     contract: { explanation: 'Функции и роли — договорённость о том, что делает приложение. Экраны и архитектура строятся по ним.' },
     playbook: {
-      version: '1.0.0',
+      version: '1.1.0',
       instructions: [
         'Describe the web application from the brief and the business process, in plain words, in the project language.',
         'Roles: the people who sign in (clients, staff, the owner as administrator). 1–6. Keys: short latin snake_case.',
         'Features: 3–20 concrete things a role does in the app; each with the roles that use it, priority must/should/later and 1–5 acceptance criteria a non-technical owner can check.',
         'Mark as must only what the first version cannot work without. Payments, integrations and analytics are should or later unless the user asked for them.',
         'sensitivity: personal when the app keeps people\'s contacts; payments or health only when stated. integrations: only services the user named.',
+        'With personal or health data, add a must feature for consent at sign-up and deleting the account with its data. With payments, a feature for payment confirmation, receipt and refund. With several roles, one acceptance criterion says each role sees only what it is allowed to.',
+        'Every role uses at least one feature; features name only roles from the list.',
       ],
     },
   },
@@ -279,12 +283,13 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     acceptExplanation: 'Экраны и прототип войдут в пакет для разработки.',
     importHint: null,
     playbook: {
-      version: '1.0.0',
+      version: '1.1.0',
       instructions: [
         'Design the screens of the web application from the accepted features, for each role; plain words in the project language.',
         'Each role starts on a home screen. 2–6 screens per role, at most 20 in total. Keys: short latin snake_case, unique.',
         'Each screen: role key, a short purpose, the feature keys it serves, 1–6 blocks (kind list, table, form, details, text, actions, stats, search; title; field names) and links to other screen keys.',
         'Every must feature must appear on at least one screen. Do not invent features that are not in the list.',
+        'Every screen of a role can be reached by links from that role\'s home screen; links go only to screens of the same role and to existing keys; every form lists its fields.',
       ],
     },
   },
