@@ -127,6 +127,21 @@ export function screensIssues(value: AppScreens, features: AppFeatures | null): 
   return issues;
 }
 
+export type FieldKind = 'datetime' | 'date' | 'money' | 'number' | 'phone' | 'email' | 'boolean' | 'status' | 'file' | 'address' | 'text';
+export const fieldTypeLabels: Record<FieldKind, string> = {
+  datetime: 'дата и время', date: 'дата', money: 'деньги', number: 'число', phone: 'телефон', email: 'почта', boolean: 'да / нет', status: 'статус из списка', file: 'файл', address: 'адрес', text: 'текст',
+};
+const FIELD_PATTERNS: Array<[FieldKind, RegExp]> = [
+  ['email', /(e-?mail|почт)/i], ['phone', /(телефон|phone|whatsapp|номер тел)/i], ['money', /(цен|сумм|стоимост|оплат|price|amount|total|тариф|баланс)/i],
+  ['datetime', /(время|когда|начал|конец|окончан|time|created|updated)/i], ['date', /(дата|день|срок|date|day|deadline|рожден)/i],
+  ['number', /(количеств|кол-во|число|номер|рейтинг|оценк|минут|час|возраст|count|qty|number|rating|age)/i], ['boolean', /(^есть |согласи|активн|оплачен|подтвержд|is_|^has|consent|active)/i],
+  ['status', /(статус|status|состояни|этап|stage)/i], ['file', /(фото|файл|изображ|документ|photo|file|image|avatar)/i], ['address', /(адрес|address)/i],
+];
+/** A guess at the field type from its name, for the data diagram and the ER export; the developer confirms it. */
+export function fieldKind(name: string): FieldKind {
+  return FIELD_PATTERNS.find(([, pattern]) => pattern.test(name.trim()))?.[0] ?? 'text';
+}
+
 /** Roles from the people of the process; functions from its scenarios, one acceptance criterion per step. */
 export function templateFeatures(brief: Brief | null, process: BusinessProcess | null): AppFeatures {
   const people = (process?.actors ?? []).filter((actor) => actor.kind === 'client' || actor.kind === 'business' || actor.kind === 'staff');
@@ -289,7 +304,7 @@ export function buildAppPlan(input: { brief: Brief | null; process: BusinessProc
     ...(pays ? [item(tr('Оплата'), tr('Приём денег через платёжный сервис.'), tr('Подключение платёжного провайдера; деньги не хранятся в приложении; требуется отдельная проверка безопасности.'))] : []),
     ...features.integrations.map((integration) => item(integration, tr('Внешний сервис, с которым связано приложение.'), tr('Интеграция по API сервиса; ключи — в секретах сервера, не в коде.'))),
   ];
-  const dataModel: DataEntity[] = entities.map((entity) => ({ key: entity.key, name: entity.name, plain: entity.fields.join(', '), fields: entity.fields.map((field) => ({ name: field, type: tr('текст') })), links: entity.links }));
+  const dataModel: DataEntity[] = entities.map((entity) => ({ key: entity.key, name: entity.name, plain: entity.fields.join(', '), fields: entity.fields.map((field) => ({ name: field, type: tr(fieldTypeLabels[fieldKind(field)]) })), links: entity.links }));
   const must = features.features.filter((feature) => feature.priority === 'must').slice(0, 4);
   const sequences: Sequence[] = must.map((feature) => {
     const role = features.roles.find((item) => item.key === feature.roles[0])?.name ?? tr('Пользователь');
@@ -379,7 +394,12 @@ export function buildHandoff(input: { brief: Brief | null; process: BusinessProc
     ].join('\n');
     const matrix = [`# ${tr('Права по ролям')}`, '', `| ${tr('Функция')} | ${input.features.roles.map((role) => md(role.name)).join(' | ')} |`, `|---|${input.features.roles.map(() => '---').join('|')}|`,
       ...input.features.features.map((feature) => `| ${md(feature.title)} | ${input.features.roles.map((role) => (feature.roles.includes(role.key) ? '✓' : '')).join(' | ')} |`), ''].join('\n');
-    const er = ['```mermaid', 'erDiagram', ...input.plan.dataModel.map((entity) => `  ${slug(entity.name).toUpperCase()} {\n${entity.fields.map((field) => `    string ${slug(field.name)}`).join('\n')}\n  }`),
+    // Every table gets an id; a «one» link becomes a foreign key on the table that has it; types are guessed from field names.
+    const mermaidType: Record<FieldKind, string> = { datetime: 'timestamp', date: 'date', money: 'decimal', number: 'int', phone: 'string', email: 'string', boolean: 'boolean', status: 'string', file: 'string', address: 'string', text: 'string' };
+    const er = ['```mermaid', 'erDiagram', ...input.plan.dataModel.map((entity) => {
+      const keys = entity.links.filter((link) => link.kind === 'one').map((link) => input.plan.dataModel.find((item) => item.key === link.to)).filter((target): target is DataEntity => Boolean(target));
+      return `  ${slug(entity.name).toUpperCase()} {\n    uuid id PK\n${keys.map((target) => `    uuid ${slug(target.name)}_id FK`).join('\n')}${keys.length ? '\n' : ''}${entity.fields.map((field) => `    ${mermaidType[fieldKind(field.name)]} ${slug(field.name)}`).join('\n')}\n  }`;
+    }),
       ...input.plan.dataModel.flatMap((entity) => entity.links.map((link) => {
         const target = input.plan.dataModel.find((item) => item.key === link.to);
         return target ? `  ${slug(entity.name).toUpperCase()} ||--${link.kind === 'many' ? 'o{' : 'o|'} ${slug(target.name).toUpperCase()} : "${link.label.replace(/"/g, "'")}"` : '';

@@ -1,3 +1,4 @@
+import { fieldKind } from './webapp.js';
 import { StageReviewService } from './stage-review.service.js';
 import 'dotenv/config';
 import assert from 'node:assert/strict';
@@ -82,6 +83,18 @@ describe('web application route', () => {
     assert.match(spec, /- \[ \] /);
     assert.match(spec, /Нужен вход через телефон/);
     assert.match(spec, /код приложения не создавался/);
+    // The ER diagram has keys, foreign keys for «one» links and types guessed from field names.
+    const er = pack.files.find((file) => file.name === 'data-model.md')!.content;
+    assert.match(er, /uuid id PK/);
+    assert.ok(plan.dataModel.some((entity) => entity.fields.some((field) => field.type !== 'текст')));
+    const linked = plan.dataModel.find((entity) => entity.links.some((link) => link.kind === 'one'));
+    if (linked) assert.match(er, /uuid \S+_id FK/);
+  });
+
+  it('guesses field types from their names', () => {
+    const cases: Array<[string, string]> = [['Телефон', 'phone'], ['Email', 'email'], ['Почта', 'email'], ['Сумма заказа', 'money'], ['Цена', 'money'], ['Дата рождения', 'date'],
+      ['Дата и время визита', 'datetime'], ['Количество', 'number'], ['Статус', 'status'], ['Фото', 'file'], ['Адрес доставки', 'address'], ['Согласие на обработку', 'boolean'], ['Комментарий', 'text']];
+    for (const [name, kind] of cases) assert.equal(fieldKind(name), kind, name);
   });
 });
 
