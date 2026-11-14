@@ -11,7 +11,7 @@ import type { TechPlan } from './techplan.js';
 import type { BusinessProcess } from './process.js';
 import type { AppFeatures, AppScreens } from './webapp.js';
 
-export const REVIEW_RULES_VERSION = '1.1.0';
+export const REVIEW_RULES_VERSION = '1.2.0';
 export const REVIEW_LIMITS = { reason: 1000, findings: 60, instruction: 1000 };
 
 export type FindingSeverity = 'blocking' | 'important' | 'minor';
@@ -126,8 +126,27 @@ function processReview(process: BusinessProcess, push: Push) {
   });
 }
 
-function featuresReview(value: AppFeatures, push: Push) {
+function featuresReview(value: AppFeatures, process: BusinessProcess | null, push: Push) {
   const roleKeys = new Set(value.roles.map((role) => role.key));
+  if (process) {
+    const known = new Set(['user', ...process.data.map((entity) => entity.key)]);
+    for (const feature of value.features) {
+      const unknown = (feature.data ?? []).filter((key) => !known.has(key));
+      if (unknown.length) push({
+        code: 'FEATURES_UNKNOWN_DATA', severity: 'important', category: 'logic', target: feature.key, where: tr('Функция «{0}»', [feature.title]),
+        message: tr('Функция работает с данными, которых нет в схеме данных процесса.'),
+        fix: tr('Выберите данные из схемы или добавьте их на этапе «Бизнес-процесс».'),
+      });
+    }
+    // Only once the features say which data they use: older results without it are not flooded with findings.
+    if (value.features.some((feature) => (feature.data ?? []).length)) {
+      for (const entity of process.data) if (!value.features.some((feature) => (feature.data ?? []).includes(entity.key))) push({
+        code: 'FEATURES_DATA_UNUSED', severity: 'minor', category: 'logic', target: entity.key, where: tr('Данные «{0}»', [entity.name]),
+        message: tr('Эти данные есть в процессе, но ни одна функция с ними не работает — их некому создавать и смотреть.'),
+        fix: tr('Отметьте функцию, которая работает с этими данными, или уберите их из процесса.'),
+      });
+    }
+  }
   for (const feature of value.features) {
     const unknown = feature.roles.filter((role) => !roleKeys.has(role));
     if (unknown.length) push({
@@ -346,7 +365,7 @@ const WEIGHT: Record<FindingSeverity, number> = { blocking: 25, important: 10, m
 const ORDER: Record<FindingSeverity, number> = { blocking: 0, important: 1, minor: 2 };
 
 /** Review of one stage result. Types without rules yet get an empty review with the full score. */
-export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null } = {}): StageReview {
+export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null; process?: BusinessProcess | null } = {}): StageReview {
   const found: ReviewFinding[] = [];
   const counts = new Map<string, number>();
   const push: Push = (finding) => {
@@ -358,7 +377,7 @@ export function reviewStage(type: string, content: unknown, context: { features?
   if (content && typeof content === 'object') {
     if (type === 'brief') briefReview(content as Brief, push);
     if (type === 'process') processReview(content as BusinessProcess, push);
-    if (type === 'features') featuresReview(content as AppFeatures, push);
+    if (type === 'features') featuresReview(content as AppFeatures, context.process ?? null, push);
     if (type === 'screens') screensReview(content as AppScreens, context.features ?? null, push);
     if (type === 'sitemap') sitemapReview(content as Sitemap, push);
     if (type === 'content') contentReview(content as ContentArtifact, push);

@@ -2,6 +2,7 @@
 // (TECHNICAL_SPECIFICATION.md §6 capability manifest): it takes the project to a complete, checked package for a developer —
 // roles and functions with acceptance criteria, screens with a clickable prototype, architecture with a data model and an
 // API contract — all derived deterministically from accepted stages, so the package always matches what was agreed.
+import { keywords } from '../analysis/requirements-match.js';
 import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { ArtifactValidationError, type Brief } from './artifacts.js';
 import type { BusinessProcess, ProcessEntity } from './process.js';
@@ -10,7 +11,7 @@ import { pathFor } from './sitemap.js';
 import { TECHPLAN_VERSION, type DataEntity, type Sequence, type TechPlan, type TechPlanItem } from './techplan.js';
 
 export const WEBAPP_VERSION = '1.0.0';
-export const APP_LIMITS = { roles: 6, features: 30, acceptance: 6, integrations: 8, screens: 20, blocks: 8, fields: 12, links: 8 };
+export const APP_LIMITS = { data: 8, roles: 6, features: 30, acceptance: 6, integrations: 8, screens: 20, blocks: 8, fields: 12, links: 8 };
 export const PRIORITIES = ['must', 'should', 'later'] as const;
 export type Priority = (typeof PRIORITIES)[number];
 export const SENSITIVITY = ['normal', 'personal', 'payments', 'health'] as const;
@@ -27,7 +28,8 @@ export const blockLabels: Record<BlockKind, string> = {
 };
 
 export interface AppRole { key: string; name: string; description: string }
-export interface AppFeature { key: string; title: string; description: string; roles: string[]; priority: Priority; acceptance: string[] }
+/** data: keys of the records the feature creates or reads — the process entities, and «user» for accounts. */
+export interface AppFeature { key: string; title: string; description: string; roles: string[]; priority: Priority; acceptance: string[]; data: string[] }
 export interface AppFeatures { roles: AppRole[]; features: AppFeature[]; sensitivity: Sensitivity; integrations: string[] }
 export interface ScreenBlock { kind: BlockKind; title: string; fields: string[] }
 export interface AppScreen { key: string; title: string; role: string; purpose: string; features: string[]; blocks: ScreenBlock[]; links: string[] }
@@ -72,6 +74,7 @@ export function normalizeFeatures(raw: unknown): AppFeatures {
       // Roles that do not exist are dropped rather than refused: the role list may have been edited after.
       roles: [...new Set(strings(item.roles, `features.${index}.roles`, APP_LIMITS.roles, 24))].filter((key) => roleKeys.has(key)),
       priority, acceptance: strings(item.acceptance, `features.${index}.acceptance`, APP_LIMITS.acceptance, 200),
+      data: [...new Set(strings(item.data, `features.${index}.data`, APP_LIMITS.data, 24))],
     };
   });
   const sensitivity = SENSITIVITY.includes(raw.sensitivity as Sensitivity) ? raw.sensitivity as Sensitivity : 'personal';
@@ -149,16 +152,23 @@ export function templateFeatures(brief: Brief | null, process: BusinessProcess |
     ? people.slice(0, APP_LIMITS.roles).map((actor) => ({ key: actor.key.slice(0, 24), name: actor.name.slice(0, 40), description: actor.kind === 'client' ? tr('Пользуется приложением как клиент.') : actor.kind === 'staff' ? tr('Работает с заявками и данными.') : tr('Управляет приложением и видит всё.') }))
     : [{ key: 'user', name: tr('Пользователь'), description: brief?.audience?.slice(0, 200) ?? '' }, { key: 'admin', name: tr('Администратор'), description: tr('Управляет приложением и видит всё.') }];
   const roleKeys = new Set(roles.map((role) => role.key));
-  const features: AppFeature[] = [{ key: 'signin', title: tr('Вход в аккаунт'), description: tr('Регистрация, вход и выход; восстановление пароля.'), roles: roles.map((role) => role.key), priority: 'must', acceptance: [tr('Можно зарегистрироваться, войти и выйти.'), tr('Пароль можно восстановить по почте.'), tr('Каждый видит только то, что разрешено его роли.')] }];
+  const features: AppFeature[] = [{ key: 'signin', title: tr('Вход в аккаунт'), description: tr('Регистрация, вход и выход; восстановление пароля.'), roles: roles.map((role) => role.key), priority: 'must', data: ['user'], acceptance: [tr('Можно зарегистрироваться, войти и выйти.'), tr('Пароль можно восстановить по почте.'), tr('Каждый видит только то, что разрешено его роли.')] }];
   // The app keeps people's contacts, so consent and deletion on request are part of the first version.
-  features.push({ key: 'privacy', title: tr('Согласие и удаление данных'), description: tr('Согласие на обработку данных при регистрации; удаление аккаунта и данных по просьбе.'), roles: roles.map((role) => role.key), priority: 'must', acceptance: [tr('При регистрации пользователь даёт согласие на обработку персональных данных.'), tr('Пользователь может удалить аккаунт, и его данные удаляются.')] });
+  features.push({ key: 'privacy', title: tr('Согласие и удаление данных'), description: tr('Согласие на обработку данных при регистрации; удаление аккаунта и данных по просьбе.'), roles: roles.map((role) => role.key), priority: 'must', data: ['user'], acceptance: [tr('При регистрации пользователь даёт согласие на обработку персональных данных.'), tr('Пользователь может удалить аккаунт, и его данные удаляются.')] });
   for (const scenario of (process?.scenarios ?? []).slice(0, APP_LIMITS.features - 2)) {
     const actors = [...new Set(scenario.steps.map((step) => step.actor))].filter((key) => roleKeys.has(key));
+    // The records a scenario touches: those whose name appears in its title, goal or steps.
+    const words = new Set(keywords([scenario.title, scenario.goal, ...scenario.steps.map((step) => step.action)].join(' ')));
+    const data = (process?.data ?? []).filter((entity) => keywords(entity.name).some((word) => words.has(word))).map((entity) => entity.key);
     features.push({
+      data,
       key: `f_${scenario.key}`.slice(0, 24), title: scenario.title.slice(0, 80), description: scenario.goal.slice(0, 400), roles: actors.length ? actors : [roles[0]!.key], priority: features.length <= 4 ? 'must' : 'should',
       acceptance: scenario.steps.filter((step) => step.capability !== 'offline').slice(0, APP_LIMITS.acceptance).map((step) => tr('{0}: {1}', [process!.actors.find((actor) => actor.key === step.actor)?.name ?? step.actor, step.action]).slice(0, 200)),
     });
   }
+  // A record no scenario names by word goes to the first scenario's feature, so every record has an owner to check.
+  const first = features[2] ?? features[0]!;
+  for (const entity of process?.data ?? []) if (!features.some((feature) => feature.data.includes(entity.key))) first.data = [...first.data, entity.key].slice(0, APP_LIMITS.data);
   return normalizeFeatures({ roles, features, sensitivity: 'personal', integrations: [] });
 }
 
@@ -370,6 +380,7 @@ export function buildHandoff(input: { brief: Brief | null; process: BusinessProc
   return runWithLocale(contentLocale(input.locale), () => {
     const name = input.brief?.businessName || tr('Приложение');
     const roleName = (key: string) => input.features.roles.find((role) => role.key === key)?.name ?? key;
+    const dataName = (key: string) => (key === 'user' ? tr('Пользователь') : input.process?.data.find((entity) => entity.key === key)?.name ?? key);
     const featureName = (key: string) => input.features.features.find((feature) => feature.key === key)?.title ?? key;
     const spec = [
       `# ${name} — ${tr('техническое задание')}`, '',
@@ -379,7 +390,7 @@ export function buildHandoff(input: { brief: Brief | null; process: BusinessProc
       ...PRIORITIES.flatMap((priority) => {
         const own = input.features.features.filter((feature) => feature.priority === priority);
         return own.length ? [`### ${tr(priorityLabels[priority])}`, '', ...own.flatMap((feature) => [
-          `#### ${feature.title}`, '', feature.description, '', `${tr('Кто пользуется')}: ${feature.roles.map(roleName).join(', ')}`, '', `${tr('Критерии приёмки')}:`, ...feature.acceptance.map((line) => `- [ ] ${line}`), '',
+          `#### ${feature.title}`, '', feature.description, '', `${tr('Кто пользуется')}: ${feature.roles.map(roleName).join(', ')}`, '', ...((feature.data ?? []).length ? [`${tr('Данные')}: ${feature.data.map(dataName).join(', ')}`, ''] : []), `${tr('Критерии приёмки')}:`, ...feature.acceptance.map((line) => `- [ ] ${line}`), '',
         ])] : [];
       }),
       `## ${tr('Экраны')}`, '', tr('Прототип — папка prototype/, откройте любой файл в браузере.'), '',
