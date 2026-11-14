@@ -108,7 +108,7 @@ describe('ownership transfer (database)', async () => {
       const billing = new BillingService(prisma!);
       const ownership = new OwnershipService(prisma!, billing, new TeamService(prisma!, billing));
       const journey = { journey: async () => ({ data: { project: { name: 'Кафе', typeTitle: 'Сайт' }, progress: { accepted: 0, total: 6 }, nextAction: { text: '' }, stages: [] } }) };
-      const bot = new TelegramBotService(prisma!, journey as never, {} as never, {} as never, {} as never, ownership);
+      const bot = new TelegramBotService(prisma!, journey as never, {} as never, {} as never, {} as never, ownership, {} as never);
       const owner = await user('tg-owner');
       const heir = await user('tg-heir');
       await prisma!.user.update({ where: { id: heir.id }, data: { locale: 'ru' } });

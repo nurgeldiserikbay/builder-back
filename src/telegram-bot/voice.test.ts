@@ -57,7 +57,7 @@ describe('bot voice messages (database)', async () => {
       const workspace = await prisma!.workspace.create({ data: { ownerUserId: user.id, name: 'W' } });
       const project = await prisma!.project.create({ data: { workspaceId: workspace.id, ownerUserId: user.id, name: 'P', startMode: 'build', status: 'active', projectType: 'landing' } });
       const chatId = `chat-${randomUUID().slice(0, 8)}`;
-      const bot = new TelegramBotService(prisma!, {} as never, {} as never, {} as never, {} as never, {} as never);
+      const bot = new TelegramBotService(prisma!, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
       const voice = { fileId: 'file-1', duration: 5, size: 3000 };
       // The bot does not wait for its own messages to be delivered; give the stand-in a moment.
       const settle = () => new Promise((resolve) => setTimeout(resolve, 200));

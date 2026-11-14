@@ -6,6 +6,7 @@ import { JourneyService } from '../journey/journey.service.js';
 import { SpecialistsService } from '../journey/specialists.service.js';
 import { COMMENT_LIMITS, CommentsService } from '../journey/comments.service.js';
 import { StageFilesService } from '../analysis/stage-files.service.js';
+import { StageReviewService } from '../journey/stage-review.service.js';
 import { OwnershipService } from '../team/ownership.service.js';
 import { STAGE_FILE_LIMITS } from '../analysis/file-types.js';
 import { answerCallbackQuery, downloadTelegramFile, sendTelegramMessage, telegramConfig, type InlineKeyboard, type TelegramConfig } from '../notifications/telegram.js';
@@ -14,10 +15,12 @@ import { artifactSummary, errorText, helpText, statusEmoji } from './bot-texts.j
 
 const PENDING_TTL_MS = 15 * 60 * 1000;
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-type Pending = 'instruction' | 'changes_note' | 'suggestion' | 'comment' | 'blocker' | 'reply';
-const PENDING_KINDS: Pending[] = ['instruction', 'changes_note', 'suggestion', 'comment', 'blocker', 'reply'];
+type Pending = 'instruction' | 'changes_note' | 'suggestion' | 'comment' | 'blocker' | 'reply' | 'review_reason';
+const PENDING_KINDS: Pending[] = ['instruction', 'changes_note', 'suggestion', 'comment', 'blocker', 'reply', 'review_reason'];
 /** Remarks are typed: for a reply the bot keeps the remark id in pendingText, where a voice message would keep its text. */
-const TEXT_ONLY: Pending[] = ['comment', 'blocker', 'reply'];
+const TEXT_ONLY: Pending[] = ['comment', 'blocker', 'reply', 'review_reason'];
+/** Files can be attached only to remarks. */
+const REMARKS: Pending[] = ['comment', 'blocker', 'reply'];
 /** «voice:<kind>» — recognised text waits for «Выполнить»; «voice_consent:<kind>» — a voice file waits for consent. */
 type VoicePending = `voice:${Pending}` | `voice_consent:${Pending}` | `mention:${Pending}`;
 /** A typed remark waiting for «Отправить» while the person picks whom to mention. */
@@ -34,7 +37,7 @@ type Ctx = { config: TelegramConfig; chatId: string; userId: string };
  */
 @Injectable()
 export class TelegramBotService {
-  constructor(private readonly prisma: PrismaService, private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly comments: CommentsService, private readonly stageFiles: StageFilesService, private readonly ownership: OwnershipService) {}
+  constructor(private readonly prisma: PrismaService, private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly comments: CommentsService, private readonly stageFiles: StageFilesService, private readonly ownership: OwnershipService, private readonly review: StageReviewService) {}
 
   private send(ctx: Ctx, text: string, keyboard?: InlineKeyboard) {
     return sendTelegramMessage(ctx.config, ctx.chatId, text, fetch, keyboard);
@@ -100,7 +103,7 @@ export class TelegramBotService {
     const waiting = await this.waiting(ctx.chatId, ctx.userId);
     // Voice is only recognised when the bot waits for a text, so nothing is sent to the provider by accident.
     if (!waiting) return void this.send(ctx, tr("Голосом можно ответить, когда бот ждёт ваш текст: откройте этап и нажмите «Попросить ИИ». Наберите /projects, чтобы выбрать проект."), [[{ text: tr("📂 Мои проекты"), callback_data: 'L' }]]);
-    if (TEXT_ONLY.includes(waiting.kind)) return void this.send(ctx, tr("Замечание напишите, пожалуйста, текстом."));
+    if (TEXT_ONLY.includes(waiting.kind)) return void this.send(ctx, waiting.kind === 'review_reason' ? tr("Объяснение напишите, пожалуйста, текстом.") : tr("Замечание напишите, пожалуйста, текстом."));
     if (voice.duration > VOICE_LIMITS.seconds || (voice.size ?? 0) > VOICE_LIMITS.bytes) return void this.send(ctx, tr("Голосовое длиннее {0} секунд — скажите короче или напишите текстом.", [VOICE_LIMITS.seconds]));
     const user = await this.prisma.user.findUnique({ where: { id: ctx.userId }, select: { voiceConsentAt: true } });
     if (!user?.voiceConsentAt) {
@@ -146,7 +149,8 @@ export class TelegramBotService {
     }
     if (waiting.step === 'mention') return void this.send(ctx, tr("Замечание уже написано: отметьте, кого упомянуть, и нажмите «Отправить» — или /cancel, чтобы отменить."));
     if (trimmed.length < 2 || trimmed.length > 1000) return void this.send(ctx, tr("Напишите от 2 до 1000 символов или /cancel, чтобы отменить."));
-    const target = waiting.kind === 'reply' ? waiting.state.pendingText : null;
+    // A reply keeps the remark id; an explanation keeps the version it explains, so a newer version is not covered unseen.
+    const target = waiting.kind === 'reply' ? waiting.state.pendingText : waiting.kind === 'review_reason' ? (waiting.state.pendingDraft as MentionDraft | null)?.target ?? null : null;
     const fileIds = (waiting.state.pendingDraft as MentionDraft | null)?.fileIds ?? [];
     await this.setState(ctx, { pending: null });
     await this.act(ctx, waiting.projectId, waiting.stageKey, waiting.kind, trimmed, target, fileIds);
@@ -160,6 +164,12 @@ export class TelegramBotService {
         await this.send(ctx, tr("✨ ИИ работает — обычно это занимает до минуты…"));
         const result = await this.journey.generate(userId, projectId, stageKey, { instruction: trimmed, saveAs: 'one_off', targetKey: null, source: 'telegram' });
         await this.send(ctx, tr("Готово: версия {0}.", [result.data.versionNumber]));
+      } else if (pending === 'review_reason') {
+        if (trimmed.length < 10) { await this.setState(ctx, { pending: 'review_reason', draft: { text: '', target, mentionIds: [], fileIds: [] } }); return void this.send(ctx, tr("Напишите объяснение хотя бы одним понятным предложением (от 10 символов) или /cancel.")); }
+        const detail = (await this.journey.stage(userId, projectId, stageKey)).data;
+        if (!target || detail.current?.id !== target) return void this.send(ctx, tr("Пока вы писали, появилась новая версия — у неё своя проверка. Откройте «🔎 Проверка качества» ещё раз."), [[{ text: tr("🔎 Проверка качества"), callback_data: 'Q' }]]);
+        await this.review.override(userId, projectId, stageKey, { versionId: target, findingIds: detail.review?.uncoveredBlocking ?? [], reason: trimmed });
+        await this.send(ctx, tr("✍️ Объяснение сохранено в истории этапа. Теперь этап можно принять."));
       } else if (pending === 'changes_note') {
         await this.journey.requestChanges(userId, projectId, stageKey, trimmed);
         await this.send(ctx, tr("↩️ Этап возвращён на доработку с вашим комментарием."));
@@ -244,6 +254,28 @@ export class TelegramBotService {
           if (!isUuid(arg)) return;
           const detail = localizeDeep((await this.journey.approve(userId, projectId, stageKey, arg, null)).data, currentLocale());
           await this.send(ctx, detail.stage.status === 'approved' ? tr("✅ Одобрено. Набраны все нужные одобрения — этап принят.") : tr("👍 Одобрено: {0} из {1}.", [detail.stage.approval.approved ?? 0, detail.stage.approval.required ?? 0]));
+          return;
+        }
+        case 'Q':
+          return this.showReview(ctx, projectId, stageKey);
+        case 'QA':
+          await this.send(ctx, tr("🤖 ИИ смотрит этап — обычно до минуты…"));
+          await this.review.aiReview(userId, projectId, stageKey);
+          return this.showReview(ctx, projectId, stageKey);
+        case 'QF': {
+          const detail = (await this.journey.stage(userId, projectId, stageKey)).data;
+          const ids = [...(detail.review?.findings ?? []).filter((finding) => !finding.overridden).map((finding) => finding.id), ...(detail.review?.ai?.findings ?? []).map((finding) => finding.id)];
+          if (!ids.length) return this.showReview(ctx, projectId, stageKey);
+          await this.send(ctx, tr("✨ ИИ исправляет замечания — обычно до минуты…"));
+          const result = await this.review.fix(userId, projectId, stageKey, { findingIds: ids.slice(0, 60) });
+          await this.send(ctx, tr("Готово: версия {0}. Проверка запущена заново.", [result.data.versionNumber]));
+          return this.showReview(ctx, projectId, stageKey);
+        }
+        case 'QO': {
+          const detail = (await this.journey.stage(userId, projectId, stageKey)).data;
+          if (!detail.current || !detail.review?.uncoveredBlocking.length) return this.showReview(ctx, projectId, stageKey);
+          await this.setState(ctx, { pending: 'review_reason', draft: { text: '', target: detail.current.id, mentionIds: [], fileIds: [] } });
+          await this.send(ctx, tr("Напишите, почему этап можно принять без исправления блокирующих замечаний. Объяснение увидят участники проекта, оно останется в истории этапа.\n\nОтменить — /cancel"));
           return;
         }
         case 'C':
@@ -360,6 +392,31 @@ export class TelegramBotService {
     await this.send(ctx, lines.join('\n'), keyboard);
   }
 
+  /** The quality review of the current version: rule findings first, then AI advice, and what can be done here. */
+  private async showReview(ctx: Ctx, projectId: string, stageKey: string) {
+    const detail = localizeDeep((await this.journey.stage(ctx.userId, projectId, stageKey)).data, currentLocale());
+    const review = detail.review;
+    if (!review) return this.showStage(ctx, projectId, stageKey);
+    const mark = { blocking: '⛔', important: '⚠️', minor: '•' } as const;
+    const open = review.findings.filter((finding) => !finding.overridden);
+    const lines = [tr("🔎 Проверка качества «{0}»: {1} из 100", [detail.stage.title, review.score])];
+    if (!review.findings.length) lines.push(tr("Замечаний нет — результат готов для следующего этапа."));
+    for (const finding of review.findings.slice(0, 8)) lines.push('', `${mark[finding.severity]} ${finding.where}: ${finding.message}${finding.overridden ? ` ${tr("(пропущено с объяснением)")}` : ''}`, tr("Что сделать: {0}", [finding.fix]));
+    if (review.findings.length > 8) lines.push('', tr("…и ещё {0} — в приложении.", [review.findings.length - 8]));
+    if (review.ai?.findings.length) {
+      lines.push('', tr("🤖 Советы ИИ (не блокируют, ИИ может ошибаться):"));
+      for (const finding of review.ai.findings.slice(0, 5)) lines.push(`${mark[finding.severity]} ${finding.where}: ${finding.message}`);
+    }
+    if (review.uncoveredBlocking.length) lines.push('', tr("Пока блокирующие замечания не исправлены или не объяснены, этап не принять."));
+    const keyboard: InlineKeyboard = [];
+    const aiReady = detail.ai.configured && detail.stage.canEdit && detail.stage.inputsReady && detail.ai.level !== 'none';
+    if (aiReady && (open.length || review.ai?.findings.length)) keyboard.push([{ text: tr("✨ ИИ: исправить замечания"), callback_data: 'QF' }]);
+    if (detail.ai.configured && detail.stage.canEdit) keyboard.push([{ text: review.ai ? tr("🤖 Проверить ИИ ещё раз") : tr("🤖 Попросить ИИ проверить"), callback_data: 'QA' }]);
+    if (detail.stage.canOverrideReview && review.uncoveredBlocking.length) keyboard.push([{ text: tr("✍️ Пропустить с объяснением"), callback_data: 'QO' }]);
+    keyboard.push([{ text: tr("← Этап"), callback_data: `S:${stageKey}` }]);
+    await this.send(ctx, lines.join('\n'), keyboard);
+  }
+
   private async showStage(ctx: Ctx, projectId: string, stageKey: string) {
     const detail = localizeDeep((await this.journey.stage(ctx.userId, projectId, stageKey)).data, currentLocale());
     const { stage, ai, current } = detail;
@@ -373,6 +430,8 @@ export class TelegramBotService {
       lines.push('', tr("Черновика пока нет."));
     }
     if (detail.issues.length) lines.push('', tr("Чего не хватает:"), ...[...new Set(detail.issues.map((issue) => `• ${issue.message}`))].slice(0, 5));
+    const review = detail.review;
+    if (review) lines.push('', review.uncoveredBlocking.length ? tr("🔎 Проверка качества: {0} из 100 · блокирующих: {1}", [review.score, review.uncoveredBlocking.length]) : tr("🔎 Проверка качества: {0} из 100 · замечаний: {1}", [review.score, review.findings.filter((finding) => !finding.overridden).length]));
     const keyboard: InlineKeyboard = [];
     if (stage.canEdit && ai.level !== 'none' && ai.configured && stage.inputsReady) keyboard.push([{ text: tr("✨ Попросить ИИ"), callback_data: 'I' }]);
     if (stage.canEdit && stage.artifactType === 'site' && stage.inputsReady) keyboard.push([{ text: tr("🛠 Собрать сайт"), callback_data: 'B' }]);
@@ -382,6 +441,7 @@ export class TelegramBotService {
     if (stage.approval.canApprove && current) keyboard.push([{ text: tr("👍 Одобрить"), callback_data: `AP:${current.id}` }]);
     if (stage.canSubmit && current && !detail.issues.length && stage.inputsReady) keyboard.push([{ text: tr("📤 Отправить на приёмку"), callback_data: `U:${current.id}` }]);
     if (stage.canSuggest) keyboard.push([{ text: tr("💬 Предложить правку"), callback_data: 'G' }]);
+    if (review && (review.findings.length || review.ai)) keyboard.push([{ text: tr("🔎 Проверка качества"), callback_data: 'Q' }]);
     if (stage.status !== 'locked') keyboard.push([{ text: stage.blockingComments ? tr("📝 Замечания · блокирующих: {0}", [stage.blockingComments]) : tr("📝 Замечания"), callback_data: 'C' }]);
     const button = this.appButton(`/projects/${projectId}/stages/${stageKey}`);
     keyboard.push([...(button ? [button] : []), { text: tr("← Этапы"), callback_data: `P:${projectId}` }]);
@@ -397,7 +457,7 @@ export class TelegramBotService {
     if (!config || !file) return;
     const ctx: Ctx = { config, chatId, userId };
     const waiting = await this.waiting(chatId, userId);
-    if (!waiting || !TEXT_ONLY.includes(waiting.kind)) return void this.send(ctx, tr("Файл можно прикрепить к замечанию: откройте этап, нажмите «📝 Замечания» и «➕ Новое замечание», затем пришлите файл."), [[{ text: tr("📂 Мои проекты"), callback_data: 'L' }]]);
+    if (!waiting || !REMARKS.includes(waiting.kind)) return void this.send(ctx, tr("Файл можно прикрепить к замечанию: откройте этап, нажмите «📝 Замечания» и «➕ Новое замечание», затем пришлите файл."), [[{ text: tr("📂 Мои проекты"), callback_data: 'L' }]]);
     const draft: MentionDraft = (waiting.state.pendingDraft as MentionDraft | null) ?? { text: '', target: waiting.kind === 'reply' ? waiting.state.pendingText : null, mentionIds: [], fileIds: [] };
     const fileIds = draft.fileIds ?? [];
     if (fileIds.length >= COMMENT_LIMITS.files) return void this.send(ctx, tr("К одному замечанию можно прикрепить не больше {0} файлов.", [COMMENT_LIMITS.files]));
