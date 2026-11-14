@@ -3,11 +3,15 @@
 // A blocking finding stops acceptance until it is fixed or the owner explains in writing why the stage goes on anyway.
 import { tr } from '../i18n/i18n.js';
 import { keywords } from '../analysis/requirements-match.js';
-import type { Brief } from './artifacts.js';
+import { sectionTypeLabels, type Brief, type ContentArtifact } from './artifacts.js';
+import type { Catalog } from './products.js';
+import type { Schedule } from './schedule.js';
+import type { Sitemap } from './sitemap.js';
+import type { TechPlan } from './techplan.js';
 import type { BusinessProcess } from './process.js';
 import type { AppFeatures, AppScreens } from './webapp.js';
 
-export const REVIEW_RULES_VERSION = '1.0.0';
+export const REVIEW_RULES_VERSION = '1.1.0';
 export const REVIEW_LIMITS = { reason: 1000, findings: 60, instruction: 1000 };
 
 export type FindingSeverity = 'blocking' | 'important' | 'minor';
@@ -207,6 +211,137 @@ function screensReview(value: AppScreens, features: AppFeatures | null, push: Pu
   }
 }
 
+function sitemapReview(map: Sitemap, push: Push) {
+  const titles = new Map<string, number>();
+  for (const page of map.pages) titles.set(page.title.trim().toLowerCase(), (titles.get(page.title.trim().toLowerCase()) ?? 0) + 1);
+  for (const page of map.pages) {
+    if (page.title && (titles.get(page.title.trim().toLowerCase()) ?? 0) > 1) push({
+      code: 'SITEMAP_DUPLICATE_TITLE', severity: 'important', category: 'clarity', target: page.key, where: tr('Страница «{0}»', [page.title]),
+      message: tr('Две страницы называются одинаково — в меню посетитель их не различит.'),
+      fix: tr('Назовите страницы по-разному или объедините их.'),
+    });
+    if (!page.purpose.trim()) push({
+      code: 'SITEMAP_NO_PURPOSE', severity: 'minor', category: 'clarity', target: page.key, where: tr('Страница «{0}»', [page.title]),
+      message: tr('Не сказано, зачем посетителю эта страница — тексты для неё получатся случайными.'),
+      fix: tr('Напишите в одной фразе, что посетитель здесь узнаёт или делает.'),
+    });
+  }
+  const home = map.pages.find((page) => page.path === '/');
+  if (home && !home.sections.includes('hero')) push({
+    code: 'SITEMAP_HOME_NO_HERO', severity: 'important', category: 'logic', target: home.key, where: tr('Страница «{0}»', [home.title]),
+    message: tr('Главная страница без первого экрана — посетитель не сразу поймёт, куда попал.'),
+    fix: tr('Добавьте на главную блок «Первый экран».'),
+  });
+  if (!map.pages.some((page) => page.sections.includes('cta') || (page.sections.includes('contacts') && page.path === '/'))) push({
+    code: 'SITEMAP_NO_CALL_TO_ACTION', severity: 'important', category: 'logic', target: 'pages', where: tr('Карта сайта'),
+    message: tr('Ни на одной странице нет призыва к действию — посетитель дочитает и уйдёт.'),
+    fix: tr('Добавьте блок «Призыв к действию» на главную или страницу услуг.'),
+  });
+}
+
+function contentReview(content: ContentArtifact, push: Push) {
+  for (const section of content.sections) {
+    const name = section.title || sectionTypeLabels[section.type];
+    if ((section.type === 'hero' || section.type === 'cta') && !section.buttonLabel?.trim()) push({
+      code: 'CONTENT_NO_BUTTON', severity: 'important', category: 'logic', target: section.key, where: tr('Блок «{0}»', [name]),
+      message: tr('В блоке нет кнопки — посетителю нечего нажать.'),
+      fix: tr('Напишите текст кнопки главного действия: например, «Записаться».'),
+    });
+    if ((section.type === 'about' || section.type === 'hero') && section.text.trim().length < 20) push({
+      code: 'CONTENT_TEXT_THIN', severity: 'minor', category: 'clarity', target: section.key, where: tr('Блок «{0}»', [name]),
+      message: tr('Текст блока слишком короткий, чтобы что-то объяснить.'),
+      fix: tr('Добавьте одно-два предложения: что вы делаете и чем это полезно.'),
+    });
+    if ((section.type === 'faq' || section.type === 'benefits' || section.type === 'steps') && section.items.length === 1) push({
+      code: 'CONTENT_ONE_ITEM', severity: 'minor', category: 'clarity', target: section.key, where: tr('Блок «{0}»', [name]),
+      message: tr('В блоке один пункт — список из одного выглядит недоделанным.'),
+      fix: tr('Добавьте ещё пункты или замените блок обычным текстом.'),
+    });
+  }
+  const seo = [content.seo, ...(content.pageSeo ?? [])];
+  if (seo.some((item) => item.title.length > 60)) push({
+    code: 'CONTENT_SEO_TITLE_LONG', severity: 'minor', category: 'clarity', target: 'seo', where: tr('Для поисковиков'),
+    message: tr('Заголовок для поисковиков длиннее 60 символов — в выдаче он обрежется.'),
+    fix: tr('Сократите заголовок до 60 символов: главное — в начале.'),
+  });
+  if (seo.some((item) => !item.description.trim())) push({
+    code: 'CONTENT_SEO_NO_DESCRIPTION', severity: 'minor', category: 'clarity', target: 'seo', where: tr('Для поисковиков'),
+    message: tr('Нет описания для поисковиков — в выдаче будет случайный кусок текста.'),
+    fix: tr('Напишите описание в 1–2 предложения, до 160 символов.'),
+  });
+}
+
+function scheduleReview(schedule: Schedule, push: Push) {
+  const names = new Set(schedule.services.map((service) => service.name));
+  for (const master of schedule.masters) {
+    const unknown = master.services.filter((name) => !names.has(name));
+    if (unknown.length) push({
+      code: 'SCHEDULE_MASTER_UNKNOWN_SERVICE', severity: 'important', category: 'logic', target: master.key, where: tr('Мастер «{0}»', [master.name]),
+      message: tr('У мастера отмечены услуги, которых нет в списке: {0}.', [unknown.join(', ')]),
+      fix: tr('Выберите услуги из списка или добавьте их.'),
+    });
+  }
+  const { rules } = schedule;
+  if (rules.minNoticeHours >= rules.horizonDays * 24) push({
+    code: 'SCHEDULE_NO_BOOKABLE_DAYS', severity: 'blocking', category: 'logic', target: 'rules', where: tr('Правила записи'),
+    message: tr('Записаться заранее нужно минимум за {0} ч, а запись открыта только на {1} дн. — свободного времени не будет никогда.', [rules.minNoticeHours, rules.horizonDays]),
+    fix: tr('Уменьшите «за сколько записываться» или откройте запись на больше дней.'),
+  });
+  if (rules.cancelHours > rules.horizonDays * 24) push({
+    code: 'SCHEDULE_CANCEL_NEVER', severity: 'important', category: 'logic', target: 'rules', where: tr('Правила записи'),
+    message: tr('Отменить запись можно только раньше, чем она вообще открывается, — клиент никогда не сможет отменить сам.'),
+    fix: tr('Сделайте срок отмены короче, чем срок, на который открыта запись.'),
+  });
+  const shortest = Math.min(...schedule.services.map((service) => service.minutes));
+  if (Number.isFinite(shortest) && rules.slotStep > shortest) push({
+    code: 'SCHEDULE_STEP_TOO_LONG', severity: 'minor', category: 'logic', target: 'rules', where: tr('Правила записи'),
+    message: tr('Шаг записи ({0} мин) длиннее самой короткой услуги ({1} мин) — между записями будут пустые окна.', [rules.slotStep, shortest]),
+    fix: tr('Сделайте шаг записи не длиннее самой короткой услуги.'),
+  });
+}
+
+function catalogReview(catalog: Catalog, push: Push) {
+  const names = new Map<string, number>();
+  for (const product of catalog.products) names.set(product.name.trim().toLowerCase(), (names.get(product.name.trim().toLowerCase()) ?? 0) + 1);
+  for (const product of catalog.products) if (product.name && (names.get(product.name.trim().toLowerCase()) ?? 0) > 1) push({
+    code: 'CATALOG_DUPLICATE_NAME', severity: 'important', category: 'clarity', target: product.key, where: tr('Товар «{0}»', [product.name]),
+    message: tr('Два товара называются одинаково — покупатель и вы перепутаете заказы.'),
+    fix: tr('Уточните названия: вес, вкус, размер.'),
+  });
+  if (catalog.payment.transfer && !catalog.payment.transferNote.trim()) push({
+    code: 'CATALOG_TRANSFER_NO_NOTE', severity: 'important', category: 'logic', target: 'payment', where: tr('Оплата'),
+    message: tr('Можно платить переводом, но не написано куда и как — клиент не сможет оплатить.'),
+    fix: tr('Напишите, как перевести деньги: например, Kaspi по номеру телефона после подтверждения заказа.'),
+  });
+  const noPhoto = catalog.products.filter((product) => product.available && !product.imageId);
+  if (noPhoto.length && noPhoto.length === catalog.products.filter((product) => product.available).length) push({
+    code: 'CATALOG_NO_PHOTOS', severity: 'minor', category: 'clarity', target: 'products', where: tr('Товары'),
+    message: tr('Ни у одного товара нет фото — в магазине без фото покупают реже.'),
+    fix: tr('Добавьте фото хотя бы к главным товарам.'),
+  });
+  const cheapest = Math.min(...catalog.products.filter((product) => product.available && product.price > 0).map((product) => product.price));
+  if (catalog.minOrder && Number.isFinite(cheapest) && catalog.minOrder > cheapest * 20) push({
+    code: 'CATALOG_MIN_ORDER_HIGH', severity: 'minor', category: 'logic', target: 'minOrder', where: tr('Минимальный заказ'),
+    message: tr('Минимальный заказ во много раз больше цены товаров — проверьте, нет ли лишнего нуля.'),
+    fix: tr('Проверьте сумму минимального заказа.'),
+  });
+}
+
+function techPlanReview(plan: TechPlan, push: Push) {
+  const missing = (plan.coverage ?? []).filter((step) => step.status === 'not_built');
+  if (missing.length) push({
+    code: 'TECHPLAN_STEPS_NOT_BUILT', severity: 'important', category: 'logic', target: 'coverage', where: tr('Что покрывает сайт'),
+    message: tr('Шагов процесса, которые сайт не сделает и которые не делаются вручную: {0} ({1}).', [missing.length, missing.slice(0, 3).map((step) => step.action).join('; ')]),
+    fix: tr('Решите для каждого: делать вручную (поменяйте шаг на этапе «Бизнес-процесс») или заказать разработчику.'),
+  });
+  const keys = new Set(plan.dataModel.map((entity) => entity.key));
+  for (const entity of plan.dataModel) if (entity.links.some((link) => !keys.has(link.to))) push({
+    code: 'TECHPLAN_LINK_UNKNOWN', severity: 'blocking', category: 'logic', target: entity.key, where: tr('Данные «{0}»', [entity.name]),
+    message: tr('Связь в схеме данных ведёт к таблице, которой нет.'),
+    fix: tr('Исправьте связи на этапе «Бизнес-процесс» — архитектура соберётся заново.'),
+  });
+}
+
 const WEIGHT: Record<FindingSeverity, number> = { blocking: 25, important: 10, minor: 3 };
 const ORDER: Record<FindingSeverity, number> = { blocking: 0, important: 1, minor: 2 };
 
@@ -225,6 +360,11 @@ export function reviewStage(type: string, content: unknown, context: { features?
     if (type === 'process') processReview(content as BusinessProcess, push);
     if (type === 'features') featuresReview(content as AppFeatures, push);
     if (type === 'screens') screensReview(content as AppScreens, context.features ?? null, push);
+    if (type === 'sitemap') sitemapReview(content as Sitemap, push);
+    if (type === 'content') contentReview(content as ContentArtifact, push);
+    if (type === 'schedule') scheduleReview(content as Schedule, push);
+    if (type === 'catalog') catalogReview(content as Catalog, push);
+    if (type === 'techplan' && Array.isArray((content as TechPlan).dataModel)) techPlanReview(content as TechPlan, push);
   }
   found.sort((a, b) => ORDER[a.severity] - ORDER[b.severity]);
   const score = Math.max(0, 100 - found.reduce((sum, finding) => sum + WEIGHT[finding.severity], 0));

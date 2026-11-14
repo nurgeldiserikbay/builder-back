@@ -3,7 +3,10 @@ import { describe, it } from 'node:test';
 import { fixInstruction, reviewStage, uncoveredBlocking } from './stage-review.js';
 import { templateProcess, type BusinessProcess } from './process.js';
 import { templateFeatures, templateScreens, type AppFeatures, type AppScreens } from './webapp.js';
-import type { Brief } from './artifacts.js';
+import { templateContent, type Brief } from './artifacts.js';
+import { templateSitemap } from './sitemap.js';
+import { templateSchedule } from './schedule.js';
+import { templateCatalog } from './products.js';
 
 const brief: Brief = {
   businessName: 'Торты от Айгерим', whatYouDo: 'Печём торты на заказ к праздникам', audience: 'Родители и компании', city: null,
@@ -95,6 +98,52 @@ describe('stage review', () => {
   });
 
   it('gives types without rules the full score', () => {
-    assert.deepEqual(reviewStage('design', { palette: 'forest' }), { rulesVersion: '1.0.0', score: 100, findings: [], blocking: 0 });
+    assert.deepEqual(reviewStage('design', { palette: 'forest' }), { rulesVersion: '1.1.0', score: 100, findings: [], blocking: 0 });
+  });
+
+  it('checks the site map, texts, schedule, catalog and architecture', () => {
+    const map = { pages: [
+      { key: 'home', path: '/', title: 'Главная', purpose: '', sections: ['about' as const] },
+      { key: 'a', path: '/a', title: 'Услуги', purpose: 'Что делаем', sections: ['services' as const] },
+      { key: 'b', path: '/b', title: 'услуги', purpose: 'Цены', sections: ['contacts' as const] },
+    ] };
+    const found = ids('sitemap', map);
+    for (const id of ['SITEMAP_DUPLICATE_TITLE:a', 'SITEMAP_DUPLICATE_TITLE:b', 'SITEMAP_NO_PURPOSE:home', 'SITEMAP_HOME_NO_HERO:home', 'SITEMAP_NO_CALL_TO_ACTION:pages']) assert.ok(found.includes(id), id);
+
+    const content = { sections: [
+      { key: 'hero', type: 'hero' as const, title: 'Торты', text: 'Коротко', items: [], buttonLabel: '', imageId: null },
+      { key: 'faq', type: 'faq' as const, title: 'Вопросы', text: '', items: [{ title: 'Как заказать?', text: 'Напишите' }], buttonLabel: null, imageId: null },
+    ], seo: { title: 'x'.repeat(61), description: '' } };
+    const texts = ids('content', content);
+    for (const id of ['CONTENT_NO_BUTTON:hero', 'CONTENT_TEXT_THIN:hero', 'CONTENT_ONE_ITEM:faq', 'CONTENT_SEO_TITLE_LONG:seo', 'CONTENT_SEO_NO_DESCRIPTION:seo']) assert.ok(texts.includes(id), id);
+
+    const schedule = { timezone: 'Asia/Almaty', services: [{ name: 'Стрижка', minutes: 30 }], masters: [{ key: 'm1', name: 'Айдана', services: ['Окрашивание'], week: [null, null, null, null, null, null, null] }],
+      rules: { slotStep: 60, minNoticeHours: 72, horizonDays: 3, cancelHours: 100 } };
+    const slots = ids('schedule', schedule);
+    for (const id of ['SCHEDULE_MASTER_UNKNOWN_SERVICE:m1', 'SCHEDULE_NO_BOOKABLE_DAYS:rules', 'SCHEDULE_CANCEL_NEVER:rules', 'SCHEDULE_STEP_TOO_LONG:rules']) assert.ok(slots.includes(id), id);
+    assert.equal(reviewStage('schedule', schedule).findings[0]!.severity, 'blocking');
+
+    const catalog = { products: [
+      { key: 'p1', name: 'Торт', description: '', price: 100, unit: null, available: true, imageId: null },
+      { key: 'p2', name: 'торт', description: '', price: 200, unit: null, available: true, imageId: null },
+    ], delivery: [], payment: { onDelivery: false, transfer: true, transferNote: '' }, minOrder: 50_000 };
+    const shop = ids('catalog', catalog);
+    for (const id of ['CATALOG_DUPLICATE_NAME:p1', 'CATALOG_TRANSFER_NO_NOTE:payment', 'CATALOG_NO_PHOTOS:products', 'CATALOG_MIN_ORDER_HIGH:minOrder']) assert.ok(shop.includes(id), id);
+
+    const plan = { planVersion: '1', kind: 'site', summary: '', components: [], features: [], sequences: [],
+      dataModel: [{ key: 'lead', name: 'Заявка', plain: '', fields: [], links: [{ to: 'ghost', kind: 'one', label: '' }] }],
+      coverage: [{ scenario: 'Заказ', actor: 'Клиент', action: 'Платит онлайн', capability: 'pay_online', status: 'not_built', how: '' }] };
+    assert.deepEqual(ids('techplan', plan), ['TECHPLAN_LINK_UNKNOWN:lead', 'TECHPLAN_STEPS_NOT_BUILT:coverage']);
+    // A plan saved before the data model existed is not reviewed.
+    assert.deepEqual(ids('techplan', { ownerNotes: null }), []);
+  });
+
+  it('drafts of the other stages have no blocking findings', () => {
+    const offer = { services: [{ name: 'Торт', description: 'Бисквит', price: '15000' }], hours: null };
+    const map = templateSitemap(brief, offer);
+    assert.deepEqual(ids('sitemap', map), []);
+    assert.equal(reviewStage('content', templateContent(brief, offer, map)).blocking, 0);
+    assert.deepEqual(ids('schedule', templateSchedule(offer)), []);
+    assert.equal(reviewStage('catalog', templateCatalog(offer)).blocking, 0);
   });
 });
