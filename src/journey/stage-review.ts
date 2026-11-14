@@ -3,7 +3,7 @@
 // A blocking finding stops acceptance until it is fixed or the owner explains in writing why the stage goes on anyway.
 import { tr } from '../i18n/i18n.js';
 import { keywords } from '../analysis/requirements-match.js';
-import { sectionTypeLabels, type Brief, type ContentArtifact } from './artifacts.js';
+import { sectionTypeLabels, type Brief, type ContentArtifact, type Offer } from './artifacts.js';
 import type { Catalog } from './products.js';
 import type { Schedule } from './schedule.js';
 import type { Sitemap } from './sitemap.js';
@@ -11,7 +11,7 @@ import type { TechPlan } from './techplan.js';
 import type { BusinessProcess } from './process.js';
 import type { AppFeatures, AppScreens } from './webapp.js';
 
-export const REVIEW_RULES_VERSION = '1.2.0';
+export const REVIEW_RULES_VERSION = '1.3.0';
 export const REVIEW_LIMITS = { reason: 1000, findings: 60, instruction: 1000 };
 
 export type FindingSeverity = 'blocking' | 'important' | 'minor';
@@ -230,6 +230,35 @@ function screensReview(value: AppScreens, features: AppFeatures | null, push: Pu
   }
 }
 
+function offerReview(offer: Offer, push: Push) {
+  const names = new Map<string, number>();
+  for (const service of offer.services) names.set(service.name.trim().toLowerCase(), (names.get(service.name.trim().toLowerCase()) ?? 0) + 1);
+  offer.services.forEach((service, index) => {
+    if (service.name && (names.get(service.name.trim().toLowerCase()) ?? 0) > 1) push({
+      code: 'OFFER_DUPLICATE_NAME', severity: 'important', category: 'clarity', target: `service-${index}`, where: tr('Услуга «{0}»', [service.name]),
+      message: tr('Две услуги называются одинаково — клиент не поймёт, чем они отличаются.'),
+      fix: tr('Объедините их или уточните названия.'),
+    });
+  });
+  const noPrice = offer.services.filter((service) => !service.price?.trim());
+  if (offer.services.length && noPrice.length === offer.services.length) push({
+    code: 'OFFER_NO_PRICES', severity: 'important', category: 'clarity', target: 'services', where: tr('Услуги'),
+    message: tr('Ни у одной услуги нет цены — это первое, что спрашивают клиенты.'),
+    fix: tr('Укажите цену или «от …» хотя бы для основных услуг.'),
+  });
+  else if (noPrice.length) push({
+    code: 'OFFER_SOME_PRICES_MISSING', severity: 'minor', category: 'clarity', target: 'services', where: tr('Услуги'),
+    message: tr('Без цены: {0}.', [noPrice.slice(0, 4).map((service) => service.name).join(', ')]),
+    fix: tr('Укажите цену или напишите, от чего она зависит.'),
+  });
+  const bare = offer.services.filter((service) => !service.description?.trim());
+  if (offer.services.length >= 2 && bare.length === offer.services.length) push({
+    code: 'OFFER_NO_DESCRIPTIONS', severity: 'minor', category: 'clarity', target: 'services', where: tr('Услуги'),
+    message: tr('У услуг нет описаний — по одному названию трудно выбрать.'),
+    fix: tr('Добавьте к каждой услуге одну фразу: что входит и для кого.'),
+  });
+}
+
 function sitemapReview(map: Sitemap, push: Push) {
   const titles = new Map<string, number>();
   for (const page of map.pages) titles.set(page.title.trim().toLowerCase(), (titles.get(page.title.trim().toLowerCase()) ?? 0) + 1);
@@ -379,6 +408,7 @@ export function reviewStage(type: string, content: unknown, context: { features?
     if (type === 'process') processReview(content as BusinessProcess, push);
     if (type === 'features') featuresReview(content as AppFeatures, context.process ?? null, push);
     if (type === 'screens') screensReview(content as AppScreens, context.features ?? null, push);
+    if (type === 'offer') offerReview(content as Offer, push);
     if (type === 'sitemap') sitemapReview(content as Sitemap, push);
     if (type === 'content') contentReview(content as ContentArtifact, push);
     if (type === 'schedule') scheduleReview(content as Schedule, push);
