@@ -35,6 +35,15 @@ export class TeamController {
     return this.ownership.offer(request.user.id, projectId, { toMemberId: str(input.toMemberId, 'MEMBER_NOT_FOUND'), keepAccess: input.keepAccess !== false, confirmName: str(input.confirmName, 'OWNERSHIP_CONFIRM_NAME') });
   }
 
+  /** Hand the project to someone not in the team: an invitation by e-mail that carries the offer. */
+  @Post('projects/:projectId/team/ownership-invite')
+  @HttpCode(200)
+  inviteNewOwner(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw, ['email', 'keepAccess', 'confirmName']);
+    if (input.keepAccess !== undefined && typeof input.keepAccess !== 'boolean') throw new BadRequestException('INVALID_KEEPACCESS');
+    return this.ownership.inviteNewOwner(request.user.id, projectId, { email: str(input.email, 'EMAIL_INVALID'), keepAccess: input.keepAccess !== false, confirmName: str(input.confirmName, 'OWNERSHIP_CONFIRM_NAME') });
+  }
+
   @Post('projects/:projectId/team/ownership/:action')
   @HttpCode(200)
   decideOwnership(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('action') action: string) {
@@ -84,8 +93,11 @@ export class TeamController {
 
   @Post('team-invites/:token/accept')
   @HttpCode(200)
-  accept(@Req() request: AuthenticatedRequest, @Param('token') token: string) {
-    return this.team.accept(request.user.id, request.user.email, token);
+  async accept(@Req() request: AuthenticatedRequest, @Param('token') token: string) {
+    const result = await this.team.accept(request.user.id, request.user.email, token);
+    // A hand-over invitation: the transfer offer follows the joining (or the owner learns why it could not).
+    const ownershipOffered = result.joined ? await this.ownership.afterJoin(request.user.id, result.data.projectId, result.joined) : false;
+    return { data: { ...result.data, ownershipOffered } };
   }
 }
 

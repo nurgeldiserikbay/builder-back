@@ -2084,4 +2084,8 @@ export const en: Record<string, string> = {
   "✅ Стать владельцем": "✅ Become the owner",
   "Отказаться": "Decline",
   "Сверка по словам: «найдено» значит, что слова требования есть в принятом этапе, а не что результат его выполняет. «Не найдено» — повод проверить, а не доказательство, что требования нет. Учитываются только принятые этапы.": "A comparison by words: “found” means the words of the requirement are in an accepted stage, not that the result does it. “Not found” is a reason to check, not proof that the requirement is missing. Only accepted stages are counted.",
+  "Уже открыто другое предложение или владелец сменился.": "Another offer is already open or the owner has changed.",
+  "{0} вошёл в команду проекта «{1}», но предложение передать проект не отправлено: {2} Предложите передачу во вкладке «Команда», когда это решится.": "{0} joined the team of “{1}”, but the hand-over offer was not sent: {2} Offer the hand-over in the “Team” tab once this is settled.",
+  "Вам предлагают проект «{0}»": "You are offered the project “{0}”",
+  "<p>{0} предлагает передать вам проект «{1}».</p><p>Откройте приглашение и войдите или зарегистрируйтесь с этой почтой: вы попадёте в команду проекта как администратор, а затем увидите условия передачи и сможете принять проект или отказаться.</p><p><a href=\"{2}\">Открыть приглашение</a></p><p>Ссылка действует {3} дней.</p>": "<p>{0} offers to hand you the project “{1}”.</p><p>Open the invitation and sign in or register with this e-mail: you will join the project team as an administrator, then see the terms of the hand-over and can accept the project or decline.</p><p><a href=\"{2}\">Open the invitation</a></p><p>The link is valid for {3} days.</p>",
 };

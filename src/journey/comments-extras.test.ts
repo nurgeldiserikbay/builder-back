@@ -1,3 +1,4 @@
+import { TeamService } from '../team/team.service.js';
 import { OwnershipService } from '../team/ownership.service.js';
 import 'dotenv/config';
 import assert from 'node:assert/strict';
@@ -72,7 +73,7 @@ describe('remarks: files, mentions and the bot (database)', async () => {
       const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core));
       const comments = new CommentsService(prisma!, core);
       const files = new StageFilesService(prisma!, core);
-      const bot = new TelegramBotService(prisma!, journey, {} as never, comments, files, new OwnershipService(prisma!, billing));
+      const bot = new TelegramBotService(prisma!, journey, {} as never, comments, files, new OwnershipService(prisma!, billing, new TeamService(prisma!, billing)));
 
       const owner = await user('owner');
       const writer = await user('writer');

@@ -1,3 +1,4 @@
+import { TeamService } from './team.service.js';
 import { BadRequestException, ConflictException, ForbiddenException, GoneException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { BillingService } from '../billing/billing.service.js';
@@ -25,7 +26,7 @@ export const blockerTexts: Record<string, string> = {
  */
 @Injectable()
 export class OwnershipService {
-  constructor(private readonly prisma: PrismaService, private readonly billing: BillingService) {}
+  constructor(private readonly prisma: PrismaService, private readonly billing: BillingService, private readonly team: TeamService) {}
 
   async blockers(projectId: string): Promise<string[]> {
     const settings = await billingSettings(this.prisma);
@@ -63,14 +64,16 @@ export class OwnershipService {
 
   /** For the team card: the open offer (to the owner and the recipient) and, for the owner, what blocks a transfer. */
   async view(userId: string, projectId: string, role: string) {
-    const offer = await this.pending(projectId);
+    const [offer, invite] = await Promise.all([this.pending(projectId), this.openInvite(projectId)]);
     const owner = role === 'owner';
     const visible = offer && (owner || offer.toUserId === userId) ? offer : null;
     const recipient = visible ? await this.prisma.user.findUnique({ where: { id: visible.toUserId }, select: { name: true, email: true } }) : null;
     const blockers = owner || visible ? await this.blockers(projectId) : [];
     return {
       offer: visible ? { id: visible.id, toUserId: visible.toUserId, toName: recipient?.name || recipient?.email || '', keepAccess: visible.keepAccess, expiresAt: visible.expiresAt, forYou: visible.toUserId === userId } : null,
-      canOffer: owner && !offer,
+      canOffer: owner && !offer && !invite,
+      // The hand-over invitation waiting for the person to join (owner only).
+      invite: owner && invite ? { email: invite.email, expiresAt: invite.expiresAt } : null,
       blockers: blockers.map((code) => ({ code, text: tr(blockerTexts[code] ?? code) })),
     };
   }
@@ -98,22 +101,67 @@ export class OwnershipService {
     const blockers = await this.blockers(projectId);
     if (blockers.length) throw new ConflictException({ message: 'OWNERSHIP_BLOCKED', blockers });
     if (await this.pending(projectId)) throw new ConflictException('OWNERSHIP_OFFER_OPEN');
+    await this.createOffer(projectId, project.name, userId, target.userId, input.keepAccess);
+    return { data: { offered: true } };
+  }
+
+  private async createOffer(projectId: string, projectName: string, fromUserId: string, toUserId: string, keepAccess: boolean) {
     try {
       await this.prisma.$transaction(async (tx) => {
-        const created = await tx.ownershipTransfer.create({ data: { projectId, fromUserId: userId, toUserId: target.userId, keepAccess: input.keepAccess, expiresAt: new Date(Date.now() + OFFER_DAYS * 86_400_000) } });
-        await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'ownership_offered', details: { transferId: created.id, toUserId: target.userId, keepAccess: input.keepAccess } } });
+        const created = await tx.ownershipTransfer.create({ data: { projectId, fromUserId, toUserId, keepAccess, expiresAt: new Date(Date.now() + OFFER_DAYS * 86_400_000) } });
+        await tx.projectEvent.create({ data: { projectId, actorUserId: fromUserId, type: 'ownership_offered', details: { transferId: created.id, toUserId, keepAccess } } });
       });
     } catch (error) {
       if ((error as { code?: string }).code === 'P2002') throw new ConflictException('OWNERSHIP_OFFER_OPEN');
       throw error;
     }
-    const from = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
-    await notifyUser(this.prisma, target.userId, {
-      text: () => tr('{0} предлагает передать вам проект «{1}». Посмотрите условия и примите или откажитесь во вкладке «Команда» в течение 7 дней.', [from?.name || from?.email || '', project.name]),
+    const from = await this.prisma.user.findUnique({ where: { id: fromUserId }, select: { name: true, email: true } });
+    await notifyUser(this.prisma, toUserId, {
+      text: () => tr('{0} предлагает передать вам проект «{1}». Посмотрите условия и примите или откажитесь во вкладке «Команда» в течение 7 дней.', [from?.name || from?.email || '', projectName]),
       // In Telegram the offer can be read and answered right in the chat.
       telegramKeyboard: () => [[{ text: tr('📦 Посмотреть предложение'), callback_data: `OT:${projectId}` }]],
     }).catch(() => undefined);
-    return { data: { offered: true } };
+  }
+
+  /**
+   * Handing the project to someone not in the team yet: an invitation by e-mail as a manager that carries the offer.
+   * The owner's side is checked now (name, nothing tied to the project, no other offer); the offer itself is made
+   * when the person joins, and they decide then, as with any offer.
+   */
+  async inviteNewOwner(userId: string, projectId: string, input: { email: string; keepAccess: boolean; confirmName: string }) {
+    const { role, project } = await this.member(userId, projectId);
+    if (role !== 'owner') throw new ForbiddenException('OWNERSHIP_OWNER_ONLY');
+    if (project.status === 'archived') throw new ConflictException('PROJECT_NOT_ACTIVE');
+    if (input.confirmName.trim() !== project.name.trim()) throw new BadRequestException('OWNERSHIP_CONFIRM_NAME');
+    const blockers = await this.blockers(projectId);
+    if (blockers.length) throw new ConflictException({ message: 'OWNERSHIP_BLOCKED', blockers });
+    if (await this.pending(projectId)) throw new ConflictException('OWNERSHIP_OFFER_OPEN');
+    if (await this.openInvite(projectId)) throw new ConflictException('OWNERSHIP_INVITE_OPEN');
+    return this.team.invite(userId, projectId, { email: input.email, role: 'manager' }, { keepAccess: input.keepAccess });
+  }
+
+  private openInvite(projectId: string) {
+    return this.prisma.projectInvitation.findFirst({ where: { projectId, ownershipKeepAccess: { not: null }, acceptedAt: null, revokedAt: null, expiresAt: { gt: new Date() } }, select: { id: true, email: true, expiresAt: true } });
+  }
+
+  /**
+   * The person invited to take the project over has joined. The offer is made if nothing changed meanwhile — the
+   * inviter still owns the project, nothing is tied to it, no other offer is open; otherwise the owner is told why.
+   */
+  async afterJoin(userId: string, projectId: string, joined: { invitedByUserId: string; keepAccess: boolean }): Promise<boolean> {
+    const project = await this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { name: true, ownerUserId: true, status: true } });
+    const reason = project.ownerUserId !== joined.invitedByUserId ? 'OWNER_CHANGED' : project.status === 'archived' ? 'ARCHIVED'
+      : (await this.pending(projectId)) ? 'OFFER_OPEN' : (await this.blockers(projectId))[0] ?? null;
+    if (!reason) {
+      try {
+        await this.createOffer(projectId, project.name, joined.invitedByUserId, userId, joined.keepAccess);
+        return true;
+      } catch { /* a concurrent offer: fall through to telling the owner */ }
+    }
+    const person = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
+    const why = reason && blockerTexts[reason] ? tr(blockerTexts[reason]) : tr('Уже открыто другое предложение или владелец сменился.');
+    await notifyUser(this.prisma, project.ownerUserId, { text: () => tr('{0} вошёл в команду проекта «{1}», но предложение передать проект не отправлено: {2} Предложите передачу во вкладке «Команда», когда это решится.', [person?.name || person?.email || '', project.name, why]) }).catch(() => undefined);
+    return false;
   }
 
   async cancel(userId: string, projectId: string) {

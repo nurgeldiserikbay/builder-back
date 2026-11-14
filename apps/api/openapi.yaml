@@ -2781,7 +2781,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       responses:
-        '200': { description: 'available, reason (QUICK_EDIT_FORBIDDEN, QUICK_EDIT_NOT_LIVE, QUICK_EDIT_BUILD_IN_WORK) or null, targets[] (content, design), pending (stageKey, stageTitle, versionId, versionNumber, request, createdAt, changes[]) or null, aiConfigured, contacts (phone, messenger, email, address) or null, locked (hand-edited parts per stage)' }
+        '200': { description: 'available, reason (QUICK_EDIT_FORBIDDEN, QUICK_EDIT_NOT_LIVE, QUICK_EDIT_BUILD_IN_WORK) or null, targets[] (content, design), pending (stageKey, stageTitle, versionId, versionNumber, request, createdAt, changes[]) or null, aiConfigured, contacts (phone, messenger, email, address) or null, products[] (key, name, price, unit, available) or null (store, accepted catalogue), schedule (masters[key, name, week]) or null (booking, accepted schedule), locked (hand-edited parts per stage)' }
     post:
       tags: [Publishing]
       operationId: startQuickEdit
@@ -2865,6 +2865,88 @@ paths:
       responses:
         '200': { description: 'Same body as GET plus published (buildVersion, contacts[] with field, before, after)' }
         '400': { description: 'QUICK_EDIT_CONTACT_INVALID:<field>, UNKNOWN_FIELD' }
+        '409': { description: 'QUICK_EDIT_NOT_LIVE, QUICK_EDIT_BUILD_IN_WORK, QUICK_EDIT_PENDING, QUICK_EDIT_STAGE_IN_WORK, QUICK_EDIT_STAGE_HAS_LEAD, QUICK_EDIT_WAITS_FOR_BROWSER_CHECK' }
+        '422': { description: 'QUICK_EDIT_NO_CHANGES, QUICK_EDIT_CHECKS_FAILED' }
+  /projects/{projectId}/quick-edit/products:
+    post:
+      tags: [Publishing]
+      operationId: quickEditProducts
+      summary: New prices and stock of products already in the catalogue — no AI; the live site is updated in the same call
+      description: Store route. Only price and available change, by product key; adding, removing or renaming products is done on the «Каталог товаров» stage. The stage is accepted with the new catalogue; other stages built on it (the architecture) are answered «no change»; the site is rebuilt, checked and updated.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [products]
+              properties:
+                products:
+                  type: array
+                  minItems: 1
+                  maxItems: 60
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [key, price, available]
+                    properties:
+                      key: { type: string }
+                      price: { type: integer, minimum: 0, maximum: 10000000, description: Tenge }
+                      available: { type: boolean }
+      responses:
+        '200': { description: 'Same body as GET plus published (buildVersion, products[] with key, name, field price|available, before, after)' }
+        '400': { description: 'QUICK_EDIT_PRODUCTS_INVALID, QUICK_EDIT_PRODUCT_UNKNOWN, QUICK_EDIT_PRODUCT_PRICE_INVALID:<key>, QUICK_EDIT_TARGET_INVALID (no catalogue in this route)' }
+        '409': { description: 'QUICK_EDIT_NOT_LIVE, QUICK_EDIT_BUILD_IN_WORK, QUICK_EDIT_PENDING, QUICK_EDIT_STAGE_IN_WORK, QUICK_EDIT_STAGE_HAS_LEAD, QUICK_EDIT_WAITS_FOR_BROWSER_CHECK' }
+        '422': { description: 'QUICK_EDIT_NO_CHANGES, QUICK_EDIT_CHECKS_FAILED' }
+  /projects/{projectId}/quick-edit/hours:
+    post:
+      tags: [Publishing]
+      operationId: quickEditHours
+      summary: New working hours of masters already in the schedule — no AI; the live site is updated in the same call
+      description: Booking route. Each master's week, Monday first, null for a day off; masters, services and booking rules are changed on the «Расписание и запись» stage. Bookings already made are kept. Other stages built on the schedule are answered «no change»; the site is rebuilt, checked and updated.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [masters]
+              properties:
+                masters:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [key, week]
+                    properties:
+                      key: { type: string }
+                      week:
+                        type: array
+                        minItems: 7
+                        maxItems: 7
+                        items:
+                          oneOf:
+                            - type: 'null'
+                            - type: object
+                              additionalProperties: false
+                              required: [from, to]
+                              properties:
+                                from: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$' }
+                                to: { type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$' }
+      responses:
+        '200': { description: 'Same body as GET plus published (buildVersion, hours[] with key, name, day 0–6, before, after)' }
+        '400': { description: 'QUICK_EDIT_HOURS_INVALID[:<key>], QUICK_EDIT_MASTER_UNKNOWN, QUICK_EDIT_TARGET_INVALID (no schedule in this route)' }
         '409': { description: 'QUICK_EDIT_NOT_LIVE, QUICK_EDIT_BUILD_IN_WORK, QUICK_EDIT_PENDING, QUICK_EDIT_STAGE_IN_WORK, QUICK_EDIT_STAGE_HAS_LEAD, QUICK_EDIT_WAITS_FOR_BROWSER_CHECK' }
         '422': { description: 'QUICK_EDIT_NO_CHANGES, QUICK_EDIT_CHECKS_FAILED' }
   /admin/ai-pricing:
@@ -3335,7 +3417,7 @@ paths:
         confirmName must repeat the project name. keepAccess (default true) keeps the previous owner as a manager; false removes
         their access on transfer. Refused while money or credentials of the owner are tied to the project — OWNERSHIP_BLOCKED with
         blockers[] (WALLET_NOT_EMPTY, TOP_UP_IN_PROGRESS, PAYMENTS_OPEN, DISPUTE_OPEN, REPOSITORY_CONNECTED). One open offer per
-        project; it expires after 7 days. GET /team returns ownership (offer, canOffer, blockers with texts).
+        project; it expires after 7 days. GET /team returns ownership (offer, canOffer, blockers with texts, invite — the open hand-over invitation, owner only).
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -3376,6 +3458,33 @@ paths:
       security: [{ sessionCookie: [] }]
       responses:
         '200': { description: 'id, name, status, projectType, updatedAt, ownerName, role, roleTitle' }
+  /projects/{projectId}/team/ownership-invite:
+    post:
+      tags: [Projects]
+      operationId: inviteNewProjectOwner
+      summary: Hand the project to someone not in the team — an e-mail invitation as an administrator (manager role) that becomes the transfer offer when they join
+      description: Owner only. confirmName must repeat the project name; refused while something is tied to the project (OWNERSHIP_BLOCKED with blockers[]), while an offer or another hand-over invitation is open. Does not need a plan with a team. When the person joins, the offer is made (they accept or decline as with any offer); if the project changed meanwhile, no offer is made and the owner is told why.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, confirmName]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                keepAccess: { type: boolean, default: true }
+                confirmName: { type: string }
+      responses:
+        '200': { description: 'invitation, inviteUrl, emailSent — as for a team invitation' }
+        '400': { description: 'EMAIL_INVALID, OWNERSHIP_CONFIRM_NAME' }
+        '403': { description: OWNERSHIP_OWNER_ONLY }
+        '409': { description: 'OWNERSHIP_BLOCKED, OWNERSHIP_OFFER_OPEN, OWNERSHIP_INVITE_OPEN, ALREADY_PROJECT_MEMBER, ALREADY_INVITED, TEAM_LIMIT_REACHED, PROJECT_NOT_ACTIVE' }
   /team-invites/{token}:
     get:
       tags: [Projects]
@@ -3386,7 +3495,7 @@ paths:
       parameters:
         - { name: token, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: 'projectName, invitedBy, role, roleTitle, roleExplanation, expired, revoked, accepted' }
+        '200': { description: 'projectName, invitedBy, role, roleTitle, roleExplanation, expired, revoked, accepted, stages, ownership (the invitation also offers the project)' }
         '404': { description: INVITE_NOT_FOUND }
   /team-invites/{token}/accept:
     post:
@@ -3398,7 +3507,7 @@ paths:
       parameters:
         - { name: token, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: projectId }
+        '200': { description: 'projectId, ownershipOffered (a hand-over invitation: the transfer offer was made; false when it could not be — the owner is told why)' }
         '403': { description: INVITE_EMAIL_MISMATCH }
         '410': { description: 'INVITE_EXPIRED, INVITE_NOT_AVAILABLE' }
   /projects/{projectId}/stages/{stageKey}/accept:

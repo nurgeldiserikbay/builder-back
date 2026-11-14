@@ -35,7 +35,7 @@ describe('ownership transfer (database)', async () => {
   it('offers, refuses while something is tied to the old owner, and moves the project when the recipient accepts', { skip }, async () => {
     delete process.env.RESEND_API_KEY; delete process.env.BREVO_API_KEY;
     const billing = new BillingService(prisma!);
-    const ownership = new OwnershipService(prisma!, billing);
+    const ownership = new OwnershipService(prisma!, billing, new TeamService(prisma!, billing));
     const team = new TeamService(prisma!, billing);
     const owner = await user('owner');
     const heir = await user('heir');
@@ -106,7 +106,7 @@ describe('ownership transfer (database)', async () => {
     delete process.env.RESEND_API_KEY; delete process.env.BREVO_API_KEY; delete process.env.PUBLIC_APP_URL;
     try {
       const billing = new BillingService(prisma!);
-      const ownership = new OwnershipService(prisma!, billing);
+      const ownership = new OwnershipService(prisma!, billing, new TeamService(prisma!, billing));
       const journey = { journey: async () => ({ data: { project: { name: 'Кафе', typeTitle: 'Сайт' }, progress: { accepted: 0, total: 6 }, nextAction: { text: '' }, stages: [] } }) };
       const bot = new TelegramBotService(prisma!, journey as never, {} as never, {} as never, {} as never, ownership);
       const owner = await user('tg-owner');
@@ -154,5 +154,49 @@ describe('ownership transfer (database)', async () => {
       process.env = saved;
       server.close();
     }
+  });
+  it('hands the project to someone outside the team: an invitation that becomes an offer on joining', { skip }, async () => {
+    delete process.env.RESEND_API_KEY; delete process.env.BREVO_API_KEY;
+    const billing = new BillingService(prisma!);
+    const team = new TeamService(prisma!, billing);
+    const ownership = new OwnershipService(prisma!, billing, team);
+    const owner = await user('inv-owner', null); // a plan without a team: handing over still works
+    const outsider = await user('inv-outsider');
+    const other = await user('inv-other');
+    const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
+    const project = await prisma!.project.create({ data: { workspaceId: workspace.id, ownerUserId: owner.id, name: 'Кафе', startMode: 'build', status: 'active', projectType: 'landing', routeVersion: '1.0.0' } });
+    await prisma!.projectMember.create({ data: { projectId: project.id, userId: owner.id, role: 'owner' } });
+
+    await assert.rejects(ownership.inviteNewOwner(owner.id, project.id, { email: outsider.email, keepAccess: false, confirmName: 'Кофе' }), /OWNERSHIP_CONFIRM_NAME/);
+    const invited = await ownership.inviteNewOwner(owner.id, project.id, { email: outsider.email, keepAccess: false, confirmName: 'Кафе' });
+    assert.equal(invited.data.invitation.role, 'manager');
+    await assert.rejects(ownership.inviteNewOwner(owner.id, project.id, { email: other.email, keepAccess: true, confirmName: 'Кафе' }), /OWNERSHIP_INVITE_OPEN/);
+    const view = await ownership.view(owner.id, project.id, 'owner');
+    assert.equal(view.canOffer, false);
+    assert.equal(view.invite?.email, outsider.email);
+    const token = invited.data.inviteUrl.split('/').pop()!;
+    assert.equal((await team.info(token)).data.ownership, true);
+    // Someone else cannot use the link; the right person joins as a manager and gets the offer.
+    await assert.rejects(team.accept(other.id, other.email, token), /INVITE_EMAIL_MISMATCH/);
+    const joined = await team.accept(outsider.id, outsider.email, token);
+    assert.deepEqual(joined.joined, { invitationId: joined.joined!.invitationId, invitedByUserId: owner.id, keepAccess: false });
+    assert.equal(await ownership.afterJoin(outsider.id, project.id, joined.joined!), true);
+    const offer = await prisma!.ownershipTransfer.findFirstOrThrow({ where: { projectId: project.id, status: 'pending' } });
+    assert.equal(offer.toUserId, outsider.id);
+    assert.equal(offer.keepAccess, false);
+    await ownership.accept(outsider.id, project.id);
+    assert.equal((await prisma!.project.findUniqueOrThrow({ where: { id: project.id } })).ownerUserId, outsider.id);
+    assert.equal(await prisma!.projectMember.count({ where: { projectId: project.id, userId: owner.id, status: 'active' } }), 0);
+
+    // If something got tied to the project meanwhile, no offer is made and the owner is told.
+    const second = await prisma!.project.create({ data: { workspaceId: workspace.id, ownerUserId: owner.id, name: 'Бар', startMode: 'build', status: 'active', projectType: 'landing', routeVersion: '1.0.0' } });
+    await prisma!.projectMember.create({ data: { projectId: second.id, userId: owner.id, role: 'owner' } });
+    const again = await ownership.inviteNewOwner(owner.id, second.id, { email: other.email, keepAccess: true, confirmName: 'Бар' });
+    await prisma!.codeRepository.create({ data: { projectId: second.id, provider: 'github', baseUrl: 'https://api.github.com', repoPath: 'o/r', webUrl: 'https://github.com/o/r', defaultBranch: 'main', isPrivate: true, tokenEncrypted: 'x', tokenHint: 'abcd', connectedByUserId: owner.id, verifiedAt: new Date() } });
+    const tied = (await ownership.blockers(second.id)).length > 0;
+    const joinedAgain = await team.accept(other.id, other.email, again.data.inviteUrl.split('/').pop()!);
+    assert.equal(await ownership.afterJoin(other.id, second.id, joinedAgain.joined!), !tied);
+    assert.equal(await prisma!.ownershipTransfer.count({ where: { projectId: second.id } }), tied ? 0 : 1);
+    assert.ok(tied, 'the repository should block the hand-over in this test');
   });
 });

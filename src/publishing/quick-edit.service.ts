@@ -4,7 +4,9 @@ import { JourneyService } from '../journey/journey.service.js';
 import { projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
 import { describeChanges } from '../journey/change-summary.js';
 import { PublishingService } from './publishing.service.js';
-import { QUICK_EDIT_STAGES, checkContacts, checkRequest, contactChanges, instructionFor, targetFor, type Contacts } from './quick-edit.js';
+import { QUICK_EDIT_STAGES, checkContacts, checkHoursEdits, checkProductEdits, checkRequest, contactChanges, instructionFor, targetFor, type Contacts } from './quick-edit.js';
+import type { Catalog } from '../journey/products.js';
+import type { Schedule } from '../journey/schedule.js';
 
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
@@ -67,10 +69,18 @@ export class QuickEditService {
     const blocked = pending ? null : this.blocker(ctx);
     const goal = ctx.stage('goal');
     const brief = goal?.approvedVersionId ? (await this.prisma.stageArtifactVersion.findUnique({ where: { id: goal.approvedVersionId }, select: { content: true } }))?.content as Partial<Contacts> | undefined : undefined;
+    const accepted = async <T>(key: StageKey) => {
+      const row = ctx.route.includes(key) ? ctx.stage(key) : undefined;
+      return row?.approvedVersionId ? (await this.prisma.stageArtifactVersion.findUnique({ where: { id: row.approvedVersionId }, select: { content: true } }))?.content as T | undefined : undefined;
+    };
+    const [catalog, schedule] = await Promise.all([accepted<Catalog>('products'), accepted<Schedule>('schedule')]);
     return {
       data: {
         available: !blocked && targets.length > 0, reason: blocked, targets, pending, aiConfigured: this.journey.aiConfigured(),
         contacts: brief ? { phone: brief.phone ?? null, messenger: brief.messenger ?? null, email: brief.email ?? null, address: brief.address ?? null } : null,
+        // Prices and stock (store) and working hours (booking), editable with a form when their stage is accepted.
+        products: catalog ? catalog.products.map((product) => ({ key: product.key, name: product.name, price: product.price, unit: product.unit, available: product.available })) : null,
+        schedule: schedule ? { masters: schedule.masters.map((master) => ({ key: master.key, name: master.name, week: master.week })) } : null,
         // Parts the owner edited by hand: the AI leaves them as they are unless the owner allows it.
         locked: Object.fromEntries(targets.map((target) => [target.key, ctx.stage(target.key)?.lockedKeys ?? []])),
       },
@@ -126,32 +136,68 @@ export class QuickEditService {
   async contacts(userId: string, projectId: string, raw: unknown) {
     const checked = checkContacts(raw);
     if (!checked.ok) throw new BadRequestException(checked.code);
+    const result = await this.formEdit(userId, projectId, 'goal', (current) => {
+      const changes = contactChanges(current as Partial<Contacts>, checked.contacts);
+      return { content: { ...(current as object), ...checked.contacts }, changes, fields: changes.map((change) => change.field) };
+    }, 'Изменились только контакты.', 'quick_edit_contacts');
+    return { data: { ...result.status, published: { buildVersion: result.buildVersion, contacts: result.changes } } };
+  }
+
+  /** New prices and stock of products already in the catalogue (store route). */
+  async products(userId: string, projectId: string, raw: unknown) {
+    const result = await this.formEdit(userId, projectId, 'products', (current) => {
+      const checked = checkProductEdits(raw, current as unknown as Catalog);
+      if (!checked.ok) throw new BadRequestException(checked.code);
+      return { content: checked.catalog, changes: checked.changes, fields: [...new Set(checked.changes.map((change) => change.field))] };
+    }, 'Изменились только цены и наличие товаров.', 'quick_edit_products');
+    return { data: { ...result.status, published: { buildVersion: result.buildVersion, products: result.changes } } };
+  }
+
+  /** New working hours of masters already in the schedule (booking route). */
+  async hours(userId: string, projectId: string, raw: unknown) {
+    const result = await this.formEdit(userId, projectId, 'schedule', (current) => {
+      const checked = checkHoursEdits(raw, current as unknown as Schedule);
+      if (!checked.ok) throw new BadRequestException(checked.code);
+      return { content: checked.schedule, changes: checked.changes, fields: [...new Set(checked.changes.map((change) => change.key))] };
+    }, 'Изменились только часы работы.', 'quick_edit_hours');
+    return { data: { ...result.status, published: { buildVersion: result.buildVersion, hours: result.changes } } };
+  }
+
+  /**
+   * A form change of data other stages are built on (contacts, prices and stock, working hours). The new version is
+   * saved and accepted on its stage like a manual edit; the stages that got a change notice are answered «no change»
+   * with the reason — the edit does not change what they decided — and the site is rebuilt, checked and updated.
+   * No AI is used.
+   */
+  private async formEdit<C>(userId: string, projectId: string, key: StageKey, apply: (current: Record<string, unknown>) => { content: object; changes: C[]; fields: string[] }, reason: string, eventType: string) {
     const ctx = await this.load(userId, projectId);
     const blocked = this.blocker(ctx);
     if (blocked) throw blocked === 'QUICK_EDIT_FORBIDDEN' ? new ForbiddenException(blocked) : new ConflictException(blocked);
+    if (!ctx.route.includes(key)) throw new BadRequestException('QUICK_EDIT_TARGET_INVALID');
     if (await this.pending(projectId, ctx.stage)) throw new ConflictException('QUICK_EDIT_PENDING');
-    const goal = ctx.stage('goal');
-    if (goal?.status !== 'approved' || !goal.approvedVersionId) throw new ConflictException('QUICK_EDIT_STAGE_IN_WORK');
-    if (await this.prisma.stageAssignment.count({ where: { stageId: goal.id, role: 'lead', status: { in: ['invited', 'active'] } } })) throw new ConflictException('QUICK_EDIT_STAGE_HAS_LEAD');
-    const current = (await this.prisma.stageArtifactVersion.findUniqueOrThrow({ where: { id: goal.approvedVersionId }, select: { content: true } })).content as Record<string, unknown>;
-    const changes = contactChanges(current as Partial<Contacts>, checked.contacts);
-    if (!changes.length) throw new UnprocessableEntityException('QUICK_EDIT_NO_CHANGES');
+    const stage = ctx.stage(key);
+    if (stage?.status !== 'approved' || !stage.approvedVersionId) throw new ConflictException('QUICK_EDIT_STAGE_IN_WORK');
+    if (await this.prisma.stageAssignment.count({ where: { stageId: stage.id, role: 'lead', status: { in: ['invited', 'active'] } } })) throw new ConflictException('QUICK_EDIT_STAGE_HAS_LEAD');
+    const current = (await this.prisma.stageArtifactVersion.findUniqueOrThrow({ where: { id: stage.approvedVersionId }, select: { content: true } })).content as Record<string, unknown>;
+    const next = apply(current);
+    if (!next.changes.length) throw new UnprocessableEntityException('QUICK_EDIT_NO_CHANGES');
     const slug = ctx.project.publication!.slug;
 
-    await this.journey.reopen(userId, projectId, 'goal');
+    await this.journey.reopen(userId, projectId, key);
     try {
-      const saved = await this.journey.saveDraft(userId, projectId, 'goal', { content: { ...current, ...checked.contacts }, baseVersionId: goal.approvedVersionId });
-      await this.journey.accept(userId, projectId, 'goal', saved.data.versionId);
+      const saved = await this.journey.saveDraft(userId, projectId, key, { content: next.content, baseVersionId: stage.approvedVersionId });
+      await this.journey.accept(userId, projectId, key, saved.data.versionId);
     } catch (error) {
-      await this.backToAccepted(userId, projectId, 'goal', 'cancelled');
+      await this.backToAccepted(userId, projectId, key, 'cancelled');
       throw error;
     }
-    const goalId = goal.id;
-    const notices = await this.prisma.changeNotice.findMany({ where: { projectId, sourceStageId: goalId, status: { in: ['open', 'discussing'] } }, select: { id: true } });
-    for (const notice of notices) await this.journey.actOnChange(userId, projectId, notice.id, { action: 'accept_no_change', text: 'Изменились только контакты.', resolution: null });
-    const result = await this.rebuildAndPublish(userId, projectId, slug, 'goal');
-    await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'quick_edit_contacts', stageKey: 'goal', details: { fields: changes.map((change) => change.field), buildVersion: result.buildVersion } } });
-    return { data: { ...(await this.status(userId, projectId)).data, published: { buildVersion: result.buildVersion, contacts: changes } } };
+    // The build is answered by rebuilding it; every other stage that was told about the change gets «no change».
+    const build = ctx.stage('build');
+    const notices = await this.prisma.changeNotice.findMany({ where: { projectId, sourceStageId: stage.id, status: { in: ['open', 'discussing'] }, ...(build ? { targetStageId: { not: build.id } } : {}) }, select: { id: true } });
+    for (const notice of notices) await this.journey.actOnChange(userId, projectId, notice.id, { action: 'accept_no_change', text: reason, resolution: null });
+    const result = await this.rebuildAndPublish(userId, projectId, slug, key);
+    await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: eventType, stageKey: key, details: { fields: next.fields, buildVersion: result.buildVersion } } });
+    return { status: (await this.status(userId, projectId)).data, buildVersion: result.buildVersion, changes: next.changes };
   }
 
   /** Build from the accepted stages, require the checks, accept the build and update the live site. */
