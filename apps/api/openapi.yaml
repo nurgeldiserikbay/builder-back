@@ -6824,6 +6824,22 @@ components:
                 inputsReady: { type: boolean }
                 canOverrideReview: { type: boolean, description: Owner or manager may explain in writing why the stage goes on despite blocking review findings. }
             inputs: { type: array, items: { type: object } }
+            outputs:
+              description: What this stage hands over to the stages built on it (null without a version and for the build and hand-over stages). Required items not met stop acceptance and approval — 422 STAGE_OUTPUTS_MISSING with the item keys.
+              type: [object, 'null']
+              properties:
+                version: { type: string }
+                for: { type: array, items: { type: string }, description: Titles of the stages on this route that take this stage as input. }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [key, text, level, met]
+                    properties:
+                      key: { type: string }
+                      text: { type: string }
+                      level: { type: string, enum: [required, recommended] }
+                      met: { type: boolean }
             review:
               description: Deterministic quality review of the current version (null without a version and for the build and hand-over stages, which have their own gates). Blocking findings stop acceptance and approval until fixed or covered by an override for this version.
               oneOf:

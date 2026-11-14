@@ -174,6 +174,13 @@ describe('web application route (database)', async () => {
     await journey.saveDraft(owner.id, projectId, 'process', { content: { ...draft, rules: [] }, baseVersionId: await versionOf('process') });
     const view = await journey.stage(owner.id, projectId, 'process');
     assert.deepEqual(view.data.review!.uncoveredBlocking, ['PROCESS_PERSONAL_DATA_NO_RULE:rules']);
+    // The hand-over list names the stages built on the process; an entity without fields would stop acceptance.
+    assert.ok(view.data.outputs!.for.length > 0);
+    assert.ok(view.data.outputs!.items.every((item) => item.level === 'recommended' || item.met));
+    const withoutFields = { ...draft, rules: [], data: [...(draft as unknown as { data: unknown[] }).data, { key: 'extra', name: 'Отзыв', fields: [], links: [] }] };
+    await journey.saveDraft(owner.id, projectId, 'process', { content: withoutFields, baseVersionId: await versionOf('process') });
+    await assert.rejects(journey.accept(owner.id, projectId, 'process', await versionOf('process')), /STAGE_OUTPUTS_MISSING:data/);
+    await journey.saveDraft(owner.id, projectId, 'process', { content: { ...draft, rules: [] }, baseVersionId: await versionOf('process') });
     assert.equal(view.data.stage.canAccept, false);
     const versionId = await versionOf('process');
     await assert.rejects(journey.accept(owner.id, projectId, 'process', versionId), /REVIEW_BLOCKING_OPEN:PROCESS_PERSONAL_DATA_NO_RULE:rules/);
