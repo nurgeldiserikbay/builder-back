@@ -250,6 +250,20 @@ export class QuickEditController {
     return this.quickEdit.contacts(request.user.id, projectId, raw);
   }
 
+  /** New prices and stock of existing products (store) — no AI; the site is updated in the same call. */
+  @Post('products')
+  @HttpCode(200)
+  products(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    return this.quickEdit.products(request.user.id, projectId, raw);
+  }
+
+  /** New working hours of existing masters (booking) — no AI; the site is updated in the same call. */
+  @Post('hours')
+  @HttpCode(200)
+  hours(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    return this.quickEdit.hours(request.user.id, projectId, raw);
+  }
+
   @Post('confirm')
   @HttpCode(200)
   confirm(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
