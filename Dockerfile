@@ -17,6 +17,10 @@ RUN DATABASE_URL=postgresql://build:build@127.0.0.1:1/build npm run build \
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# Prisma's engines look for libssl; the slim image has none, so Prisma guessed a version and warned on every start.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 # The Prisma CLI and tsx stay in the image so migrations and the staff-account script can run inside it.
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
