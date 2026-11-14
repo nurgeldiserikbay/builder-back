@@ -3559,7 +3559,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ReviewFixRequest' }
       responses:
-        '200': { description: The new version, as for /generate }
+        '200': { description: 'The new version, as for /generate' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
@@ -6581,7 +6581,7 @@ components:
       required: [rulesVersion, score, findings, blocking, uncoveredBlocking, overrides]
       properties:
         rulesVersion: { type: string }
-        score: { type: integer, minimum: 0, maximum: 100, description: 100 minus 25 per blocking, 10 per important and 3 per minor finding. }
+        score: { type: integer, minimum: 0, maximum: 100, description: '100 minus 25 per blocking, 10 per important and 3 per minor finding.' }
         blocking: { type: integer }
         uncoveredBlocking: { type: array, items: { type: string }, description: Ids of blocking findings with no written explanation for this version. }
         findings:
