@@ -90,14 +90,16 @@ export class TeamService {
     return { data: rows.map(({ role, project: { owner, ...project } }) => ({ ...project, ownerName: owner.name, role, roleTitle: roleInfo[role as ProjectRole].title })) };
   }
 
-  async invite(userId: string, projectId: string, input: { email: string; role: string; stageKeys?: unknown }) {
+  /** `ownership` — the invitation also hands the project over (OwnershipService.inviteNewOwner checks the owner's side). */
+  async invite(userId: string, projectId: string, input: { email: string; role: string; stageKeys?: unknown }, ownership: { keepAccess: boolean } | null = null) {
     const { role, project } = await this.manager(userId, projectId);
     if (!(INVITABLE_ROLES as readonly string[]).includes(input.role)) throw new BadRequestException('ROLE_INVALID');
     const target = input.role as InvitableRole;
     const stageKeys = this.stageKeysFor(target, input.stageKeys, project.projectType);
     if (!canManage(role, target)) throw new ForbiddenException('ROLE_NOT_ALLOWED');
     if (!['active', 'live', 'paused', 'draft'].includes(project.status)) throw new ConflictException('PROJECT_NOT_ACTIVE');
-    await this.billing.assertCanInviteTeam(projectId);
+    // Handing the project over is not team work: it does not need a plan with a team.
+    if (!ownership) await this.billing.assertCanInviteTeam(projectId);
     const address = email(input.email);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address) || address.length > 254) throw new BadRequestException('EMAIL_INVALID');
     const [active, open, existing] = await Promise.all([
@@ -111,19 +113,24 @@ export class TeamService {
     const token = randomBytes(24).toString('base64url');
     const invitation = await this.prisma.$transaction(async (tx) => {
       const created = await tx.projectInvitation.create({
-        data: { projectId, email: address, role: target, stageKeys, tokenHash: digest(token), expiresAt: new Date(Date.now() + INVITE_DAYS * 86_400_000), invitedByUserId: userId },
+        data: { projectId, email: address, role: target, stageKeys, tokenHash: digest(token), expiresAt: new Date(Date.now() + INVITE_DAYS * 86_400_000), invitedByUserId: userId, ownershipKeepAccess: ownership ? ownership.keepAccess : null },
         select: { id: true, email: true, role: true, stageKeys: true, expiresAt: true, createdAt: true },
       });
-      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'team_invited', details: { invitationId: created.id, role: target } } });
+      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: ownership ? 'ownership_invited' : 'team_invited', details: { invitationId: created.id, role: target, ...(ownership ? { keepAccess: ownership.keepAccess } : {}) } } });
       return created;
     });
     const inviteUrl = new URL(`/team-invite/${token}`, process.env.PUBLIC_APP_URL ?? 'http://localhost:3000').toString();
     const mail = emailConfig();
     const inviter = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
-    const emailSent = mail ? await sendEmail(mail, address, tr('Приглашение в команду проекта «{0}»', [project.name]),
+    const emailSent = !mail ? false : ownership
+      ? await sendEmail(mail, address, tr('Вам предлагают проект «{0}»', [project.name]),
+        tr('<p>{0} предлагает передать вам проект «{1}».</p><p>Откройте приглашение и войдите или зарегистрируйтесь с этой почтой: вы попадёте в команду проекта как администратор, а затем увидите условия передачи и сможете принять проект или отказаться.</p><p><a href="{2}">Открыть приглашение</a></p><p>Ссылка действует {3} дней.</p>', [
+          escapeHtml(inviter?.name || inviter?.email || ''), escapeHtml(project.name), escapeHtml(inviteUrl), INVITE_DAYS,
+        ])).catch(() => false)
+      : await sendEmail(mail, address, tr('Приглашение в команду проекта «{0}»', [project.name]),
       tr('<p>{0} приглашает вас в команду проекта «{1}»: {2}.</p><p>{3}</p><p><a href="{4}">Открыть приглашение</a></p><p>Ссылка действует {5} дней.</p>', [
         escapeHtml(inviter?.name || inviter?.email || ''), escapeHtml(project.name), escapeHtml(tr(roleInfo[target].title).toLowerCase()), escapeHtml(tr(roleInfo[target].explanation)), escapeHtml(inviteUrl), INVITE_DAYS,
-      ])).catch(() => false) : false;
+      ])).catch(() => false);
     return { data: { invitation: { ...invitation, roleTitle: roleInfo[target].title, expired: false }, inviteUrl, emailSent } };
   }
 
@@ -144,7 +151,7 @@ export class TeamService {
     if (!/^[A-Za-z0-9_-]{20,64}$/.test(token)) throw new NotFoundException('INVITE_NOT_FOUND');
     const row = await this.prisma.projectInvitation.findUnique({
       where: { tokenHash: digest(token) },
-      select: { id: true, email: true, role: true, stageKeys: true, expiresAt: true, acceptedAt: true, acceptedUserId: true, revokedAt: true, projectId: true, invitedByUserId: true, project: { select: { name: true, status: true, ownerUserId: true, projectType: true } } },
+      select: { id: true, email: true, role: true, stageKeys: true, expiresAt: true, acceptedAt: true, acceptedUserId: true, revokedAt: true, projectId: true, invitedByUserId: true, ownershipKeepAccess: true, project: { select: { name: true, status: true, ownerUserId: true, projectType: true } } },
     });
     if (!row) throw new NotFoundException('INVITE_NOT_FOUND');
     return row;
@@ -159,13 +166,15 @@ export class TeamService {
         projectName: row.project.name, invitedBy: inviter?.name ?? null, role: row.role, roleTitle: roleInfo[row.role as ProjectRole].title,
         roleExplanation: roleInfo[row.role as ProjectRole].explanation, expired: row.expiresAt < new Date(), revoked: Boolean(row.revokedAt), accepted: Boolean(row.acceptedAt),
         stages: row.stageKeys.map((key) => stageDefinitions[key as StageKey]?.title ?? key),
+        // The invitation also offers the project itself: the page says so before the person joins.
+        ownership: row.ownershipKeepAccess !== null,
       },
     };
   }
 
   async accept(userId: string, userEmail: string, token: string) {
     const row = await this.byToken(token);
-    if (row.acceptedAt && row.acceptedUserId === userId) return { data: { projectId: row.projectId } };
+    if (row.acceptedAt && row.acceptedUserId === userId) return { data: { projectId: row.projectId }, joined: null };
     if (row.acceptedAt || row.revokedAt) throw new GoneException('INVITE_NOT_AVAILABLE');
     if (row.expiresAt < new Date()) throw new GoneException('INVITE_EXPIRED');
     if (row.project.status === 'archived') throw new GoneException('INVITE_NOT_AVAILABLE');
@@ -183,7 +192,8 @@ export class TeamService {
     });
     const joined = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
     await notifyUser(this.prisma, row.invitedByUserId, { text: () => tr('{0} присоединился к команде проекта «{1}» как {2}.', [joined?.name || joined?.email || '', row.project.name, tr(roleInfo[row.role as ProjectRole].title).toLowerCase()]) });
-    return { data: { projectId: row.projectId } };
+    // `joined` tells the caller to follow up a hand-over invitation with the transfer offer.
+    return { data: { projectId: row.projectId }, joined: row.ownershipKeepAccess === null ? null : { invitationId: row.id, invitedByUserId: row.invitedByUserId, keepAccess: row.ownershipKeepAccess } };
   }
 
   async changeRole(userId: string, projectId: string, memberId: string, nextRole: string) {

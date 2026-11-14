@@ -1750,6 +1750,8 @@ model ProjectInvitation {
   role            ProjectRole
   /// Contributor stages given with the invitation; empty — every stage.
   stageKeys       String[]    @default([]) @map("stage_keys") @db.VarChar(40)
+  /// Set when the owner invites someone to take the project over: once they join, they get the transfer offer.
+  ownershipKeepAccess Boolean? @map("ownership_keep_access")
   tokenHash       String      @unique @map("token_hash") @db.Char(64)
   expiresAt       DateTime    @map("expires_at") @db.Timestamptz(3)
   acceptedAt      DateTime?   @map("accepted_at") @db.Timestamptz(3)

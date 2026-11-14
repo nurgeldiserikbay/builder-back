@@ -3417,7 +3417,7 @@ paths:
         confirmName must repeat the project name. keepAccess (default true) keeps the previous owner as a manager; false removes
         their access on transfer. Refused while money or credentials of the owner are tied to the project — OWNERSHIP_BLOCKED with
         blockers[] (WALLET_NOT_EMPTY, TOP_UP_IN_PROGRESS, PAYMENTS_OPEN, DISPUTE_OPEN, REPOSITORY_CONNECTED). One open offer per
-        project; it expires after 7 days. GET /team returns ownership (offer, canOffer, blockers with texts).
+        project; it expires after 7 days. GET /team returns ownership (offer, canOffer, blockers with texts, invite — the open hand-over invitation, owner only).
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -3458,6 +3458,33 @@ paths:
       security: [{ sessionCookie: [] }]
       responses:
         '200': { description: 'id, name, status, projectType, updatedAt, ownerName, role, roleTitle' }
+  /projects/{projectId}/team/ownership-invite:
+    post:
+      tags: [Projects]
+      operationId: inviteNewProjectOwner
+      summary: Hand the project to someone not in the team — an e-mail invitation as an administrator (manager role) that becomes the transfer offer when they join
+      description: Owner only. confirmName must repeat the project name; refused while something is tied to the project (OWNERSHIP_BLOCKED with blockers[]), while an offer or another hand-over invitation is open. Does not need a plan with a team. When the person joins, the offer is made (they accept or decline as with any offer); if the project changed meanwhile, no offer is made and the owner is told why.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email, confirmName]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                keepAccess: { type: boolean, default: true }
+                confirmName: { type: string }
+      responses:
+        '200': { description: 'invitation, inviteUrl, emailSent — as for a team invitation' }
+        '400': { description: 'EMAIL_INVALID, OWNERSHIP_CONFIRM_NAME' }
+        '403': { description: OWNERSHIP_OWNER_ONLY }
+        '409': { description: 'OWNERSHIP_BLOCKED, OWNERSHIP_OFFER_OPEN, OWNERSHIP_INVITE_OPEN, ALREADY_PROJECT_MEMBER, ALREADY_INVITED, TEAM_LIMIT_REACHED, PROJECT_NOT_ACTIVE' }
   /team-invites/{token}:
     get:
       tags: [Projects]
@@ -3468,7 +3495,7 @@ paths:
       parameters:
         - { name: token, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: 'projectName, invitedBy, role, roleTitle, roleExplanation, expired, revoked, accepted' }
+        '200': { description: 'projectName, invitedBy, role, roleTitle, roleExplanation, expired, revoked, accepted, stages, ownership (the invitation also offers the project)' }
         '404': { description: INVITE_NOT_FOUND }
   /team-invites/{token}/accept:
     post:
@@ -3480,7 +3507,7 @@ paths:
       parameters:
         - { name: token, in: path, required: true, schema: { type: string } }
       responses:
-        '200': { description: projectId }
+        '200': { description: 'projectId, ownershipOffered (a hand-over invitation: the transfer offer was made; false when it could not be — the owner is told why)' }
         '403': { description: INVITE_EMAIL_MISMATCH }
         '410': { description: 'INVITE_EXPIRED, INVITE_NOT_AVAILABLE' }
   /projects/{projectId}/stages/{stageKey}/accept:
