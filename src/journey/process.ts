@@ -124,6 +124,9 @@ export function processIssues(process: BusinessProcess): ProcessIssue[] {
   return issues;
 }
 
+/** The business keeps clients' contacts in every template, so the draft says how it treats them (the review asks for it). */
+export const consentRule = () => tr('Контакты клиентов храним с их согласия только для ответа и записи и удаляем по их просьбе.');
+
 /** A starting draft from the goal, without AI: the typical process of this kind of project. */
 export function templateProcess(projectType: string, brief: Brief | null): BusinessProcess {
   const name = brief?.businessName || tr("Вы");
@@ -147,7 +150,7 @@ export function templateProcess(projectType: string, brief: Brief | null): Busin
           { key: 'p2', actor: 'site', action: tr('Сообщает владельцу об отмене'), capability: 'notify_owner' },
         ] },
       ],
-      rules: [tr('Цены и наличие — по принятому каталогу.'), tr('Заказ можно отменить по ссылке, пока магазин его не подтвердил.')],
+      rules: [tr('Цены и наличие — по принятому каталогу.'), tr('Заказ можно отменить по ссылке, пока магазин его не подтвердил.'), consentRule()],
       data: [
         { key: 'client', name: tr('Клиент'), fields: [tr('Имя'), tr('Телефон'), tr('Адрес доставки')], links: [{ to: 'order', kind: 'many', label: tr('делает заказы') }] },
         { key: 'order', name: tr('Заказ'), fields: [tr('Номер'), tr('Товары и количество'), tr('Способ получения'), tr('Оплата'), tr('Статус')], links: [{ to: 'product', kind: 'many', label: tr('товары') }] },
@@ -177,7 +180,7 @@ export function templateProcess(projectType: string, brief: Brief | null): Busin
           { key: 'p2', actor: 'site', action: tr("Показывает клиентам новое свободное время"), capability: 'view_info' },
         ] },
       ],
-      rules: [tr("Одно время у мастера может занять только один клиент."), tr("Клиент может отменить запись не позже чем за несколько часов до визита.")],
+      rules: [tr("Одно время у мастера может занять только один клиент."), tr("Клиент может отменить запись не позже чем за несколько часов до визита."), consentRule()],
       data: [
         { key: 'client', name: tr("Клиент"), fields: [tr("Имя"), tr("Телефон"), tr("Почта для напоминания")], links: [{ to: 'booking', kind: 'many', label: tr("записывается") }] },
         { key: 'booking', name: tr("Запись"), fields: [tr("Услуга"), tr("Мастер"), tr("Время"), tr("Комментарий"), tr("Статус")], links: [{ to: 'service', kind: 'one', label: tr("на услугу") }, { to: 'master', kind: 'one', label: tr("к мастеру") }] },
@@ -201,7 +204,7 @@ export function templateProcess(projectType: string, brief: Brief | null): Busin
   return {
     actors: action === 'form' ? [client, site, owner] : [client, owner],
     scenarios: [{ key: 'contact', title: tr("Обращение клиента"), goal: tr("Посетитель понимает, чем вы полезны, и связывается с вами."), steps }],
-    rules: action === 'form' ? [tr("На заявку отвечаем в течение рабочего дня.")] : [],
+    rules: action === 'form' ? [tr("На заявку отвечаем в течение рабочего дня."), consentRule()] : [consentRule()],
     data: action === 'form'
       ? [{ key: 'lead', name: tr("Заявка"), fields: [tr("Имя"), tr("Контакт"), tr("Сообщение"), tr("Когда пришла")], links: [] }]
       : [{ key: 'contact', name: tr("Контакты для связи"), fields: [tr("Телефон или мессенджер"), tr("Адрес"), tr("Часы работы")], links: [] }],

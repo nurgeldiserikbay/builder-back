@@ -61,6 +61,7 @@ export function errorText(code: string): string {
   const texts = errorTexts();
   if (texts[code]) return texts[code];
   if (code.startsWith('STAGE_INCOMPLETE')) return tr("Этап заполнен не до конца — посмотрите «Чего не хватает» в карточке этапа.");
+  if (code.startsWith('REVIEW_BLOCKING_OPEN')) return tr("Проверка качества нашла блокирующие замечания. Исправьте их или объясните в приложении, почему этап можно принять.");
   return tr("Не получилось выполнить действие. Попробуйте ещё раз или откройте приложение.");
 }
 

@@ -1,3 +1,4 @@
+import { StageReviewService } from '../journey/stage-review.service.js';
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -40,7 +41,7 @@ describe('stage work in a team (database)', async () => {
     const core = new JourneyCore(prisma!, billing);
     core.provider = null;
     const worktime = new WorktimeService(prisma!);
-    const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core));
+    const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core), new StageReviewService(prisma!, core, new StageAiService(prisma!, core, worktime)));
     const comments = new CommentsService(prisma!, core);
 
     const owner = await user('owner');

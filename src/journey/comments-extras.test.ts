@@ -1,3 +1,4 @@
+import { StageReviewService } from './stage-review.service.js';
 import { TeamService } from '../team/team.service.js';
 import { OwnershipService } from '../team/ownership.service.js';
 import 'dotenv/config';
@@ -70,7 +71,7 @@ describe('remarks: files, mentions and the bot (database)', async () => {
       const core = new JourneyCore(prisma!, billing);
       core.provider = null;
       const worktime = new WorktimeService(prisma!);
-      const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core));
+      const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core), new StageReviewService(prisma!, core, new StageAiService(prisma!, core, worktime)));
       const comments = new CommentsService(prisma!, core);
       const files = new StageFilesService(prisma!, core);
       const bot = new TelegramBotService(prisma!, journey, {} as never, comments, files, new OwnershipService(prisma!, billing, new TeamService(prisma!, billing)));
