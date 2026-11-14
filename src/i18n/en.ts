@@ -2274,4 +2274,5 @@ export const en: Record<string, string> = {
   "Связи в схеме данных ведут к существующим таблицам": "Links in the data diagram point to existing tables",
   "Для каждого шага процесса решено: делает сайт или вручную": "For every process step it is decided: the site does it or it is done by hand",
   "Этап ещё не отдаёт следующим этапам всё нужное — посмотрите «Что получит следующий этап» в приложении.": "The stage does not yet give the next stages everything they need — see «What the next stage gets» in the app.",
+  "Сервис ИИ просит подождать: исчерпан его лимит запросов. Ничего не изменилось — попробуйте через минуту.": "The AI service asks to wait: its request limit is used up. Nothing changed — try again in a minute.",
 };
