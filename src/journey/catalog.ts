@@ -254,7 +254,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     importHint: null,
     contract: { explanation: 'Функции и роли — договорённость о том, что делает приложение. Экраны и архитектура строятся по ним.' },
     playbook: {
-      version: '1.1.0',
+      version: '1.2.0',
       instructions: [
         'Describe the web application from the brief and the business process, in plain words, in the project language.',
         'Roles: the people who sign in (clients, staff, the owner as administrator). 1–6. Keys: short latin snake_case.',
@@ -263,6 +263,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
         'sensitivity: personal when the app keeps people\'s contacts; payments or health only when stated. integrations: only services the user named.',
         'With personal or health data, add a must feature for consent at sign-up and deleting the account with its data. With payments, a feature for payment confirmation, receipt and refund. With several roles, one acceptance criterion says each role sees only what it is allowed to.',
         'Every role uses at least one feature; features name only roles from the list.',
+        'data: keys of the records from the business process data that the feature creates, changes or shows, plus «user» for accounts. Every record of the process is used by at least one feature.',
       ],
     },
   },

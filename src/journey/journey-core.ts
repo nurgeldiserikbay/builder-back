@@ -179,7 +179,9 @@ export class JourneyCore {
   }
 
   /** Accepted inputs a completeness check needs: texts of a multi-page site are checked against the accepted map. */
-  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null }> {
+  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null }> {
+    // Features are checked against the accepted process: the data they name must exist there.
+    if (key === 'features') return { sitemap: null, process: ((await this.acceptedInputs(ctx, key)).process?.content as BusinessProcess | undefined) ?? null };
     // Screens are checked against the accepted functions: every role has screens, every must function is shown.
     if (key === 'screens') return { sitemap: null, features: ((await this.acceptedInputs(ctx, key)).features?.content as AppFeatures | undefined) ?? null };
     if (key !== 'content' || !ctx.route.includes('sitemap')) return { sitemap: null };

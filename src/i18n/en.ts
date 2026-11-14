@@ -2206,4 +2206,8 @@ export const en: Record<string, string> = {
   "статус из списка": "status from a list",
   "файл": "file",
   "адрес": "address",
+  "Функция работает с данными, которых нет в схеме данных процесса.": "The feature works with data that is not in the process data diagram.",
+  "Выберите данные из схемы или добавьте их на этапе «Бизнес-процесс».": "Pick data from the diagram or add it at the «Business process» stage.",
+  "Эти данные есть в процессе, но ни одна функция с ними не работает — их некому создавать и смотреть.": "This data is in the process, but no feature works with it — nobody creates or views it.",
+  "Отметьте функцию, которая работает с этими данными, или уберите их из процесса.": "Mark a feature that works with this data, or remove it from the process.",
 };

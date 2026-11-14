@@ -12,13 +12,16 @@ const brief: Brief = {
   businessName: 'Торты от Айгерим', whatYouDo: 'Печём торты на заказ к праздникам', audience: 'Родители и компании', city: null,
   mainAction: 'message', phone: null, messenger: '@aigerim', email: null, address: null, tone: 'friendly',
 };
-const ids = (type: string, content: unknown, features?: AppFeatures) => reviewStage(type, content, { features }).findings.map((finding) => finding.id);
+const ids = (type: string, content: unknown, features?: AppFeatures, process?: BusinessProcess) => reviewStage(type, content, { features, process }).findings.map((finding) => finding.id);
 
 describe('stage review', () => {
   it('drafts made without AI pass the review', () => {
     for (const type of ['landing', 'company_site', 'store', 'booking', 'web_app']) assert.deepEqual(ids('process', templateProcess(type, brief)), [], type);
-    const features = templateFeatures(brief, templateProcess('web_app', brief));
-    assert.deepEqual(ids('features', features), []);
+    const process = templateProcess('web_app', brief);
+    const features = templateFeatures(brief, process);
+    assert.deepEqual(ids('features', features, undefined, process), []);
+    // The template says which data each feature works with: every record of the process is used.
+    assert.ok(features.features.every((feature) => feature.data.length > 0), JSON.stringify(features.features.map((feature) => [feature.key, feature.data])));
     assert.deepEqual(ids('screens', templateScreens(features), features), []);
   });
 
@@ -55,7 +58,7 @@ describe('stage review', () => {
   it('checks roles, privacy and access in the features', () => {
     const features: AppFeatures = {
       roles: [{ key: 'user', name: 'Клиент', description: '' }, { key: 'admin', name: 'Администратор', description: '' }, { key: 'guest', name: 'Гость', description: '' }],
-      features: [{ key: 'orders', title: 'Заказы', description: 'Список заказов', roles: ['user', 'boss'], priority: 'must', acceptance: ['Работает'] }],
+      features: [{ key: 'orders', title: 'Заказы', description: 'Список заказов', roles: ['user', 'boss'], priority: 'must', acceptance: ['Работает'], data: [] }],
       sensitivity: 'personal', integrations: [],
     };
     const found = ids('features', features);
@@ -70,14 +73,14 @@ describe('stage review', () => {
       { key: 'lost', title: 'Потерянный', role: 'user', purpose: '', features: [], blocks: [{ kind: 'text', title: '', fields: [] }], links: [] },
       { key: 'admin_home', title: 'Админка', role: 'admin', purpose: '', features: [], blocks: [{ kind: 'text', title: '', fields: [] }], links: [] },
     ] };
-    const features: AppFeatures = { roles: [], features: [{ key: 'f', title: 'F', description: '', roles: [], priority: 'must', acceptance: [] }], sensitivity: 'normal', integrations: [] };
+    const features: AppFeatures = { roles: [], features: [{ key: 'f', title: 'F', description: '', roles: [], priority: 'must', acceptance: [], data: [] }], sensitivity: 'normal', integrations: [] };
     const found = ids('screens', screens, features);
     for (const id of ['SCREENS_LINK_UNKNOWN:home', 'SCREENS_CROSS_ROLE_LINK:home', 'SCREENS_FORM_NO_FIELDS:home', 'SCREENS_UNREACHABLE:lost', 'SCREENS_UNKNOWN_FEATURE:list']) assert.ok(found.includes(id), id);
     assert.ok(!found.includes('SCREENS_UNREACHABLE:list'));
   });
 
   it('keeps finding ids stable and unique, and covers blockers only by their own ids', () => {
-    const features: AppFeatures = { roles: [{ key: 'user', name: 'Клиент', description: '' }], features: [{ key: 'a', title: 'A', description: '', roles: ['x', 'y'], priority: 'should', acceptance: ['Длинный понятный критерий приёмки'] }], sensitivity: 'personal', integrations: [] };
+    const features: AppFeatures = { roles: [{ key: 'user', name: 'Клиент', description: '' }], features: [{ key: 'a', title: 'A', description: '', roles: ['x', 'y'], priority: 'should', acceptance: ['Длинный понятный критерий приёмки'], data: [] }], sensitivity: 'personal', integrations: [] };
     const first = reviewStage('features', features);
     assert.deepEqual(first, reviewStage('features', features));
     assert.equal(new Set(first.findings.map((finding) => finding.id)).size, first.findings.length);
@@ -87,7 +90,7 @@ describe('stage review', () => {
   });
 
   it('builds the AI instruction from finding texts only', () => {
-    const review = reviewStage('features', { roles: [{ key: 'u', name: 'Клиент', description: '' }, { key: 'v', name: 'Гость', description: '' }], features: [{ key: 'a', title: 'A', description: '', roles: ['u'], priority: 'should', acceptance: ['Каждый видит только то, что разрешено его роли'] }], sensitivity: 'normal', integrations: [] });
+    const review = reviewStage('features', { roles: [{ key: 'u', name: 'Клиент', description: '' }, { key: 'v', name: 'Гость', description: '' }], features: [{ key: 'a', title: 'A', description: '', roles: ['u'], priority: 'should', acceptance: ['Каждый видит только то, что разрешено его роли'], data: [] }], sensitivity: 'normal', integrations: [] });
     const text = fixInstruction(review.findings);
     assert.match(text, /Исправь только эти замечания/);
     assert.match(text, /Роль «Гость»/);
@@ -98,7 +101,7 @@ describe('stage review', () => {
   });
 
   it('gives types without rules the full score', () => {
-    assert.deepEqual(reviewStage('design', { palette: 'forest' }), { rulesVersion: '1.1.0', score: 100, findings: [], blocking: 0 });
+    assert.deepEqual(reviewStage('design', { palette: 'forest' }), { rulesVersion: '1.2.0', score: 100, findings: [], blocking: 0 });
   });
 
   it('checks the site map, texts, schedule, catalog and architecture', () => {
@@ -145,5 +148,17 @@ describe('stage review', () => {
     assert.equal(reviewStage('content', templateContent(brief, offer, map)).blocking, 0);
     assert.deepEqual(ids('schedule', templateSchedule(offer)), []);
     assert.equal(reviewStage('catalog', templateCatalog(offer)).blocking, 0);
+  });
+
+  it('checks that features name existing data and every record is used', () => {
+    const process = templateProcess('web_app', brief);
+    const base = templateFeatures(brief, process);
+    const wrong = { ...base, features: base.features.map((feature, i) => (i === 0 ? { ...feature, data: ['ghost'] } : { ...feature, data: feature.data.filter(() => false) })) };
+    const found = ids('features', wrong, undefined, process);
+    assert.ok(found.includes(`FEATURES_UNKNOWN_DATA:${base.features[0]!.key}`));
+    for (const entity of process.data) assert.ok(found.includes(`FEATURES_DATA_UNUSED:${entity.key}`), entity.key);
+    // Results made before features named their data get no «unused» findings.
+    const old = { ...base, features: base.features.map((feature) => ({ ...feature, data: [] })) };
+    assert.ok(!ids('features', old, undefined, process).some((id) => id.startsWith('FEATURES_DATA_UNUSED')));
   });
 });
