@@ -103,7 +103,7 @@ describe('stage review', () => {
   });
 
   it('gives types without rules the full score', () => {
-    assert.deepEqual(reviewStage('design', { palette: 'forest' }), { rulesVersion: '1.2.0', score: 100, findings: [], blocking: 0 });
+    assert.deepEqual(reviewStage('design', { palette: 'forest' }), { rulesVersion: '1.3.0', score: 100, findings: [], blocking: 0 });
   });
 
   it('checks the site map, texts, schedule, catalog and architecture', () => {
@@ -175,5 +175,12 @@ describe('stage review', () => {
     assert.match(prompt.system, /Do not repeat findings listed in ruleFindings/);
     assert.match(prompt.system, /Russian/);
     assert.deepEqual(JSON.parse(prompt.user).ruleFindings, ['Правила: нет согласия']);
+  });
+
+  it('checks the services offer', () => {
+    const offer = { services: [{ name: 'Уборка', description: null, price: null }, { name: 'уборка', description: '', price: '' }], hours: null };
+    const found = ids('offer', offer);
+    for (const id of ['OFFER_DUPLICATE_NAME:service-0', 'OFFER_DUPLICATE_NAME:service-1', 'OFFER_NO_PRICES:services', 'OFFER_NO_DESCRIPTIONS:services']) assert.ok(found.includes(id), id);
+    assert.deepEqual(ids('offer', { services: [{ name: 'Уборка', description: 'Квартира', price: 'от 15 000 ₸' }, { name: 'Мойка окон', description: 'Окна', price: null }], hours: null }), ['OFFER_SOME_PRICES_MISSING:services']);
   });
 });

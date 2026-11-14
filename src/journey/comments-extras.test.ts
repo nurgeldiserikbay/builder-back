@@ -74,7 +74,7 @@ describe('remarks: files, mentions and the bot (database)', async () => {
       const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core), new StageReviewService(prisma!, core, new StageAiService(prisma!, core, worktime)));
       const comments = new CommentsService(prisma!, core);
       const files = new StageFilesService(prisma!, core);
-      const bot = new TelegramBotService(prisma!, journey, {} as never, comments, files, new OwnershipService(prisma!, billing, new TeamService(prisma!, billing)));
+      const bot = new TelegramBotService(prisma!, journey, {} as never, comments, files, new OwnershipService(prisma!, billing, new TeamService(prisma!, billing)), new StageReviewService(prisma!, core, new StageAiService(prisma!, core, worktime)));
 
       const owner = await user('owner');
       const writer = await user('writer');
