@@ -303,6 +303,13 @@ export class JourneyController {
     return this.review.override(request.user.id, projectId, stageKey(key), { versionId: text(input.versionId, 'versionId', 36, 36)!, findingIds: findingIds(input.findingIds), reason: text(input.reason, 'reason', 10, 1000)! });
   }
 
+  /** The AI reviewer looks at the current version and gives advice; advice never blocks acceptance. */
+  @Post('projects/:projectId/stages/:stageKey/review/ai')
+  @HttpCode(200)
+  aiReview(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
+    return this.review.aiReview(request.user.id, projectId, stageKey(key));
+  }
+
   /** The AI fixes the chosen findings and nothing else; the new version is reviewed again. */
   @Post('projects/:projectId/stages/:stageKey/review/fix')
   @HttpCode(200)

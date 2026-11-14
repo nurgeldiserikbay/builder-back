@@ -3541,6 +3541,28 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/review/ai:
+    post:
+      tags: [Journey]
+      operationId: aiReviewStage
+      summary: Ask the AI reviewer for advice on the current version
+      description: One AI request, counted against the daily limit, the specialist budget, the plan and the spend limit. The reply is checked — at most 10 findings, important or minor only, plain text, known targets — and stored with the version. 503 AI_NOT_CONFIGURED without a provider; 502 AI_INVALID_RESPONSE when the reply is unusable; 409 NOTHING_TO_REVIEW without a version.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200': { description: 'The advice, as in review.ai.findings' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/stages/{stageKey}/review/fix:
     post:
       tags: [Journey]
@@ -6578,7 +6600,7 @@ components:
         text: { type: string, minLength: 2, maxLength: 20000 }
     StageReview:
       type: object
-      required: [rulesVersion, score, findings, blocking, uncoveredBlocking, overrides]
+      required: [rulesVersion, score, findings, blocking, uncoveredBlocking, overrides, ai]
       properties:
         rulesVersion: { type: string }
         score: { type: integer, minimum: 0, maximum: 100, description: '100 minus 25 per blocking, 10 per important and 3 per minor finding.' }
@@ -6599,6 +6621,24 @@ components:
               message: { type: string }
               fix: { type: string }
               overridden: { type: boolean }
+        ai:
+          description: The newest advice of the AI reviewer on this version, or null. Advice never changes the score and never blocks acceptance.
+          type: [object, 'null']
+          properties:
+            createdAt: { type: string, format: date-time }
+            findings:
+              type: array
+              items:
+                type: object
+                required: [id, severity, category, target, where, message, fix]
+                properties:
+                  id: { type: string, description: 'AI_REVIEW:n' }
+                  severity: { type: string, enum: [important, minor] }
+                  category: { type: string, enum: [logic, security, clarity] }
+                  target: { type: [string, 'null'] }
+                  where: { type: string }
+                  message: { type: string }
+                  fix: { type: string }
         overrides:
           type: array
           items:

@@ -400,7 +400,7 @@ export function uncoveredBlocking(review: StageReview, overridden: string[]): Re
  * The instruction for «let the AI finish it»: built from our own finding texts only (never from free user text), so the
  * AI is told exactly which problems to fix and to keep everything else as it is.
  */
-export function fixInstruction(findings: ReviewFinding[]): string {
+export function fixInstruction(findings: Array<Pick<ReviewFinding, 'where' | 'message' | 'fix'>>): string {
   // Whole lines only, within the length of a stored instruction; the rest is fixed in the next round.
   let out = tr('Исправь только эти замечания проверки, остальное оставь как есть:');
   findings.forEach((finding, index) => {

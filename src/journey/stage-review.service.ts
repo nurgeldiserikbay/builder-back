@@ -1,12 +1,18 @@
-import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException, BadGatewayException, ConflictException, HttpException, HttpStatus, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { costOf } from '../budget/budget.js';
+import { lockableKeys } from './artifacts.js';
+import { AI_REVIEW_VERSION, StageAiError, buildReviewPrompt, normalizeAiReview, type AiReviewFinding } from './stage-ai.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { tr } from '../i18n/i18n.js';
 import { stageDefinitions, type StageKey } from './catalog.js';
 import { JourneyCore } from './journey-core.js';
 import { StageAiService } from './stage-ai.service.js';
-import { fixInstruction, REVIEW_LIMITS, reviewStage, uncoveredBlocking, type StageReview } from './stage-review.js';
+import { fixInstruction, REVIEW_LIMITS, reviewStage, uncoveredBlocking, type ReviewFinding, type StageReview } from './stage-review.js';
 
 type Ctx = Awaited<ReturnType<JourneyCore['load']>>;
+
+/** Marks AI review requests in the AI history (they change no version). */
+export const AI_REVIEW_TARGET = '_review';
 
 /**
  * The quality review of a stage result as people see and act on it: the findings of the deterministic rules, the owner's
@@ -39,7 +45,73 @@ export class StageReviewService {
       findings: review.findings.map((finding) => ({ ...finding, overridden: covered.has(finding.id) })),
       uncoveredBlocking: uncoveredBlocking(review, [...covered]).map((finding) => finding.id),
       overrides: rows.map((row) => ({ id: row.id, findingIds: row.findingIds, reason: row.reason, author: people.get(row.authorUserId)?.name ?? tr('Участник'), createdAt: row.createdAt })),
+      ai: await this.latestAi(stageId, version.id),
     };
+  }
+
+  /** The newest AI advice on this version; advice on older versions is not shown, the result has changed since. */
+  private async latestAi(stageId: string, versionId: string) {
+    const row = await this.prisma.stageAiReview.findFirst({ where: { stageId, versionId }, orderBy: { createdAt: 'desc' } });
+    return row ? { createdAt: row.createdAt, findings: row.findings as unknown as AiReviewFinding[] } : null;
+  }
+
+  /**
+   * The AI reviewer: one AI request, counted like any other (daily limit, specialist budget, plan, spend limit). Its
+   * findings are advice next to the rule findings and never block acceptance.
+   */
+  async aiReview(userId: string, projectId: string, key: string) {
+    const provider = this.core.ai();
+    await this.core.load(userId, projectId, 'write', key);
+    if (!provider) throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
+    return this.core.oneAiRequest(projectId, () => this.aiReviewNow(userId, projectId, key));
+  }
+
+  private async aiReviewNow(userId: string, projectId: string, key: string) {
+    const ctx = await this.core.load(userId, projectId, 'write', key);
+    const stage = this.core.stageOf(ctx, key);
+    const stageKey = key as StageKey;
+    const definition = stageDefinitions[stageKey];
+    if (definition.artifactType === 'site' || definition.artifactType === 'handoff') throw new BadRequestException('AI_REVIEW_NOT_USED_FOR_STAGE');
+    const version = await this.core.versionContent(stage.currentVersionId);
+    if (!version) throw new ConflictException('NOTHING_TO_REVIEW');
+    const provider = this.core.ai()!;
+    const assignment = this.core.assignmentFor(ctx, key);
+    if (await this.core.remainingAiRuns(projectId) < 1) throw new HttpException('AI_DAILY_LIMIT_REACHED', HttpStatus.TOO_MANY_REQUESTS);
+    if (assignment && assignment.aiBudget !== null && assignment.aiUsed >= assignment.aiBudget) throw new HttpException('AI_BUDGET_EXHAUSTED', HttpStatus.TOO_MANY_REQUESTS);
+    const inputs = await this.core.acceptedInputs(ctx, stageKey);
+    const rules = await this.reviewOf(ctx, stageKey, version.content);
+    const targets = lockableKeys(definition.artifactType, version.content);
+    const prompt = buildReviewPrompt({
+      stage: definition, locale: ctx.project.locale, projectTypeTitle: ctx.type.title, current: version.content, targets,
+      inputs: Object.fromEntries(Object.entries(inputs).map(([inputKey, value]) => [inputKey, value.content])),
+      ruleFindings: rules.findings.map((finding) => `${finding.where}: ${finding.message}`),
+    });
+    const pricing = await this.prisma.aiPricing.findUnique({ where: { id: 1 } });
+    const started = Date.now();
+    const runData = (usage: { inputTokens: number | null; outputTokens: number | null } | null) => ({
+      projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: `review-${AI_REVIEW_VERSION}`,
+      targetKey: AI_REVIEW_TARGET, inputVersionIds: Object.values(inputs).map((item) => item.versionId), baseVersionId: version.id,
+      durationMs: Date.now() - started, inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null, costTiyn: costOf(usage, pricing),
+    });
+    let usage: { inputTokens: number | null; outputTokens: number | null } | null = null;
+    let findings: AiReviewFinding[];
+    try {
+      const detailed = provider.generateDetailed ? await provider.generateDetailed(prompt) : { output: await provider.generate(prompt), usage: null };
+      usage = detailed.usage;
+      findings = normalizeAiReview(detailed.output, targets);
+    } catch (error) {
+      const code = error instanceof StageAiError ? error.code : 'AI_FAILED';
+      await this.prisma.generationRun.create({ data: { ...runData(usage), status: 'failed', safeErrorCode: code } });
+      if (code === 'AI_INVALID_RESPONSE') throw new BadGatewayException(code);
+      throw new ServiceUnavailableException(code);
+    }
+    await this.prisma.$transaction(async (tx) => {
+      const run = await tx.generationRun.create({ data: { ...runData(usage), status: 'succeeded' }, select: { id: true } });
+      await tx.stageAiReview.create({ data: { projectId, stageId: stage.id, versionId: version.id, generationRunId: run.id, findings: findings as never, requestedByUserId: userId } });
+      await this.core.event(tx, projectId, userId, 'stage_ai_reviewed', key, { versionNumber: version.versionNumber, findings: findings.length });
+      if (assignment) await tx.stageAssignment.update({ where: { id: assignment.id }, data: { aiUsed: { increment: 1 } } });
+    });
+    return { data: { findings } };
   }
 
   /** Used by acceptance and the last approval: every blocking finding is fixed or explained for this very version. */
@@ -77,8 +149,9 @@ export class StageReviewService {
     const version = await this.core.versionContent(stage.currentVersionId);
     if (!version) throw new ConflictException('NOTHING_TO_FIX');
     const review = await this.reviewOf(ctx, key as StageKey, version.content);
+    const advice = (await this.latestAi(stage.id, version.id))?.findings ?? [];
     const wanted = new Set(input.findingIds);
-    const chosen = review.findings.filter((finding) => wanted.has(finding.id));
+    const chosen: Array<Pick<ReviewFinding, 'where' | 'message' | 'fix'>> = [...review.findings, ...advice].filter((finding) => wanted.has(finding.id));
     if (!chosen.length) throw new BadRequestException('FINDINGS_NOT_FOUND');
     return this.stageAi.generate(userId, projectId, key, { instruction: fixInstruction(chosen), saveAs: 'one_off', targetKey: null });
   }
