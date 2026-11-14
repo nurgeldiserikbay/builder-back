@@ -3,7 +3,7 @@ import type { PrismaClient } from '../generated/prisma/client.js';
 import { contentLocale, inLocale, runWithLocale, tr, type Message } from '../i18n/i18n.js';
 import { escapeHtml } from '../journey/site-renderer.js';
 import { emailConfig, sendEmail } from './email.js';
-import { sendTelegramMessage, telegramConfig } from './telegram.js';
+import { sendTelegramMessage, telegramConfig, type InlineKeyboard } from './telegram.js';
 
 export interface UserNotice {
   text: Message;
@@ -11,6 +11,8 @@ export interface UserNotice {
   emailSubject?: Message;
   /** App path for the e-mail button, e.g. /account/disputes. */
   link?: { path: string; label: Message };
+  /** Buttons under the Telegram message, built in the user's language. */
+  telegramKeyboard?: () => InlineKeyboard;
 }
 
 /** In the user's language. Never throws; accounts being deleted get nothing. */
@@ -21,7 +23,7 @@ export async function notifyUser(prisma: Pick<PrismaClient, 'user'>, userId: str
     if (!user || user.deletionRequestedAt) return;
     const telegram = telegramConfig();
     const chatId = user.externalIdentities[0]?.chatId;
-    if (telegram && chatId) await sendTelegramMessage(telegram, chatId, inLocale(user.locale, notice.text)).catch(() => undefined);
+    if (telegram && chatId) await sendTelegramMessage(telegram, chatId, inLocale(user.locale, notice.text), fetch, notice.telegramKeyboard ? runWithLocale(contentLocale(user.locale), notice.telegramKeyboard) : undefined).catch(() => undefined);
     const mail = notice.emailSubject ? emailConfig() : null;
     if (!mail) return;
     await runWithLocale(contentLocale(user.locale), async () => {

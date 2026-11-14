@@ -6,6 +6,7 @@ import { acceptRoles, isUuid, JourneyCore, writeRoles } from '../journey/journey
 import { allowLocalRepos, AnalysisRunner } from './analysis-runner.js';
 import { ANALYSIS_PROFILE, type AnalysisReport } from './code-analysis.js';
 import { reportMarkdown, reportView, sourceKindLabels } from './report-view.js';
+import { artifactText, matchRequirements } from './requirements-match.js';
 import { CommentsService } from '../journey/comments.service.js';
 import { stageDefinitions, type StageKey } from '../journey/catalog.js';
 
@@ -203,6 +204,36 @@ export class AnalysisService implements OnApplicationBootstrap {
     const result = await this.comments.add(userId, projectId, stageKey, { text, targetKey: null, blocking: false, parentId: null, fileIds: sourceOnStage ? [run.sourceFileId!] : [] });
     await this.core.event(this.prisma, projectId, userId, 'analysis_finding_to_remark', stageKey, { runId: run.id, findingId, commentId: result.data.createdId });
     return { data: { commentId: result.data.createdId, stageKey, stageTitle: tr(stageDefinitions[stageKey as StageKey].title) } };
+  }
+
+  /**
+   * The brief of a document report against the accepted results of the project's stages, by words. Computed on
+   * request, so it follows the stages as they are accepted; the report itself does not change.
+   */
+  async compare(userId: string, projectId: string, runId: string) {
+    const { ctx, run } = await this.load(userId, projectId, runId);
+    if (!ctx.project.projectType) throw new ConflictException('PROJECT_HAS_NO_ROUTE');
+    const report = run.report as unknown as AnalysisReport | null;
+    if (!report) throw new ConflictException('ANALYSIS_NOT_READY');
+    if (report.type !== 'document') throw new ConflictException('COMPARE_NOT_A_DOCUMENT');
+    // Reports made before requirements were kept: the document is analysed again rather than guessed from.
+    if (!report.document?.requirements) throw new ConflictException('COMPARE_ANALYZE_AGAIN');
+    const stages = await this.prisma.projectStage.findMany({ where: { projectId }, orderBy: { position: 'asc' }, select: { stageKey: true, status: true, approvedVersionId: true } });
+    const accepted = stages.filter((stage) => stage.approvedVersionId);
+    const versions = accepted.length ? await this.prisma.stageArtifactVersion.findMany({ where: { id: { in: accepted.map((stage) => stage.approvedVersionId!) } }, select: { id: true, content: true } }) : [];
+    const title = (key: string) => tr(stageDefinitions[key as StageKey]?.title ?? key);
+    const texts = accepted.map((stage) => ({ key: stage.stageKey, title: title(stage.stageKey), text: artifactText(versions.find((version) => version.id === stage.approvedVersionId)?.content) }));
+    const items = matchRequirements(report.document.requirements, texts);
+    const count = (status: string) => items.filter((item) => item.status === status).length;
+    return {
+      data: {
+        runId: run.id, sourceLabel: run.sourceLabel, items,
+        totals: { requirements: items.length, found: count('found'), partial: count('partial'), missing: count('missing') },
+        comparedStages: texts.map((stage) => ({ key: stage.key, title: stage.title })),
+        notAccepted: stages.filter((stage) => !stage.approvedVersionId).map((stage) => ({ key: stage.stageKey, title: title(stage.stageKey) })),
+        note: tr('Сверка по словам: «найдено» значит, что слова требования есть в принятом этапе, а не что результат его выполняет. «Не найдено» — повод проверить, а не доказательство, что требования нет. Учитываются только принятые этапы.'),
+      },
+    };
   }
 
   async export(userId: string, projectId: string, runId: string, format: string) {

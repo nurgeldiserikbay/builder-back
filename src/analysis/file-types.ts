@@ -13,6 +13,15 @@ export function extension(name: string): string {
   return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
 }
 
+/**
+ * The file name of a multipart upload as the client meant it. Busboy reads that header as latin1, so a UTF-8 name
+ * («ТЗ.docx») arrives as «Ð¢Ð—.docx»; when the bytes are valid UTF-8 they are read again as UTF-8.
+ */
+export function multipartName(raw: string | undefined): string | undefined {
+  if (!raw || !/[\u0080-\u00ff]/.test(raw) || /[^\u0000-\u00ff]/.test(raw)) return raw;
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.from(raw, 'latin1')); } catch { return raw; }
+}
+
 /** A file name safe to show and to put in a download header: no folders, no control characters, bounded length. */
 export function cleanFileName(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;

@@ -83,4 +83,28 @@ describe('Bot language', () => {
       for (const key of ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME', 'TELEGRAM_WEBHOOK_SECRET', 'TELEGRAM_API_BASE_URL']) delete process.env[key];
     }
   });
+  it('passes a document or the largest photo to the bot as a file, with the caption as text', async () => {
+    const { TelegramLinkService } = await import('../publishing/telegram-link.service.js');
+    const { LEGAL_VERSIONS } = await import('../legal/documents.js');
+    Object.assign(process.env, { TELEGRAM_BOT_TOKEN: 'T', TELEGRAM_BOT_USERNAME: 'buildpath_bot', TELEGRAM_WEBHOOK_SECRET: 'S' });
+    try {
+      const calls: unknown[][] = [];
+      const linked = { userId: 'u1', user: { locale: 'ru', deletionRequestedAt: null, consents: [{ termsVersion: LEGAL_VERSIONS.terms, privacyVersion: LEGAL_VERSIONS.privacy }] } };
+      const prisma = { externalIdentity: { findUnique: async () => linked } };
+      const bot = { onMessage: async (...args: unknown[]) => { calls.push(args); } };
+      const service = new TelegramLinkService(prisma as never, bot as never);
+      const base = { chat: { id: 1, type: 'private' }, from: { id: 2, language_code: 'ru' } };
+      await service.handleUpdate('S', { message: { ...base, document: { file_id: 'D1', file_name: 'ТЗ.pdf', file_size: 1200 }, caption: 'Вот ТЗ' } });
+      await service.handleUpdate('S', { message: { ...base, photo: [{ file_id: 'small', width: 90, file_size: 900 }, { file_id: 'big', width: 1280, file_size: 90000 }] } });
+      await service.handleUpdate('S', { message: { ...base, sticker: { file_id: 'S1' } } });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.deepEqual(calls.map((call) => call.slice(2)), [
+        ['Вот ТЗ', 'file', { fileId: 'D1', name: 'ТЗ.pdf', size: 1200 }],
+        [null, 'file', { fileId: 'big', name: 'photo.jpg', size: 90000 }],
+        [null, 'other', undefined],
+      ]);
+    } finally {
+      for (const key of ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME', 'TELEGRAM_WEBHOOK_SECRET']) delete process.env[key];
+    }
+  });
 });

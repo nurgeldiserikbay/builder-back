@@ -5,7 +5,7 @@ import { tr } from '../i18n/i18n.js';
 import { acceptRoles, editableProject, isUuid, JourneyCore, writeRoles } from '../journey/journey-core.js';
 import { scanRequired, scanWithClamAv } from '../security/clamav.js';
 import { RateLimiter } from '../security/rate-limit.js';
-import { cleanFileName, detectStageFile, STAGE_FILE_LIMITS } from './file-types.js';
+import { cleanFileName, detectStageFile, multipartName, STAGE_FILE_LIMITS } from './file-types.js';
 
 const listFields = { id: true, name: true, kind: true, mime: true, sizeBytes: true, sha256: true, note: true, createdByUserId: true, createdAt: true } as const;
 
@@ -91,7 +91,7 @@ export class StageFilesService {
     if (!file || !file.buffer?.length) throw new BadRequestException('FILE_REQUIRED');
     this.limits.take('stage-file-upload', userId, StageFilesService.uploadsPerUser, 'FILE_UPLOADS_TOO_FREQUENT');
     if (file.size > STAGE_FILE_LIMITS.fileBytes) throw new UnprocessableEntityException('FILE_TOO_LARGE');
-    const name = cleanFileName(body?.name ?? file.originalname);
+    const name = cleanFileName(body?.name ?? multipartName(file.originalname));
     if (!name) throw new BadRequestException('FILE_NAME_INVALID');
     const note = cleanNote(body?.note);
     const type = detectStageFile(file.buffer, name);

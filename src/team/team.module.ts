@@ -9,5 +9,6 @@ import { OwnershipService } from './ownership.service.js';
   imports: [AuthModule, BillingModule],
   controllers: [TeamController, TeamInviteInfoController],
   providers: [TeamService, OwnershipService],
+  exports: [OwnershipService],
 })
 export class TeamModule {}

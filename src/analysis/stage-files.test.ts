@@ -174,3 +174,16 @@ describe('stage files and code analysis (database)', async () => {
     assert.equal((await analysis.get(owner.id, project.id, run.data.id)).data.status, 'succeeded');
   });
 });
+
+describe('multipart file names', () => {
+  it('reads a UTF-8 name that arrived as latin1, and leaves other names alone', async () => {
+    const { multipartName } = await import('./file-types.js');
+    const garbled = Buffer.from('ТЗ торты.docx', 'utf8').toString('latin1');
+    assert.equal(multipartName(garbled), 'ТЗ торты.docx');
+    assert.equal(multipartName(Buffer.from('café.pdf', 'utf8').toString('latin1')), 'café.pdf');
+    assert.equal(multipartName('ТЗ.docx'), 'ТЗ.docx');
+    assert.equal(multipartName('café.pdf'), 'café.pdf'); // a real latin1 «é» is not valid UTF-8 on its own
+    assert.equal(multipartName('plain.txt'), 'plain.txt');
+    assert.equal(multipartName(undefined), undefined);
+  });
+});
