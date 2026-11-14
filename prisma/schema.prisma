@@ -854,6 +854,7 @@ model ProjectStage {
   approvals         StageApproval[]
   comments          StageComment[]
   reviewOverrides   StageReviewOverride[]
+  aiReviews         StageAiReview[]
   files             StageFile[]
   /// Who must approve a version before the stage is accepted; null — the owner or a manager accepts alone.
   approvalPolicy    Json?              @map("approval_policy")
@@ -1826,6 +1827,22 @@ model StageReviewOverride {
 
   @@index([stageId, versionId], map: "stage_review_overrides_stage_version_idx")
   @@map("stage_review_overrides")
+}
+
+/// Advice of the AI reviewer on one version of a stage result (checked and limited on the way in). Never blocks acceptance.
+model StageAiReview {
+  id                String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId         String       @map("project_id") @db.Uuid
+  stageId           String       @map("stage_id") @db.Uuid
+  versionId         String       @map("version_id") @db.Uuid
+  generationRunId   String       @map("generation_run_id") @db.Uuid
+  findings          Json
+  requestedByUserId String       @map("requested_by_user_id") @db.Uuid
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  stage             ProjectStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([stageId, versionId, createdAt], map: "stage_ai_reviews_stage_version_idx")
+  @@map("stage_ai_reviews")
 }
 
 /// A file attached to a stage for people to read: private, scanned before it is stored, never passed to an AI provider

@@ -193,4 +193,57 @@ describe('web application route (database)', async () => {
     const event = await prisma!.projectEvent.findFirst({ where: { projectId, type: 'review_override' } });
     assert.deepEqual((event!.details as { findingIds: string[] }).findingIds, ['PROCESS_PERSONAL_DATA_NO_RULE:rules']);
   });
+
+  it('the AI reviewer gives advice that never blocks, and the AI can fix it', { skip }, async () => {
+    const billing = new BillingService(prisma!);
+    const core = new JourneyCore(prisma!, billing);
+    const requests: Array<{ schemaName: string; system: string; user: string }> = [];
+    core.provider = null;
+    const worktime = new WorktimeService(prisma!);
+    const stageAi = new StageAiService(prisma!, core, worktime);
+    const review = new StageReviewService(prisma!, core, stageAi);
+    const journey = new JourneyService(prisma!, billing, worktime, core, stageAi, new ChangeNoticesService(prisma!, core), review);
+    const email = `aireview-${randomUUID()}@test.local`;
+    const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), name: 'Owner' } });
+    users.push(owner.id);
+    const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
+    await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
+    const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'ИИ-ревью', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
+    const versionOf = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId!;
+    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'goal', await versionOf('goal'));
+    await journey.generate(owner.id, projectId, 'process', { instruction: null, saveAs: 'one_off', targetKey: null });
+    core.provider = {
+      name: 'fake', model: 'fake-1',
+      async generate(request) {
+        requests.push(request);
+        if (request.schemaName.startsWith('buildpath_review_')) return { findings: [
+          { severity: 'important', category: 'logic', target: 'rules', where: 'Правила', message: 'Не сказано, что делать, если клиент не отвечает два дня.', fix: 'Добавьте правило повторного звонка.' },
+          { severity: 'blocking', category: 'security', target: 'nowhere', where: '<b>x</b>', message: 'Нет срока хранения переписки с клиентами.', fix: 'Укажите срок.' },
+          { severity: 'minor', category: 'clarity', target: null, where: '', message: 'коротко', fix: 'x' },
+        ] };
+        return JSON.parse(request.user).currentDraft;
+      },
+    };
+    const result = await review.aiReview(owner.id, projectId, 'process');
+    // Untrusted output is cut down: no «blocking», unknown targets dropped, too short findings skipped.
+    assert.deepEqual(result.data.findings.map((finding) => [finding.id, finding.severity, finding.target]), [['AI_REVIEW:1', 'important', 'rules'], ['AI_REVIEW:2', 'minor', null]]);
+    const reviewRequest = requests.find((request) => request.schemaName === 'buildpath_review_process')!;
+    assert.match(reviewRequest.system, /untrusted data/);
+    assert.ok(JSON.parse(reviewRequest.user).targets.includes('rules'));
+    const view = await journey.stage(owner.id, projectId, 'process');
+    assert.equal(view.data.review!.ai!.findings.length, 2);
+    // Advice does not change the score or block acceptance.
+    assert.deepEqual(view.data.review!.uncoveredBlocking, []);
+    assert.equal(view.data.stage.canAccept, true);
+    const history = await stageAi.aiHistory(owner.id, projectId, { stageKey: 'process', authorId: null, query: null, before: null, limit: 10 });
+    assert.equal((history.data as { items: Array<{ outcome: string; text: string | null }> }).items[0]!.outcome, 'review');
+    // «Let the AI fix it» works on advice too: the instruction carries the advice text.
+    const fixed = await review.fix(owner.id, projectId, 'process', { findingIds: ['AI_REVIEW:1'] });
+    assert.ok(fixed.data.versionNumber > 1);
+    const fixRequest = requests.filter((request) => request.schemaName === 'buildpath_process').at(-1)!;
+    assert.match(JSON.parse(fixRequest.user).instruction, /клиент не отвечает два дня/);
+    // The advice belongs to the version it was given on; the new version shows none until asked again.
+    assert.equal((await journey.stage(owner.id, projectId, 'process')).data.review!.ai, null);
+  });
 });

@@ -187,7 +187,8 @@ export class StageAiService {
       const stage = this.core.stageOf(ctx, key);
       const version = versions.find((item) => item.id === run.resultVersionId);
       const instruction = instructions.find((item) => item.id === run.instructionId);
-      const outcome = run.status === 'failed' ? 'failed'
+      const review = run.targetKey === '_review';
+      const outcome = run.status === 'failed' ? 'failed' : review ? 'review'
         : version && acceptedVersions.has(`${key}:${version.versionNumber}`) ? 'accepted'
           : version && stage.currentVersionId === version.id ? 'current'
             : 'replaced';
@@ -195,9 +196,9 @@ export class StageAiService {
         id: run.id, createdAt: run.createdAt,
         stage: { key, title: stageDefinitions[key].title },
         author: people.get(run.requestedByUserId) ?? { id: run.requestedByUserId, name: 'Удалённый участник', kind: 'former' as const },
-        text: instruction?.text ?? null,
+        text: review ? tr('ИИ-проверка качества') : instruction?.text ?? null,
         savedAs: instruction?.kind ?? null,
-        targetKey: run.targetKey, rulesApplied: run.ruleIds.length,
+        targetKey: review ? null : run.targetKey, rulesApplied: run.ruleIds.length,
         kind: run.provider === 'template' ? 'template' as const : 'ai' as const,
         model: run.model, source: run.source,
         tokens: run.inputTokens === null && run.outputTokens === null ? null : { input: run.inputTokens, output: run.outputTokens },

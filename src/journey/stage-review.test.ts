@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { fixInstruction, reviewStage, uncoveredBlocking } from './stage-review.js';
+import { buildReviewPrompt, normalizeAiReview } from './stage-ai.js';
+import { stageDefinitions } from './catalog.js';
 import { templateProcess, type BusinessProcess } from './process.js';
 import { templateFeatures, templateScreens, type AppFeatures, type AppScreens } from './webapp.js';
 import { templateContent, type Brief } from './artifacts.js';
@@ -160,5 +162,18 @@ describe('stage review', () => {
     // Results made before features named their data get no «unused» findings.
     const old = { ...base, features: base.features.map((feature) => ({ ...feature, data: [] })) };
     assert.ok(!ids('features', old, undefined, process).some((id) => id.startsWith('FEATURES_DATA_UNUSED')));
+  });
+
+  it('keeps AI advice plain, bounded and never blocking', () => {
+    assert.throws(() => normalizeAiReview({ nope: 1 }, []), /AI_INVALID_RESPONSE/);
+    const many = Array.from({ length: 15 }, () => ({ severity: 'blocking', category: 'weird', target: 'x', where: 'Где\u0007-то '.repeat(20), message: 'Достаточно длинное сообщение\nс переносом', fix: 'Сделать так' }));
+    const out = normalizeAiReview({ findings: many }, ['y']);
+    assert.equal(out.length, 10);
+    assert.ok(out.every((finding) => finding.severity === 'minor' && finding.category === 'logic' && finding.target === null && finding.where.length <= 80 && !/[\u0000-\u001f]/.test(finding.message)));
+    assert.deepEqual(out.slice(0, 2).map((finding) => finding.id), ['AI_REVIEW:1', 'AI_REVIEW:2']);
+    const prompt = buildReviewPrompt({ stage: stageDefinitions.process, locale: 'ru', projectTypeTitle: 'Сайт', inputs: {}, current: { rules: [] }, ruleFindings: ['Правила: нет согласия'], targets: ['rules'] });
+    assert.match(prompt.system, /Do not repeat findings listed in ruleFindings/);
+    assert.match(prompt.system, /Russian/);
+    assert.deepEqual(JSON.parse(prompt.user).ruleFindings, ['Правила: нет согласия']);
   });
 });
