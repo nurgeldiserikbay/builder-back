@@ -168,43 +168,77 @@ export function buildStagePrompt(input: StagePromptInput): StageAiRequest {
   return { system, user, schemaName: `buildpath_${input.stage.artifactType}`, schema: outputSchema(input.stage.artifactType, Boolean(input.targetKey && input.stage.artifactType === 'content')) };
 }
 
+export type AiApiStyle = 'responses' | 'chat';
+
+/**
+ * An OpenAI-compatible provider. «responses» uses the Responses API (OpenAI, Groq…); «chat» uses Chat Completions for
+ * providers that only have it (Gemini's OpenAI-compatible endpoint and many others). Both ask for strict JSON by schema,
+ * and the answer goes through the same checks either way.
+ */
 export class OpenAiStageProvider implements StageAiProvider {
-  readonly name = 'openai';
-  constructor(private readonly apiKey: string, readonly model: string, private readonly fetchImpl: typeof fetch = fetch, private readonly baseUrl = 'https://api.openai.com/v1') {}
+  readonly name: string;
+  constructor(private readonly apiKey: string, readonly model: string, private readonly fetchImpl: typeof fetch = fetch, private readonly baseUrl = 'https://api.openai.com/v1', private readonly style: AiApiStyle = 'responses') {
+    this.name = style === 'chat' ? 'openai-chat' : 'openai';
+  }
 
   async generate(request: StageAiRequest): Promise<unknown> {
     return (await this.generateDetailed(request)).output;
   }
 
   async generateDetailed(request: StageAiRequest): Promise<{ output: unknown; usage: StageAiUsage | null }> {
+    const chat = this.style === 'chat';
+    const body = chat
+      ? {
+        model: this.model,
+        messages: [{ role: 'system', content: request.system }, { role: 'user', content: request.user }],
+        response_format: { type: 'json_schema', json_schema: { name: request.schemaName, strict: true, schema: request.schema } },
+        // Room for models that think before answering; the answer itself stays well under this.
+        max_tokens: 8000,
+      }
+      : {
+        model: this.model,
+        store: false,
+        input: [
+          { role: 'system', content: [{ type: 'input_text', text: request.system }] },
+          { role: 'user', content: [{ type: 'input_text', text: request.user }] },
+        ],
+        text: { format: { type: 'json_schema', name: request.schemaName, strict: true, schema: request.schema } },
+        max_output_tokens: 4000,
+      };
     let response: Response;
     try {
-      response = await this.fetchImpl(`${this.baseUrl}/responses`, {
+      response = await this.fetchImpl(`${this.baseUrl}/${chat ? 'chat/completions' : 'responses'}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model,
-          store: false,
-          input: [
-            { role: 'system', content: [{ type: 'input_text', text: request.system }] },
-            { role: 'user', content: [{ type: 'input_text', text: request.user }] },
-          ],
-          text: { format: { type: 'json_schema', name: request.schemaName, strict: true, schema: request.schema } },
-          max_output_tokens: 4000,
-        }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(90_000),
       });
     } catch {
       throw new StageAiError('AI_PROVIDER_UNAVAILABLE');
     }
-    if (!response.ok) throw new StageAiError('AI_PROVIDER_FAILED');
-    const payload = await response.json().catch(() => null) as { output_text?: unknown; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>; usage?: { input_tokens?: unknown; output_tokens?: unknown } } | null;
-    const usage = payload?.usage ? { inputTokens: tokenCount(payload.usage.input_tokens), outputTokens: tokenCount(payload.usage.output_tokens) } : null;
-    const text = typeof payload?.output_text === 'string' ? payload.output_text
-      : payload?.output?.flatMap((item) => item.content ?? []).find((item) => item.type === 'output_text')?.text;
+    if (!response.ok) {
+      // The status and the start of the provider's error go to the server log (never to people): enough to see a wrong
+      // model name, an unsupported schema or a rate limit. The request itself and the key are not logged.
+      const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+      console.warn(`AI provider ${this.name} answered ${response.status}: ${detail}`);
+      throw new StageAiError(response.status === 429 ? 'AI_PROVIDER_RATE_LIMITED' : 'AI_PROVIDER_FAILED');
+    }
+    const payload = await response.json().catch(() => null) as {
+      output_text?: unknown; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
+      choices?: Array<{ message?: { content?: unknown; refusal?: unknown } }>;
+      usage?: { input_tokens?: unknown; output_tokens?: unknown; prompt_tokens?: unknown; completion_tokens?: unknown };
+    } | null;
+    const usage = payload?.usage
+      ? { inputTokens: tokenCount(payload.usage.input_tokens ?? payload.usage.prompt_tokens), outputTokens: tokenCount(payload.usage.output_tokens ?? payload.usage.completion_tokens) }
+      : null;
+    const text = chat
+      ? (typeof payload?.choices?.[0]?.message?.content === 'string' ? payload.choices[0].message.content as string : undefined)
+      : typeof payload?.output_text === 'string' ? payload.output_text
+        : payload?.output?.flatMap((item) => item.content ?? []).find((item) => item.type === 'output_text')?.text;
     if (!text || text.length > 200_000) throw new StageAiError('AI_INVALID_RESPONSE');
     try {
-      return { output: JSON.parse(text), usage };
+      // Some chat endpoints wrap JSON in a markdown fence even in JSON mode.
+      return { output: JSON.parse(text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')), usage };
     } catch {
       throw new StageAiError('AI_INVALID_RESPONSE');
     }
@@ -215,10 +249,12 @@ export function configuredStageProvider(env: NodeJS.ProcessEnv = process.env): S
   const apiKey = env.BUILDER_AI_OPENAI_API_KEY;
   const model = env.BUILDER_AI_OPENAI_MODEL;
   if (!apiKey || !model) return null;
-  // Optional OpenAI-compatible Responses endpoint (for example a regional gateway or a local mock in development).
+  // Optional OpenAI-compatible endpoint (a gateway, Groq, Gemini, or a local mock in development).
   const baseUrl = (env.BUILDER_AI_OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, '');
   if (!/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(`${baseUrl}/`)) return null;
-  return new OpenAiStageProvider(apiKey, model, fetch, baseUrl);
+  const style = (env.BUILDER_AI_OPENAI_API_STYLE ?? 'responses').trim().toLowerCase();
+  if (style !== 'responses' && style !== 'chat') return null;
+  return new OpenAiStageProvider(apiKey, model, fetch, baseUrl, style);
 }
 
 // ---- AI reviewer: advice on a stage result, never a gate. ----

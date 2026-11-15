@@ -9,7 +9,7 @@ import { checkSite, contactLinks, contrastRatio, palettes, renderSite } from './
 import { canEdit, directDependents, effectiveStatuses, initialStatuses, inputsSatisfied, nextStage, reopenStage, unlockDependents } from './stage-state.js';
 import { describeChanges } from './change-summary.js';
 import { roleAccess } from './specialists.service.js';
-import { OpenAiStageProvider, StageAiError, buildStagePrompt } from './stage-ai.js';
+import { OpenAiStageProvider, StageAiError, buildStagePrompt, configuredStageProvider } from './stage-ai.js';
 import { stageDefinitions } from './catalog.js';
 
 const brief: Brief = {
@@ -194,6 +194,24 @@ describe('stage AI adapter', () => {
     await assert.rejects(failing.generate({ system: '', user: '', schemaName: 'x', schema: {} }), (error: unknown) => error instanceof StageAiError && error.code === 'AI_PROVIDER_FAILED');
     const ok = new OpenAiStageProvider('key', 'model', (async () => new Response(JSON.stringify({ output_text: '{"a":1}' }), { status: 200 })) as typeof fetch);
     assert.deepEqual(await ok.generate({ system: '', user: '', schemaName: 'x', schema: {} }), { a: 1 });
+    // Chat Completions style (Gemini and others): the right path and format, usage from prompt/completion tokens, fenced JSON.
+    const seen: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const chat = new OpenAiStageProvider('key', 'gemini-flash', (async (url: string, init: RequestInit) => {
+      seen.push({ url, body: JSON.parse(String(init.body)) });
+      return new Response(JSON.stringify({ choices: [{ message: { content: '```json\n{"b":2}\n```' } }], usage: { prompt_tokens: 10, completion_tokens: 3 } }), { status: 200 });
+    }) as unknown as typeof fetch, 'https://generativelanguage.googleapis.com/v1beta/openai', 'chat');
+    assert.deepEqual(await chat.generateDetailed({ system: 's', user: 'u', schemaName: 'x', schema: { type: 'object' } }), { output: { b: 2 }, usage: { inputTokens: 10, outputTokens: 3 } });
+    assert.equal(seen[0]!.url, 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+    assert.deepEqual(seen[0]!.body.response_format, { type: 'json_schema', json_schema: { name: 'x', strict: true, schema: { type: 'object' } } });
+    assert.equal(chat.name, 'openai-chat');
+    const limited = new OpenAiStageProvider('key', 'm', (async () => new Response('{"error":"quota"}', { status: 429 })) as typeof fetch, 'https://x.test/v1', 'chat');
+    await assert.rejects(limited.generate({ system: '', user: '', schemaName: 'x', schema: {} }), (error: unknown) => error instanceof StageAiError && error.code === 'AI_PROVIDER_RATE_LIMITED');
+    const empty = new OpenAiStageProvider('key', 'm', (async () => new Response(JSON.stringify({ choices: [{ message: { content: null } }] }), { status: 200 })) as typeof fetch, 'https://x.test/v1', 'chat');
+    await assert.rejects(empty.generate({ system: '', user: '', schemaName: 'x', schema: {} }), (error: unknown) => error instanceof StageAiError && error.code === 'AI_INVALID_RESPONSE');
+    // The style comes from the environment; unknown styles switch AI off instead of guessing.
+    assert.equal(configuredStageProvider({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_OPENAI_MODEL: 'm', BUILDER_AI_OPENAI_API_STYLE: 'chat' })?.name, 'openai-chat');
+    assert.equal(configuredStageProvider({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_OPENAI_MODEL: 'm' })?.name, 'openai');
+    assert.equal(configuredStageProvider({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_OPENAI_MODEL: 'm', BUILDER_AI_OPENAI_API_STYLE: 'soap' }), null);
   });
   it('reports token usage when the provider returns it', async () => {
     const request = { system: '', user: '', schemaName: 'x', schema: {} };
