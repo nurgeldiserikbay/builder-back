@@ -177,6 +177,8 @@ export type AiApiStyle = 'responses' | 'chat';
  */
 export class OpenAiStageProvider implements StageAiProvider {
   readonly name: string;
+  /** Pause before the one retry after «overloaded» (503). */
+  retryDelayMs = 3000;
   constructor(private readonly apiKey: string, readonly model: string, private readonly fetchImpl: typeof fetch = fetch, private readonly baseUrl = 'https://api.openai.com/v1', private readonly style: AiApiStyle = 'responses') {
     this.name = style === 'chat' ? 'openai-chat' : 'openai';
   }
@@ -205,14 +207,21 @@ export class OpenAiStageProvider implements StageAiProvider {
         text: { format: { type: 'json_schema', name: request.schemaName, strict: true, schema: request.schema } },
         max_output_tokens: 4000,
       };
+    const send = () => this.fetchImpl(`${this.baseUrl}/${chat ? 'chat/completions' : 'responses'}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(90_000),
+    });
     let response: Response;
     try {
-      response = await this.fetchImpl(`${this.baseUrl}/${chat ? 'chat/completions' : 'responses'}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(90_000),
-      });
+      response = await send();
+      // «Overloaded, try again» (503) usually passes in seconds and costs nothing: one more try before giving up.
+      if (response.status === 503) {
+        await response.text().catch(() => '');
+        await new Promise((resolve) => setTimeout(resolve, this.retryDelayMs));
+        response = await send();
+      }
     } catch {
       throw new StageAiError('AI_PROVIDER_UNAVAILABLE');
     }
@@ -221,7 +230,7 @@ export class OpenAiStageProvider implements StageAiProvider {
       // model name, an unsupported schema or a rate limit. The request itself and the key are not logged.
       const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
       console.warn(`AI provider ${this.name} answered ${response.status}: ${detail}`);
-      throw new StageAiError(response.status === 429 ? 'AI_PROVIDER_RATE_LIMITED' : 'AI_PROVIDER_FAILED');
+      throw new StageAiError(response.status === 429 ? 'AI_PROVIDER_RATE_LIMITED' : response.status === 503 ? 'AI_PROVIDER_BUSY' : 'AI_PROVIDER_FAILED');
     }
     const payload = await response.json().catch(() => null) as {
       output_text?: unknown; output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;

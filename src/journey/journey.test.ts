@@ -206,6 +206,16 @@ describe('stage AI adapter', () => {
     assert.equal(chat.name, 'openai-chat');
     const limited = new OpenAiStageProvider('key', 'm', (async () => new Response('{"error":"quota"}', { status: 429 })) as typeof fetch, 'https://x.test/v1', 'chat');
     await assert.rejects(limited.generate({ system: '', user: '', schemaName: 'x', schema: {} }), (error: unknown) => error instanceof StageAiError && error.code === 'AI_PROVIDER_RATE_LIMITED');
+    // «Overloaded» (503) is retried once; if it stays, the error says the provider is busy.
+    let calls = 0;
+    const busy = new OpenAiStageProvider('key', 'm', (async () => { calls += 1; return new Response('{"error":"UNAVAILABLE"}', { status: 503 }); }) as typeof fetch, 'https://x.test/v1', 'chat');
+    busy.retryDelayMs = 1;
+    await assert.rejects(busy.generate({ system: '', user: '', schemaName: 'x', schema: {} }), (error: unknown) => error instanceof StageAiError && error.code === 'AI_PROVIDER_BUSY');
+    assert.equal(calls, 2);
+    let tries = 0;
+    const recovers = new OpenAiStageProvider('key', 'm', (async () => (++tries === 1 ? new Response('busy', { status: 503 }) : new Response(JSON.stringify({ choices: [{ message: { content: '{"c":3}' } }] }), { status: 200 }))) as typeof fetch, 'https://x.test/v1', 'chat');
+    recovers.retryDelayMs = 1;
+    assert.deepEqual(await recovers.generate({ system: '', user: '', schemaName: 'x', schema: {} }), { c: 3 });
     const empty = new OpenAiStageProvider('key', 'm', (async () => new Response(JSON.stringify({ choices: [{ message: { content: null } }] }), { status: 200 })) as typeof fetch, 'https://x.test/v1', 'chat');
     await assert.rejects(empty.generate({ system: '', user: '', schemaName: 'x', schema: {} }), (error: unknown) => error instanceof StageAiError && error.code === 'AI_INVALID_RESPONSE');
     // The style comes from the environment; unknown styles switch AI off instead of guessing.

@@ -66,6 +66,15 @@
 	handle /api/* {
 		reverse_proxy {$API_UPSTREAM} {
 			header_up Host {upstream_hostport}
+			# Our own services answer errors as JSON (for example «the AI service is busy»): pass those through.
+			@own_error {
+				status 502 503 504
+				header Content-Type *json*
+			}
+			handle_response @own_error {
+				copy_response_headers
+				copy_response
+			}
 			@sleeping status 502 503 504
 			handle_response @sleeping {
 				import waking_json
@@ -75,6 +84,15 @@
 	handle {
 		reverse_proxy {$WEB_UPSTREAM} {
 			header_up Host {upstream_hostport}
+			# Our own services answer errors as JSON (for example «the AI service is busy»): pass those through.
+			@own_error {
+				status 502 503 504
+				header Content-Type *json*
+			}
+			handle_response @own_error {
+				copy_response_headers
+				copy_response
+			}
 			@sleeping status 502 503 504
 			handle_response @sleeping {
 				import waking_page
