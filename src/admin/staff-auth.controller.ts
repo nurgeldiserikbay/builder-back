@@ -2,6 +2,11 @@ import { BadRequestException, Body, Controller, Get, Header, HttpCode, Post, Req
 import type { StaffRequest } from './staff-auth.guard.js';
 import { StaffAuthGuard } from './staff-auth.guard.js';
 import { StaffAuthService } from './staff-auth.service.js';
+import { RateLimiter } from '../security/rate-limit.js';
+
+/** Staff sign-in from one address: bounds password spraying across many staff e-mails (per-e-mail failures are counted in the database). */
+const STAFF_LOGIN_PER_IP = { max: 30, windowMs: 15 * 60_000 };
+const staffLimits = new RateLimiter();
 
 type HttpResponse = { setHeader(name: string, value: string): void };
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -23,7 +28,8 @@ export class StaffAuthController {
   constructor(private readonly auth: StaffAuthService) {}
   @Post('login')
   @HttpCode(200)
-  async login(@Body() body: unknown, @Res({ passthrough: true }) response: HttpResponse) {
+  async login(@Req() request: { ip?: string }, @Body() body: unknown, @Res({ passthrough: true }) response: HttpResponse) {
+    staffLimits.take('staff-login-ip', request.ip ?? 'unknown', STAFF_LOGIN_PER_IP, 'STAFF_LOGIN_RATE_LIMITED');
     const input = parseBody(body);
     const result = await this.auth.login(input.email, input.password);
     response.setHeader('Set-Cookie', cookie(result.token, 12 * 60 * 60));
