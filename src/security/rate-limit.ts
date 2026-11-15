@@ -63,4 +63,6 @@ export const authLimits = {
   mailPerEmail: { max: 3, windowMs: 60 * 60_000 },
   mailPerIp: { max: 20, windowMs: 60 * 60_000 },
   tokenPerIp: { max: 30, windowMs: 15 * 60_000 },
+  /** Started and finished sign-ins with an outside provider (Google) from one address. */
+  oauthPerIp: { max: 40, windowMs: 15 * 60_000 },
 } satisfies Record<string, Limit>;

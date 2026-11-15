@@ -4,8 +4,10 @@ import {
   Controller,
   Get,
   HttpCode,
+  HttpException,
   Post,
   Put,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -13,9 +15,12 @@ import {
 import type { AuthenticatedRequest } from './auth.guard.js';
 import { AllowWithoutConsent, AuthGuard } from './auth.guard.js';
 import { AuthService, SafeUser } from './auth.service.js';
+import { GoogleAuthError } from './google-oauth.js';
 
 type HttpResponse = { setHeader(name: string, value: string): void };
-type ClientRequest = { ip?: string };
+type ClientRequest = { ip?: string; headers?: { cookie?: string } };
+type RedirectResponse = HttpResponse & { redirect(status: number, url: string): void };
+const GOOGLE_COOKIE = 'buildpath_google';
 const ipOf = (request: ClientRequest) => request.ip ?? '';
 const locales = ['en', 'ru', 'kk'] as const;
 
@@ -39,6 +44,20 @@ export function cookie(token: string, maxAgeSeconds: number): string {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
   return `buildpath_session=${encodeURIComponent(token)}; Path=/api/v1; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
 }
+
+/** Ties a Google sign-in to the browser that started it; lives ten minutes and only on the Google callback path. */
+function googleCookie(value: string, maxAgeSeconds: number): string {
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  return `${GOOGLE_COOKIE}=${encodeURIComponent(value)}; Path=/api/v1/auth/google; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
+}
+function cookieValue(request: ClientRequest, name: string): string | null {
+  const part = (request.headers?.cookie ?? '').split(';').map((item) => item.trim()).find((item) => item.startsWith(`${name}=`));
+  if (!part) return null;
+  try { return decodeURIComponent(part.slice(name.length + 1)); } catch { return null; }
+}
+const queryText = (value: unknown, max: number) => (typeof value === 'string' && value.length <= max ? value : null);
+/** Back to the app on the same origin; the path was checked when the sign-in started. */
+const appPath = (path: string) => `${(process.env.PUBLIC_APP_URL ?? '').replace(/\/$/, '')}${path}`;
 
 @Controller()
 export class AuthController {
@@ -109,6 +128,46 @@ export class AuthController {
     const result = await this.auth.loginWithTelegramWebApp(textField(body, 'initData', 10, 4096));
     response.setHeader('Set-Cookie', cookie(result.token, 30 * 24 * 60 * 60));
     return { data: result.user };
+  }
+
+  /** Which outside sign-in methods are on (the sign-in page shows only those). */
+  @Get('auth/providers')
+  providers() {
+    return { data: this.auth.providers() };
+  }
+
+  /** «Continue with Google»: sends the browser to Google. Problems come back to the sign-in page as ?error=CODE. */
+  @Get('auth/google/start')
+  async googleStart(@Query() query: Record<string, unknown>, @Req() request: ClientRequest, @Res() response: RedirectResponse) {
+    try {
+      const started = await this.auth.startGoogle({ next: query.next, locale: queryText(query.locale, 5) ?? 'en' }, ipOf(request));
+      response.setHeader('Set-Cookie', googleCookie(started.binding, 600));
+      response.setHeader('Cache-Control', 'no-store');
+      response.redirect(302, started.url);
+    } catch (error) {
+      const code = error instanceof HttpException && typeof error.message === 'string' && /^[A-Z_]+$/.test(error.message) ? error.message : 'GOOGLE_FAILED';
+      response.redirect(302, appPath(`/login?error=${code}`));
+    }
+  }
+
+  /** Google sends the browser back here with a one-time code. */
+  @Get('auth/google/callback')
+  async googleCallback(@Query() query: Record<string, unknown>, @Req() request: ClientRequest, @Res() response: RedirectResponse) {
+    const clear = googleCookie('', 0);
+    response.setHeader('Cache-Control', 'no-store');
+    try {
+      const result = await this.auth.finishGoogle({
+        code: queryText(query.code, 2048), state: queryText(query.state, 100), error: queryText(query.error, 100),
+        binding: cookieValue(request, GOOGLE_COOKIE),
+      }, ipOf(request));
+      response.setHeader('Set-Cookie', [cookie(result.token, 30 * 24 * 60 * 60), clear] as unknown as string);
+      response.redirect(302, appPath(result.next));
+    } catch (error) {
+      const code = error instanceof GoogleAuthError ? error.code : 'GOOGLE_FAILED';
+      if (!(error instanceof GoogleAuthError)) console.warn('Google sign-in failed', error instanceof Error ? error.message : error);
+      response.setHeader('Set-Cookie', clear);
+      response.redirect(302, appPath(`/login?error=${code}`));
+    }
   }
 
   @Post('auth/logout')
