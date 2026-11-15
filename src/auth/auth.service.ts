@@ -13,6 +13,7 @@ import { telegramConfig, verifyWebAppInitData } from '../notifications/telegram.
 import { emailConfig, sendEmail, type EmailConfig } from '../notifications/email.js';
 import { LEGAL_VERSIONS } from '../legal/documents.js';
 import { RateLimiter, authLimits } from '../security/rate-limit.js';
+import { GoogleAuthError, authorizeUrl, exchangeCode, googleConfig, randomToken, safeNextPath, sha256, type GoogleIdentity } from './google-oauth.js';
 
 const scrypt = (password: string, salt: Buffer, length: number, options: { N: number; r: number; p: number; maxmem: number }): Promise<Buffer> =>
   new Promise((resolve, reject) => {
@@ -24,6 +25,9 @@ const scrypt = (password: string, salt: Buffer, length: number, options: { N: nu
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
 const RESET_TTL_MS = 60 * 60 * 1000;
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+/** Stored for accounts made with Google: never matches a password; «forgot password» can set a real one. */
+const NO_PASSWORD = '!external';
 
 export interface SafeUser {
   id: string;
@@ -33,6 +37,8 @@ export interface SafeUser {
   emailVerified: boolean;
   /** True when the user has not accepted the current versions of the offer and privacy policy. */
   consentRequired: boolean;
+  /** True when the user has never accepted them (a new account made with Google): the app asks, not «we updated». */
+  consentFirstTime: boolean;
 }
 
 type ConsentRow = { termsVersion: string; privacyVersion: string };
@@ -241,6 +247,103 @@ export class AuthService {
     return { token, user: this.toSafeUser(identity.user) };
   }
 
+  /** Which outside sign-in methods are switched on, for the sign-in page. */
+  providers() {
+    return { google: Boolean(googleConfig()), telegram: Boolean(telegramConfig()) };
+  }
+
+  /**
+   * Starts «Continue with Google»: a single-use state with PKCE and nonce, bound to this browser by a random value the
+   * caller puts in a short cookie. Returns where to send the browser.
+   */
+  async startGoogle(input: { next: unknown; locale: string }, ip = ''): Promise<{ url: string; binding: string }> {
+    const config = googleConfig();
+    if (!config) throw new ServiceUnavailableException('GOOGLE_NOT_CONFIGURED');
+    this.limits.take('oauth-ip', ip, authLimits.oauthPerIp);
+    const state = randomToken();
+    const binding = randomToken();
+    const codeVerifier = randomToken(48);
+    const nonce = randomToken(24);
+    const locale = (['en', 'ru', 'kk'] as const).find((item) => item === input.locale) ?? 'en';
+    await this.prisma.oAuthLoginState.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+    await this.prisma.oAuthLoginState.create({ data: {
+      provider: 'google', stateHash: sha256(state), bindingHash: sha256(binding), codeVerifier, nonce,
+      nextPath: safeNextPath(input.next), locale, expiresAt: new Date(Date.now() + OAUTH_STATE_TTL_MS),
+    } });
+    return { url: authorizeUrl(config, { state, nonce, codeVerifier, locale }), binding };
+  }
+
+  /**
+   * Finishes the sign-in Google redirected back with. Throws GoogleAuthError with a safe code; the caller turns any error
+   * into a redirect to the sign-in page.
+   */
+  async finishGoogle(input: { code: string | null; state: string | null; binding: string | null; error: string | null }, ip = '', fetchImpl: typeof fetch = fetch): Promise<{ token: string; next: string; created: boolean }> {
+    const config = googleConfig();
+    if (!config) throw new GoogleAuthError('GOOGLE_NOT_CONFIGURED');
+    if (!this.limits.allowed('oauth-ip', ip, authLimits.oauthPerIp)) throw new GoogleAuthError('LOGIN_RATE_LIMITED');
+    if (!input.state || input.state.length > 100) throw new GoogleAuthError('GOOGLE_STATE_INVALID');
+    const now = new Date();
+    const row = await this.prisma.oAuthLoginState.findUnique({ where: { stateHash: sha256(input.state) } });
+    if (!row || row.provider !== 'google' || row.consumedAt || row.expiresAt <= now) throw new GoogleAuthError('GOOGLE_STATE_INVALID');
+    // Single use, whatever happens next.
+    const used = await this.prisma.oAuthLoginState.updateMany({ where: { id: row.id, consumedAt: null }, data: { consumedAt: now } });
+    if (!used.count) throw new GoogleAuthError('GOOGLE_STATE_INVALID');
+    // The browser that finishes must be the one that started: stops someone from signing a victim into their account.
+    if (!input.binding || sha256(input.binding) !== row.bindingHash) throw new GoogleAuthError('GOOGLE_STATE_INVALID');
+    if (input.error) throw new GoogleAuthError(input.error === 'access_denied' ? 'GOOGLE_CANCELLED' : 'GOOGLE_FAILED');
+    if (!input.code || input.code.length > 2048) throw new GoogleAuthError('GOOGLE_FAILED');
+    const identity = await exchangeCode(config, { code: input.code, codeVerifier: row.codeVerifier, nonce: row.nonce }, fetchImpl);
+    const { userId, created } = await this.userForGoogle(identity, row.locale);
+    const token = randomBytes(32).toString('base64url');
+    await this.prisma.userSession.create({ data: { userId, tokenHash: this.digest(token), expiresAt: new Date(Date.now() + SESSION_TTL_MS) } });
+    return { token, next: row.nextPath, created };
+  }
+
+  /**
+   * Who signs in: the account already linked to this Google account; otherwise the account with the same address
+   * (Google has confirmed it); otherwise a new account. An unconfirmed account with that address may have been made
+   * by someone else, so linking it drops its password and its sessions.
+   */
+  private async userForGoogle(identity: GoogleIdentity, locale: string): Promise<{ userId: string; created: boolean }> {
+    if (!identity.emailVerified) throw new GoogleAuthError('GOOGLE_EMAIL_NOT_VERIFIED');
+    const linked = await this.prisma.externalIdentity.findUnique({ where: { provider_externalId: { provider: 'google', externalId: identity.sub } }, include: { user: true } });
+    if (linked) {
+      if (linked.user.deletionRequestedAt) throw new GoogleAuthError('ACCOUNT_DELETED');
+      return { userId: linked.userId, created: false };
+    }
+    const normalized = identity.email.trim().toLowerCase();
+    const now = new Date();
+    const existing = await this.prisma.user.findUnique({ where: { emailNormalized: normalized }, include: { externalIdentities: { where: { provider: 'google' } } } });
+    if (existing) {
+      if (existing.deletionRequestedAt) throw new GoogleAuthError('ACCOUNT_DELETED');
+      if (existing.externalIdentities.length) throw new GoogleAuthError('GOOGLE_ACCOUNT_MISMATCH');
+      await this.prisma.$transaction(async (tx) => {
+        await tx.externalIdentity.create({ data: { userId: existing.id, provider: 'google', externalId: identity.sub, chatId: '' } });
+        if (!existing.emailVerifiedAt) {
+          await tx.user.update({ where: { id: existing.id }, data: { emailVerifiedAt: now, passwordHash: NO_PASSWORD, name: existing.name ?? identity.name } });
+          await tx.userSession.updateMany({ where: { userId: existing.id, revokedAt: null }, data: { revokedAt: now } });
+          await tx.emailVerificationToken.deleteMany({ where: { userId: existing.id } });
+          await tx.passwordResetToken.deleteMany({ where: { userId: existing.id } });
+        }
+      });
+      return { userId: existing.id, created: false };
+    }
+    try {
+      const userId = await this.prisma.$transaction(async (tx) => {
+        const user = await tx.user.create({ data: { email: identity.email.trim(), emailNormalized: normalized, passwordHash: NO_PASSWORD, name: identity.name, locale: locale as 'en' | 'ru' | 'kk', emailVerifiedAt: now } });
+        const workspace = await tx.workspace.create({ data: { ownerUserId: user.id, name: identity.name ? `${identity.name}'s workspace` : 'My workspace' } });
+        await tx.workspaceMember.create({ data: { workspaceId: workspace.id, userId: user.id, role: 'owner', status: 'active' } });
+        await tx.externalIdentity.create({ data: { userId: user.id, provider: 'google', externalId: identity.sub, chatId: '' } });
+        // No consent row: the app asks for the offer and privacy policy before anything else (consent gate).
+        return user.id;
+      });
+      return { userId, created: true };
+    } catch (error) {
+      if (this.isUniqueViolation(error)) throw new GoogleAuthError('GOOGLE_RETRY');
+      throw error;
+    }
+  }
+
   async authenticate(token: string): Promise<{ user: SafeUser; sessionId: string }> {
     const session = await this.prisma.userSession.findUnique({
       where: { tokenHash: this.digest(token) },
@@ -320,6 +423,6 @@ export class AuthService {
   }
 
   private toSafeUser(user: { id: string; email: string; name: string | null; locale: string; emailVerifiedAt: Date | null; consents: ConsentRow[] }): SafeUser {
-    return { id: user.id, email: user.email, name: user.name, locale: user.locale, emailVerified: Boolean(user.emailVerifiedAt), consentRequired: !consentIsCurrent(user.consents[0]) };
+    return { id: user.id, email: user.email, name: user.name, locale: user.locale, emailVerified: Boolean(user.emailVerifiedAt), consentRequired: !consentIsCurrent(user.consents[0]), consentFirstTime: !user.consents.length };
   }
 }

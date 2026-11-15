@@ -1027,6 +1027,25 @@ model SiteLead {
   @@map("site_leads")
 }
 
+/// A sign-in with an outside provider (Google) in progress: single use, expires in 10 minutes. The browser that
+/// started it holds a random binding value in a cookie (only its hash is here), so a link cannot be finished elsewhere.
+model OAuthLoginState {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider     String    @db.VarChar(20)
+  stateHash    String    @unique @map("state_hash") @db.Char(64)
+  bindingHash  String    @map("binding_hash") @db.Char(64)
+  codeVerifier String    @map("code_verifier") @db.VarChar(128)
+  nonce        String    @db.VarChar(64)
+  nextPath     String    @map("next_path") @db.VarChar(500)
+  locale       String    @db.VarChar(5)
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+  consumedAt   DateTime? @map("consumed_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([expiresAt], map: "oauth_login_states_expires_idx")
+  @@map("oauth_login_states")
+}
+
 model ExternalIdentity {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId     String   @map("user_id") @db.Uuid

@@ -413,6 +413,49 @@ paths:
       responses:
         '204': { description: Session revoked }
         '401': { $ref: '#/components/responses/Problem' }
+  /auth/providers:
+    get:
+      tags: [Auth]
+      operationId: authProviders
+      summary: Which outside sign-in methods are switched on
+      x-implementation-status: implemented
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: object, properties: { google: { type: boolean }, telegram: { type: boolean } } }
+  /auth/google/start:
+    get:
+      tags: [Auth]
+      operationId: googleSignInStart
+      summary: Start «Continue with Google» (browser navigation)
+      description: 'Creates a single-use state (PKCE S256, nonce, 10 minutes), sets a short binding cookie on /api/v1/auth/google and redirects to Google. When Google sign-in is off or rate-limited, redirects to /login?error=CODE.'
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - { name: next, in: query, required: false, schema: { type: string, maxLength: 500 }, description: 'A path inside the app to return to; anything else becomes /projects.' }
+        - { name: locale, in: query, required: false, schema: { type: string, enum: [en, ru, kk] } }
+      responses:
+        '302': { description: 'To Google, or back to the sign-in page with an error' }
+  /auth/google/callback:
+    get:
+      tags: [Auth]
+      operationId: googleSignInCallback
+      summary: Google returns here (browser navigation)
+      description: 'Checks the state and the binding cookie (single use), exchanges the code with the PKCE verifier and verifies the ID token (Google keys, issuer, audience, expiry, nonce, verified email). Signs in the linked account, or links the account with the same address (an unconfirmed one loses its password and sessions), or creates a new verified account with a workspace and no consent yet. Sets the session cookie and redirects to the saved path; on failure redirects to /login?error= GOOGLE_STATE_INVALID, GOOGLE_CANCELLED, GOOGLE_EMAIL_NOT_VERIFIED, GOOGLE_ACCOUNT_MISMATCH, ACCOUNT_DELETED, GOOGLE_UNAVAILABLE, GOOGLE_TOKEN_INVALID, GOOGLE_FAILED.'
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - { name: code, in: query, required: false, schema: { type: string } }
+        - { name: state, in: query, required: false, schema: { type: string } }
+        - { name: error, in: query, required: false, schema: { type: string } }
+      responses:
+        '302': { description: 'Into the app, or back to the sign-in page with an error' }
   /auth/telegram-webapp:
     post:
       tags: [Authentication]
@@ -6359,7 +6402,7 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [id, email, locale, emailVerified, consentRequired]
+          required: [id, email, locale, emailVerified, consentRequired, consentFirstTime]
           properties:
             id: { type: string, format: uuid }
             email: { type: string, format: email }
@@ -6369,6 +6412,9 @@ components:
             consentRequired:
               type: boolean
               description: True when the current offer/privacy versions are not accepted. Until POST /me/consent, other signed-in routes answer 403 CONSENT_REQUIRED (except /me, /me/deletion, /auth/logout).
+            consentFirstTime:
+              type: boolean
+              description: True when the person has never accepted them (an account made with Google); the app asks for consent instead of announcing an update.
     WorkspaceListResponse:
       type: object
       additionalProperties: false
