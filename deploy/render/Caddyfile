@@ -4,12 +4,43 @@
 #   rest    -> the web app (WEB_UPSTREAM: builder-front for the app, builder-admin for the console)
 # Upstreams are public https://*.onrender.com addresses because free Render services cannot receive
 # private-network traffic. The upstream Host header is rewritten so Render routes the request.
+#
+# Free services sleep after 15 minutes. A request from this gateway does not reliably wake a sleeping upstream —
+# Render answers it with 502/503 — while a visit from a browser does. So when an upstream answers 502/503/504 or
+# cannot be reached, people get a short «waking up» page instead of an error: it pings both upstreams from the
+# browser (that wakes them) and reloads itself every few seconds. API calls get a JSON 503 with Retry-After.
 {
 	auto_https off
 	admin off
 	servers {
 		trusted_proxies static private_ranges
 	}
+}
+
+(waking_page) {
+	header Content-Type "text/html; charset=utf-8"
+	header Cache-Control "no-store"
+	header Retry-After "5"
+	respond <<HTML
+		<!doctype html>
+		<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
+		<title>Dev Flow просыпается…</title>
+		<style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:18px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:#f6f8f7;color:#1c241f}main{max-width:420px;padding:24px;text-align:center}.dot{width:14px;height:14px;border-radius:50%;background:#13804f;display:inline-block;animation:p 1.2s infinite ease-in-out}@keyframes p{0%,100%{opacity:.25}50%{opacity:1}}small{color:#5b635e}</style></head>
+		<body><main><span class="dot" aria-hidden="true"></span><h1 style="font-size:22px">Сервер просыпается</h1>
+		<p>Тестовый сервер засыпает, когда им давно не пользовались. Обычно он просыпается за 30–60 секунд — страница откроется сама.</p>
+		<p><small>The test server is waking up; this page reloads by itself.</small></p></main>
+		<script>
+		["{$WEB_UPSTREAM}/", "{$API_UPSTREAM}/api/v1/health"].forEach(function (url) { fetch(url, { mode: "no-cors", cache: "no-store" }).catch(function () {}); });
+		setTimeout(function () { location.reload(); }, 6000);
+		</script></body></html>
+		HTML 503
+}
+
+(waking_json) {
+	header Content-Type "application/json"
+	header Cache-Control "no-store"
+	header Retry-After "5"
+	respond `{"statusCode":503,"code":"SERVER_WAKING_UP","message":"The server is waking up, try again in a few seconds."}` 503
 }
 
 (common_headers) {
@@ -35,11 +66,29 @@
 	handle /api/* {
 		reverse_proxy {$API_UPSTREAM} {
 			header_up Host {upstream_hostport}
+			@sleeping status 502 503 504
+			handle_response @sleeping {
+				import waking_json
+			}
 		}
 	}
 	handle {
 		reverse_proxy {$WEB_UPSTREAM} {
 			header_up Host {upstream_hostport}
+			@sleeping status 502 503 504
+			handle_response @sleeping {
+				import waking_page
+			}
+		}
+	}
+	# The upstream could not be reached at all (still starting): the same answers.
+	handle_errors 502 503 504 {
+		@api path /api/*
+		handle @api {
+			import waking_json
+		}
+		handle {
+			import waking_page
 		}
 	}
 }
