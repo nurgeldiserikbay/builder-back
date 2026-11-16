@@ -103,6 +103,28 @@ export class ChoicesController {
     return this.choices.verifyDeployment(request.user.id, projectId, url);
   }
 
+  /** { provider, token, siteId?, confirm } — connect the chosen external hosting (Netlify). */
+  @Post('deployment/hosting')
+  @HttpCode(200)
+  hostingConnect(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw, ['provider', 'token', 'siteId', 'confirm']);
+    const siteId = input.siteId === undefined || input.siteId === null || input.siteId === '' ? null : str(input.siteId, 'HOSTING_SITE_NOT_FOUND', 80);
+    return this.choices.hostingConnect(request.user.id, projectId, { provider: str(input.provider, 'HOSTING_PROVIDER_UNKNOWN', 20), token: str(input.token, 'HOSTING_TOKEN_INVALID', 300), siteId, confirm: input.confirm === true });
+  }
+
+  @Post('deployment/hosting/deploy')
+  @HttpCode(200)
+  hostingDeploy(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw, ['confirm']);
+    return this.choices.hostingDeploy(request.user.id, projectId, input.confirm === true);
+  }
+
+  @Delete('deployment/hosting')
+  @HttpCode(200)
+  hostingDisconnect(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.choices.hostingDisconnect(request.user.id, projectId);
+  }
+
   @Get('deployment/package')
   @Header('Cache-Control', 'no-store')
   package(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {

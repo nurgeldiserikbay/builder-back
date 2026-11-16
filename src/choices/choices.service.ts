@@ -2,6 +2,7 @@ import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { decryptToken, encryptToken, tokenKey } from '../security/token-crypto.js';
+import { HOSTING_PROVIDERS, HostingError, hostingProvider, type HostingProviderKey } from './hosting-providers.js';
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 import { PrismaService } from '../database/prisma.service.js';
@@ -111,7 +112,7 @@ export class ChoicesService {
     if (!choice) throw new ConflictException('CHOICE_NOT_MADE');
     const step = choiceCards[cardKey].options.find((option) => option.key === choice.optionKey)?.steps.find((item) => item.key === stepKey);
     // Steps that BuildPath checks itself cannot be ticked off by hand.
-    if (!step || step.kind === 'connect' || step.kind === 'verify' || step.kind === 'domain') throw new BadRequestException('CHOICE_STEP_INVALID');
+    if (!step || step.kind === 'connect' || step.kind === 'verify' || step.kind === 'domain' || step.kind === 'hosting_connect' || step.kind === 'hosting_deploy') throw new BadRequestException('CHOICE_STEP_INVALID');
     const steps = new Set(choice.stepsDone);
     if (done) steps.add(stepKey); else steps.delete(stepKey);
     await this.prisma.projectChoice.update({ where: { id: choice.id }, data: { stepsDone: [...steps] } });
@@ -367,10 +368,15 @@ export class ChoicesService {
       this.acceptedBuildId(projectId),
       this.prisma.codeRepository.findUnique({ where: { projectId }, select: { provider: true, repoPath: true, lastPushAt: true } }),
     ]);
+    const hosting = await this.prisma.hostingConnection.findUnique({ where: { projectId } });
     return {
       siteAccepted: Boolean(buildId),
       publication: publication ? { status: publication.status, slug: publication.slug, upToDate: publication.buildVersionId === buildId } : null,
       repository: repo ? { provider: repo.provider, repoPath: repo.repoPath, pushedAt: repo.lastPushAt } : null,
+      hosting: hosting ? {
+        provider: hosting.provider, account: hosting.account, siteUrl: hosting.siteUrl, adminUrl: hosting.adminUrl, tokenHint: `…${hosting.tokenHint}`,
+        deployedAt: hosting.lastDeployAt, upToDate: Boolean(buildId) && hosting.lastBuildVersionId === buildId, lastError: hosting.lastError,
+      } : null,
     };
   }
 
@@ -402,6 +408,8 @@ export class ChoicesService {
       const status = !context.publication || context.publication.status !== 'live' ? 'not_published' : context.publication.upToDate ? 'matches' : 'outdated';
       verification = { url: null, status, checkedAt: new Date().toISOString(), httpStatus: null };
     } else {
+      // On a connected hosting the site address is known; the owner may still check another one (their own domain there).
+      if (!url && HOSTING_PROVIDERS.includes(choice.optionKey as HostingProviderKey)) url = (await this.prisma.hostingConnection.findUnique({ where: { projectId }, select: { siteUrl: true } }))?.siteUrl || null;
       if (!url) throw new BadRequestException('SITE_URL_REQUIRED');
       const checked = await checkSite(url, expected, { allowLocal: this.allowLocal() });
       verification = { url: checked.finalUrl ?? url, status: checked.status, checkedAt: new Date().toISOString(), httpStatus: checked.httpStatus };
@@ -413,6 +421,87 @@ export class ChoicesService {
       this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'deployment_checked', details: { option: choice.optionKey, status: verification.status, url: verification.url } } }),
     ]);
     return this.card(userId, projectId, 'deployment');
+  }
+
+  /**
+   * Connects an external hosting: checks the token, creates a site in the owner's account (or takes one by its ID) and keeps the
+   * token encrypted. Creating a site there is an action in the owner's account, so it needs explicit confirmation.
+   */
+  async hostingConnect(userId: string, projectId: string, input: { provider: string; token: string; siteId: string | null; confirm: boolean }, fetchImpl?: typeof fetch) {
+    if (!input.confirm) throw new BadRequestException('CONFIRMATION_REQUIRED');
+    const access = await this.access(userId, projectId, true);
+    const key = this.key();
+    if (!key) throw new ServiceUnavailableException('REPO_CONNECT_NOT_CONFIGURED');
+    if (!HOSTING_PROVIDERS.includes(input.provider as HostingProviderKey)) throw new BadRequestException('HOSTING_PROVIDER_UNKNOWN');
+    const choice = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'deployment' } }, select: { optionKey: true } });
+    if (choice?.optionKey !== input.provider) throw new ConflictException('HOSTING_NOT_CHOSEN');
+    try {
+      const provider = hostingProvider(input.provider, input.token, fetchImpl);
+      const { account } = await provider.verify();
+      const site = await provider.site(input.siteId, access.name);
+      const data = {
+        provider: input.provider, account: account.slice(0, 120), siteId: site.siteId, siteUrl: site.url.slice(0, 300), adminUrl: site.adminUrl?.slice(0, 300) ?? null,
+        tokenEncrypted: this.encrypt(input.token, key), tokenHint: input.token.slice(-4), connectedByUserId: userId, lastError: null,
+        lastDeployAt: null, lastDeployId: null, lastBuildVersionId: null,
+      };
+      await this.prisma.$transaction([
+        this.prisma.hostingConnection.upsert({ where: { projectId }, create: { projectId, ...data }, update: data }),
+        this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'hosting_connected', details: { provider: input.provider, siteId: site.siteId, created: !input.siteId } } }),
+      ]);
+      await this.markDeploymentStep(projectId, 'connect', true);
+    } catch (error) {
+      if (error instanceof HostingError) throw new UnprocessableEntityException(error.code);
+      throw error;
+    }
+    return this.card(userId, projectId, 'deployment');
+  }
+
+  /** Sends the accepted page to the connected hosting. Every deploy is confirmed by the owner. */
+  async hostingDeploy(userId: string, projectId: string, confirm: boolean, fetchImpl?: typeof fetch) {
+    if (!confirm) throw new BadRequestException('CONFIRMATION_REQUIRED');
+    await this.access(userId, projectId, true);
+    const key = this.key();
+    if (!key) throw new ServiceUnavailableException('REPO_CONNECT_NOT_CONFIGURED');
+    const connection = await this.prisma.hostingConnection.findUnique({ where: { projectId } });
+    if (!connection) throw new NotFoundException('HOSTING_NOT_CONNECTED');
+    const buildId = await this.acceptedBuildId(projectId);
+    const result = (await this.journey.result(userId, projectId)).data as { files: Array<{ name: string; content: string }> };
+    const page = result.files.find((file) => file.name === 'site.html')?.content;
+    if (!buildId || !page) throw new ConflictException('SITE_NOT_ACCEPTED');
+    const token = decryptToken(connection.tokenEncrypted, key);
+    if (token === null) throw new ServiceUnavailableException('HOSTING_RECONNECT_REQUIRED');
+    try {
+      const deployed = await hostingProvider(connection.provider, token, fetchImpl).deploy(connection.siteId, [{ path: 'index.html', content: page }]);
+      await this.prisma.$transaction([
+        this.prisma.hostingConnection.update({ where: { projectId }, data: { lastDeployAt: new Date(), lastDeployId: deployed.deployId.slice(0, 80), lastBuildVersionId: buildId, lastError: null, ...(deployed.url ? { siteUrl: deployed.url.slice(0, 300) } : {}) } }),
+        this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'hosting_deployed', details: { provider: connection.provider, siteId: connection.siteId, deployId: deployed.deployId, buildVersionId: buildId } } }),
+      ]);
+      await this.markDeploymentStep(projectId, 'deploy', true);
+    } catch (error) {
+      const code = error instanceof HostingError ? error.code : 'HOSTING_FAILED';
+      await this.prisma.hostingConnection.update({ where: { projectId }, data: { lastError: code } });
+      throw new UnprocessableEntityException(code);
+    }
+    return this.card(userId, projectId, 'deployment');
+  }
+
+  /** Forgets the token and the site link here; the site itself stays in the owner's hosting account. */
+  async hostingDisconnect(userId: string, projectId: string) {
+    await this.access(userId, projectId, true);
+    const removed = await this.prisma.hostingConnection.deleteMany({ where: { projectId } });
+    if (!removed.count) throw new NotFoundException('HOSTING_NOT_CONNECTED');
+    await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'hosting_disconnected', details: {} } });
+    await this.markDeploymentStep(projectId, 'connect', false);
+    await this.markDeploymentStep(projectId, 'deploy', false);
+    return this.card(userId, projectId, 'deployment');
+  }
+
+  private async markDeploymentStep(projectId: string, stepKey: string, done: boolean) {
+    const choice = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'deployment' } }, select: { id: true, stepsDone: true } });
+    if (!choice) return;
+    const steps = new Set(choice.stepsDone);
+    if (done) steps.add(stepKey); else steps.delete(stepKey);
+    await this.prisma.projectChoice.update({ where: { id: choice.id }, data: { stepsDone: [...steps] } });
   }
 
   /** Files for an own server: the accepted page, a Caddy config with automatic HTTPS, a compose file and plain instructions. */

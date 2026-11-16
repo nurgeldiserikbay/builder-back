@@ -364,6 +364,7 @@ model Project {
   aiSpendLimitTiyn  Int?           @map("ai_spend_limit_tiyn")
   changeProposals ChangeProposal[]
   stagePlaybooks  StagePlaybook[]
+  hostingConnection HostingConnection?
 }
 
 model ProjectMember {
@@ -2055,4 +2056,27 @@ model RateLimitHit {
   @@index([key, at], map: "rate_limit_hits_key_at_idx")
   @@index([expiresAt], map: "rate_limit_hits_expires_idx")
   @@map("rate_limit_hits")
+}
+
+/// A project's connection to an external static hosting (Netlify for now): the site there and an encrypted access token.
+model HostingConnection {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId          String    @unique(map: "hosting_connections_project_key") @map("project_id") @db.Uuid
+  provider           String    @db.VarChar(20)
+  account            String    @db.VarChar(120)
+  siteId             String    @map("site_id") @db.VarChar(80)
+  siteUrl            String    @map("site_url") @db.VarChar(300)
+  adminUrl           String?   @map("admin_url") @db.VarChar(300)
+  tokenEncrypted     String    @map("token_encrypted")
+  tokenHint          String    @map("token_hint") @db.VarChar(8)
+  connectedByUserId  String    @map("connected_by_user_id") @db.Uuid
+  lastDeployAt       DateTime? @map("last_deploy_at") @db.Timestamptz(3)
+  lastDeployId       String?   @map("last_deploy_id") @db.VarChar(80)
+  lastBuildVersionId String?   @map("last_build_version_id") @db.Uuid
+  lastError          String?   @map("last_error") @db.VarChar(80)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("hosting_connections")
 }
