@@ -1694,6 +1694,94 @@ paths:
         '200': { description: 'Deployment card with choice.verification (url, status, checkedAt, httpStatus)' }
         '400': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/deployment/hosting:
+    post:
+      tags: [Choices]
+      operationId: connectHosting
+      summary: Connect an external static hosting (Netlify)
+      description: |
+        Owner or manager, after choosing that hosting in the deployment card (409 HOSTING_NOT_CHOSEN). Checks the access token, creates
+        a site in the owner's account (or takes an existing one by siteId) and keeps the token encrypted with
+        CODE_HOSTING_TOKEN_ENCRYPTION_KEY (503 REPO_CONNECT_NOT_CONFIGURED without it). Creating a site there is an action in the owner's
+        account, so confirm must be true. 422 HOSTING_TOKEN_INVALID, HOSTING_SITE_NOT_FOUND, HOSTING_SITE_NAME_TAKEN, HOSTING_RATE_LIMITED,
+        HOSTING_UNAVAILABLE, HOSTING_FAILED.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [provider, token, confirm]
+              properties:
+                provider: { type: string, enum: [netlify] }
+                token: { type: string, maxLength: 300, writeOnly: true }
+                siteId: { type: [string, 'null'], maxLength: 80 }
+                confirm: { type: boolean, enum: [true] }
+      responses:
+        '200':
+          description: Connected
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object, description: 'The deployment card, as GET /projects/{projectId}/choices/deployment; context.hosting shows the connection.' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [Choices]
+      operationId: disconnectHosting
+      summary: Forget the hosting token and site link
+      description: The site itself stays in the owner's hosting account.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Disconnected
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object, description: 'The deployment card, as GET /projects/{projectId}/choices/deployment; context.hosting shows the connection.' } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/deployment/hosting/deploy:
+    post:
+      tags: [Choices]
+      operationId: deployToHosting
+      summary: Send the accepted site to the connected hosting
+      description: |
+        Owner or manager, confirmed every time. Sends only the accepted, self-contained page (index.html); the hosting is asked for
+        files it does not have yet. 409 SITE_NOT_ACCEPTED; 503 HOSTING_RECONNECT_REQUIRED when the stored token can no longer be decrypted.
+        The verify step then compares the hosted page with the accepted version (the hosting address is used when no URL is given).
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [confirm], properties: { confirm: { type: boolean, enum: [true] } } }
+      responses:
+        '200':
+          description: Deployed
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object, description: 'The deployment card, as GET /projects/{projectId}/choices/deployment; context.hosting shows the connection.' } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/deployment/package:
     get:
       tags: [Choices]

@@ -6,7 +6,7 @@ export type CardKey = 'code_hosting' | 'deployment' | 'domain' | 'technologies';
  * publish — publishing on BuildPath; push — send to the connected repository; package — files for an own server; verify — BuildPath opens the address and checks the site;
  * domain — form for the owner's domain with the DNS record to create and a check that it points at BuildPath.
  */
-export type StepKind = 'manual' | 'connect' | 'download' | 'publish' | 'push' | 'package' | 'verify' | 'domain';
+export type StepKind = 'manual' | 'connect' | 'download' | 'publish' | 'push' | 'package' | 'verify' | 'domain' | 'hosting_connect' | 'hosting_deploy';
 
 export interface ChoiceStep {
   key: string;
@@ -101,7 +101,7 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
   },
   deployment: {
     key: 'deployment',
-    version: '1.3.0',
+    version: '1.4.0',
     checkedAt: '2026-11-10',
     title: 'Где будет работать сайт',
     question: 'Где разместить сайт, чтобы его видели клиенты?',
@@ -135,6 +135,21 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
           { key: 'push', kind: 'push', title: 'Отправьте сайт в репозиторий', text: ['В решении «Где хранить код» нажмите «Отправить в репозиторий». В репозитории должен появиться файл index.html.'] },
           { key: 'pages', kind: 'manual', title: 'Включите GitHub Pages', text: ['В репозитории откройте «Settings» → «Pages».', 'В «Build and deployment» выберите «Deploy from a branch», ветку main и папку «/ (root)», нажмите «Save».', 'Через 1–2 минуты вверху появится адрес сайта — скопируйте его.'] },
           { key: 'verify', kind: 'verify', title: 'Проверьте адрес', text: ['Вставьте адрес сайта. BuildPath откроет его и сравнит с последней принятой версией.'] },
+        ],
+      },
+      {
+        key: 'netlify',
+        title: 'Netlify',
+        summary: 'Популярный хостинг статических сайтов. BuildPath сам отправляет туда принятую версию по вашей команде.',
+        pros: ['Бесплатного тарифа обычно хватает для сайта-визитки', 'Адрес вида имя.netlify.app или свой домен в Netlify', 'Новая версия — одной кнопкой из BuildPath'],
+        limits: ['Форма заявок и онлайн-запись BuildPath там не работают: на сайте останутся контакты и кнопки связи', 'Нужен аккаунт Netlify и ключ доступа к нему', 'Условия бесплатного тарифа задаёт Netlify и может их менять'],
+        cost: 'Бесплатно на начальном тарифе Netlify; платные тарифы — у Netlify',
+        upkeep: 'Отправлять новую версию после изменений; следить за аккаунтом Netlify',
+        leaving: 'Легко: сайт — один файл, его можно перенести куда угодно',
+        steps: [
+          { key: 'connect', kind: 'hosting_connect', title: 'Подключите Netlify', text: ['В Netlify откройте «User settings» → «Applications» → «Personal access tokens» и создайте ключ.', 'Вставьте ключ сюда. BuildPath проверит его, создаст сайт в вашем аккаунте или возьмёт существующий по его ID и сохранит ключ в зашифрованном виде.'] },
+          { key: 'deploy', kind: 'hosting_deploy', title: 'Отправьте сайт', text: ['Нажмите «Отправить на Netlify» и подтвердите: уйдёт только принятая версия страницы сайта, без данных проекта.', 'После изменений отправьте снова — адрес останется тем же.'] },
+          { key: 'verify', kind: 'verify', title: 'Проверьте адрес', text: ['BuildPath откроет адрес сайта на Netlify и сравнит с последней принятой версией.'] },
         ],
       },
       {
