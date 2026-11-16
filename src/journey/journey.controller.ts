@@ -5,6 +5,7 @@ import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { JourneyService } from './journey.service.js';
 import { SpecialistsService, type SpecialistTerms } from './specialists.service.js';
+import { ChangeProposalsService } from './change-proposals.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { WorktimeService } from './worktime.service.js';
 
@@ -57,7 +58,7 @@ function uuid(value: string, code: string): string {
 @Controller()
 @UseGuards(AuthGuard)
 export class JourneyController {
-  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService, private readonly review: StageReviewService) {}
+  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService, private readonly review: StageReviewService, private readonly proposals: ChangeProposalsService) {}
 
   @Get('projects/:projectId/stages/:stageKey/comments')
   listComments(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
@@ -170,6 +171,30 @@ export class JourneyController {
   @Put('projects/:projectId/assignments/:assignmentId/access')
   updateAccess(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('assignmentId') assignmentId: string, @Body() raw: unknown) {
     return this.specialists.updateAccess(request.user.id, projectId, assignmentId, raw);
+  }
+
+  /** A specialist proposes to change an accepted input of their stage: { targetStageKey, text }. */
+  @Post('projects/:projectId/stages/:stageKey/change-proposals')
+  propose(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    return this.proposals.create(request.user.id, projectId, stageKey(key), raw);
+  }
+
+  @Get('projects/:projectId/change-proposals')
+  listProposals(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.proposals.list(request.user.id, projectId);
+  }
+
+  /** { decision: accept | reject, note?, applyWithAi? } — owner or manager. */
+  @Post('projects/:projectId/change-proposals/:proposalId/decide')
+  @HttpCode(200)
+  decideProposal(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('proposalId') proposalId: string, @Body() raw: unknown) {
+    return this.proposals.decide(request.user.id, projectId, proposalId, raw);
+  }
+
+  @Post('projects/:projectId/change-proposals/:proposalId/withdraw')
+  @HttpCode(200)
+  withdrawProposal(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('proposalId') proposalId: string) {
+    return this.proposals.withdraw(request.user.id, projectId, proposalId);
   }
 
   @Post('projects/:projectId/assignments/:assignmentId/revoke')
