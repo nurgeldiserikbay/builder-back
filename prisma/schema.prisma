@@ -214,6 +214,8 @@ model User {
   profileReports    SpecialistProfileReport[]
   proposalsAuthored ChangeProposal[] @relation("ProposalAuthor")
   proposalsDecided  ChangeProposal[] @relation("ProposalDecider")
+  playbooks         SpecialistPlaybook[] @relation("PlaybookOwner")
+  playbooksAttached StagePlaybook[]      @relation("PlaybookAttacher")
 }
 
 model UserSession {
@@ -361,6 +363,7 @@ model Project {
   /// Owner's cap on AI spending for the whole project, in tiyn; null — no cap.
   aiSpendLimitTiyn  Int?           @map("ai_spend_limit_tiyn")
   changeProposals ChangeProposal[]
+  stagePlaybooks  StagePlaybook[]
 }
 
 model ProjectMember {
@@ -871,6 +874,7 @@ model ProjectStage {
   @@map("project_stages")
   proposalsFrom   ChangeProposal[] @relation("ProposalFrom")
   proposalsTarget ChangeProposal[] @relation("ProposalTarget")
+  playbook        StagePlaybook?
 }
 
 model StageArtifactVersion {
@@ -923,6 +927,8 @@ model GenerationRun {
   targetKey         String?             @map("target_key") @db.VarChar(60)
   instructionId     String?             @map("instruction_id") @db.Uuid
   ruleIds           String[]            @default([]) @map("rule_ids") @db.Uuid
+  /// The specialist playbook (id@version) the generation used, if any.
+  specialistPlaybook String?           @map("specialist_playbook") @db.VarChar(60)
   inputVersionIds   String[]            @default([]) @map("input_version_ids") @db.Uuid
   baseVersionId     String?             @map("base_version_id") @db.Uuid
   resultVersionId   String?             @map("result_version_id") @db.Uuid
@@ -1997,4 +2003,44 @@ model ChangeProposal {
 
   @@index([projectId, status, createdAt(sort: Desc)], map: "change_proposals_project_status_idx")
   @@map("change_proposals")
+}
+
+/// A specialist's own reusable know-how for one kind of stage (STAGE_WORK_MODEL §7.4). Holds no project data.
+model SpecialistPlaybook {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerUserId  String          @map("owner_user_id") @db.Uuid
+  stageKey     String          @map("stage_key") @db.VarChar(40)
+  title        String          @db.VarChar(80)
+  instructions String[]        @default([]) @db.VarChar(300)
+  checklist    String[]        @default([]) @db.VarChar(300)
+  version      Int             @default(1)
+  /// Result of the deterministic checks for this version; empty means it may be attached.
+  checkIssues  Json            @default("[]") @map("check_issues")
+  createdAt    DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+  owner        User            @relation("PlaybookOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  attachments  StagePlaybook[]
+
+  @@index([ownerUserId, stageKey], map: "specialist_playbooks_owner_idx")
+  @@map("specialist_playbooks")
+}
+
+/// The playbook a stage lead attached, copied at a version so later edits never change a stage silently.
+model StagePlaybook {
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId        String              @map("project_id") @db.Uuid
+  stageId          String              @unique(map: "stage_playbooks_stage_key") @map("stage_id") @db.Uuid
+  playbookId       String?             @map("playbook_id") @db.Uuid
+  attachedByUserId String              @map("attached_by_user_id") @db.Uuid
+  title            String              @db.VarChar(80)
+  version          Int
+  instructions     String[]            @default([]) @db.VarChar(300)
+  checklist        String[]            @default([]) @db.VarChar(300)
+  attachedAt       DateTime            @default(now()) @map("attached_at") @db.Timestamptz(3)
+  project          Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage            ProjectStage        @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  playbook         SpecialistPlaybook? @relation(fields: [playbookId], references: [id], onDelete: SetNull)
+  attachedBy       User                @relation("PlaybookAttacher", fields: [attachedByUserId], references: [id], onDelete: Cascade)
+
+  @@map("stage_playbooks")
 }

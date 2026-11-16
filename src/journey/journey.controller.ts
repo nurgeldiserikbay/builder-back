@@ -6,6 +6,7 @@ import { AuthGuard } from '../auth/auth.guard.js';
 import { JourneyService } from './journey.service.js';
 import { SpecialistsService, type SpecialistTerms } from './specialists.service.js';
 import { ChangeProposalsService } from './change-proposals.service.js';
+import { PlaybooksService } from './playbooks.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { WorktimeService } from './worktime.service.js';
 
@@ -58,7 +59,7 @@ function uuid(value: string, code: string): string {
 @Controller()
 @UseGuards(AuthGuard)
 export class JourneyController {
-  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService, private readonly review: StageReviewService, private readonly proposals: ChangeProposalsService) {}
+  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService, private readonly review: StageReviewService, private readonly proposals: ChangeProposalsService, private readonly playbooks: PlaybooksService) {}
 
   @Get('projects/:projectId/stages/:stageKey/comments')
   listComments(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
@@ -195,6 +196,45 @@ export class JourneyController {
   @HttpCode(200)
   withdrawProposal(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('proposalId') proposalId: string) {
     return this.proposals.withdraw(request.user.id, projectId, proposalId);
+  }
+
+  /** The specialist's own playbooks — no project data, reusable across projects (STAGE_WORK_MODEL §7.4). */
+  @Get('me/playbooks')
+  myPlaybooks(@Req() request: AuthenticatedRequest) {
+    return this.playbooks.mine(request.user.id);
+  }
+
+  @Post('me/playbooks')
+  createPlaybook(@Req() request: AuthenticatedRequest, @Body() raw: unknown) {
+    return this.playbooks.create(request.user.id, raw);
+  }
+
+  @Put('me/playbooks/:playbookId')
+  updatePlaybook(@Req() request: AuthenticatedRequest, @Param('playbookId') playbookId: string, @Body() raw: unknown) {
+    return this.playbooks.update(request.user.id, playbookId, raw);
+  }
+
+  @Post('me/playbooks/:playbookId/delete')
+  @HttpCode(200)
+  deletePlaybook(@Req() request: AuthenticatedRequest, @Param('playbookId') playbookId: string) {
+    return this.playbooks.remove(request.user.id, playbookId);
+  }
+
+  @Get('projects/:projectId/stages/:stageKey/playbook')
+  stagePlaybook(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
+    return this.playbooks.stage(request.user.id, projectId, stageKey(key));
+  }
+
+  /** { playbookId } — the stage lead attaches one of their playbooks for this kind of stage. */
+  @Put('projects/:projectId/stages/:stageKey/playbook')
+  attachPlaybook(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    return this.playbooks.attach(request.user.id, projectId, stageKey(key), raw && typeof raw === 'object' ? (raw as { playbookId?: unknown }).playbookId : undefined);
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/playbook/detach')
+  @HttpCode(200)
+  detachPlaybook(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
+    return this.playbooks.detach(request.user.id, projectId, stageKey(key));
   }
 
   @Post('projects/:projectId/assignments/:assignmentId/revoke')

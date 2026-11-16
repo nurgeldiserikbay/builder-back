@@ -82,7 +82,9 @@ export class StageAiService {
       : null;
     // A rule saved together with the request is already part of the instruction; do not send it twice.
     const ruleTexts = rules.map((rule) => rule.text);
+    const playbook = await this.core.activePlaybook(stage.id);
     const prompt = buildStagePrompt({
+      specialistPlaybook: playbook ? { instructions: playbook.instructions, checklist: playbook.checklist } : null,
       stage: definition, locale: ctx.project.locale, projectTypeTitle: ctx.type.title,
       inputs: Object.fromEntries([...Object.entries(inputs), ...Object.entries(extras)].map(([inputKey, value]) => [inputKey, value.content])),
       current: base?.content ?? null, lockedKeys: stage.lockedKeys, targetKey: input.targetKey, rules: ruleTexts, instruction: instruction?.text ?? null,
@@ -96,7 +98,7 @@ export class StageAiService {
       await this.prisma.generationRun.create({ data: {
         projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
         targetKey: input.targetKey, instructionId: instruction?.id ?? null, ruleIds: rules.map((rule) => rule.id), inputVersionIds: Object.values(inputs).map((item) => item.versionId),
-        baseVersionId: base?.id ?? null, status: 'failed', safeErrorCode: code, durationMs: Date.now() - started, source,
+        baseVersionId: base?.id ?? null, status: 'failed', safeErrorCode: code, durationMs: Date.now() - started, source, specialistPlaybook: playbook?.ref ?? null,
         inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null, costTiyn: costOf(usage, pricing),
       } });
     };
@@ -135,7 +137,7 @@ export class StageAiService {
       const run = await tx.generationRun.create({ data: {
         projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
         targetKey: input.targetKey, instructionId: instruction?.id ?? null, ruleIds: rules.map((rule) => rule.id), inputVersionIds: Object.values(inputs).map((item) => item.versionId),
-        baseVersionId: baseId, status: 'succeeded', durationMs: Date.now() - started, source,
+        baseVersionId: baseId, status: 'succeeded', durationMs: Date.now() - started, source, specialistPlaybook: playbook?.ref ?? null,
         inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null, costTiyn: costOf(usage, pricing),
       }, select: { id: true } });
       const created = await this.core.createVersion(tx, {
