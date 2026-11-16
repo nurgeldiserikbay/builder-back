@@ -28,6 +28,8 @@ const RESET_TTL_MS = 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 /** Stored for accounts made with Google: never matches a password; «forgot password» can set a real one. */
 const NO_PASSWORD = '!external';
+/** How recent a sign-in must be to confirm a sensitive action on an account without a password. */
+const REAUTH_WINDOW_MS = 15 * 60 * 1000;
 
 export interface SafeUser {
   id: string;
@@ -39,6 +41,8 @@ export interface SafeUser {
   consentRequired: boolean;
   /** True when the user has never accepted them (a new account made with Google): the app asks, not «we updated». */
   consentFirstTime: boolean;
+  /** False for an account made with Google that never set a password: sensitive actions confirm by a fresh sign-in instead. */
+  hasPassword: boolean;
 }
 
 type ConsentRow = { termsVersion: string; privacyVersion: string };
@@ -412,6 +416,17 @@ export class AuthService {
     await this.prisma.userConsent.create({ data: { userId, ...versions, source: 'update' } });
   }
 
+  /**
+   * For an account without a password: the session must be fresh (signed in with Google within the last 15 minutes),
+   * so a stolen old session cannot delete the account. Returns whether the account has a password.
+   */
+  async confirmWithoutPassword(userId: string, sessionId: string): Promise<'has-password' | 'fresh' | 'stale'> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
+    if (!user || user.passwordHash !== NO_PASSWORD) return 'has-password';
+    const session = await this.prisma.userSession.findUnique({ where: { id: sessionId }, select: { createdAt: true } });
+    return session && Date.now() - session.createdAt.getTime() <= REAUTH_WINDOW_MS ? 'fresh' : 'stale';
+  }
+
   /** Password check for sensitive actions such as account deletion. */
   async confirmPassword(userId: string, password: string): Promise<boolean> {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
@@ -422,7 +437,7 @@ export class AuthService {
     await this.prisma.user.update({ where: { id: userId }, data: { locale } });
   }
 
-  private toSafeUser(user: { id: string; email: string; name: string | null; locale: string; emailVerifiedAt: Date | null; consents: ConsentRow[] }): SafeUser {
-    return { id: user.id, email: user.email, name: user.name, locale: user.locale, emailVerified: Boolean(user.emailVerifiedAt), consentRequired: !consentIsCurrent(user.consents[0]), consentFirstTime: !user.consents.length };
+  private toSafeUser(user: { id: string; email: string; name: string | null; locale: string; emailVerifiedAt: Date | null; passwordHash: string; consents: ConsentRow[] }): SafeUser {
+    return { id: user.id, email: user.email, name: user.name, locale: user.locale, emailVerified: Boolean(user.emailVerifiedAt), consentRequired: !consentIsCurrent(user.consents[0]), consentFirstTime: !user.consents.length, hasPassword: user.passwordHash !== NO_PASSWORD };
   }
 }

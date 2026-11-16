@@ -106,6 +106,12 @@ describe('Google sign-in: accounts (database)', async () => {
     const firstUser = (await auth.authenticate(first.result.token)).user;
     assert.equal(firstUser.consentRequired, true);
     assert.equal(firstUser.consentFirstTime, true);
+    // No password: sensitive actions need a fresh sign-in instead.
+    assert.equal(firstUser.hasPassword, false);
+    const { sessionId } = await auth.authenticate(first.result.token);
+    assert.equal(await auth.confirmWithoutPassword(firstUser.id, sessionId), 'fresh');
+    await prisma!.userSession.update({ where: { id: sessionId }, data: { createdAt: new Date(Date.now() - 20 * 60 * 1000) } });
+    assert.equal(await auth.confirmWithoutPassword(firstUser.id, sessionId), 'stale');
     // The password sign-in does not open a Google-only account.
     await assert.rejects(auth.login(newEmail, 'whatever-password'), /INVALID_CREDENTIALS/);
     // The state is single use.

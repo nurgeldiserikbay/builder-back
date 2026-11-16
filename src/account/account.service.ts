@@ -115,10 +115,16 @@ export class AccountService implements OnApplicationBootstrap, OnApplicationShut
    * Immediate effects: sign-out everywhere, sites unpublished, everyone else's access to the user's projects closed,
    * the user's own specialist access closed, Telegram unlinked. Everything else waits for the retention period.
    */
-  async requestDeletion(userId: string, password: string) {
-    // The same limit as sign-in: a stolen session must not be able to guess the password here.
-    if (!this.auth.limits.allowed('login-fail', userId, authLimits.loginFailuresPerEmail)) throw new HttpException('LOGIN_RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
-    if (!(await this.auth.confirmPassword(userId, password))) {
+  async requestDeletion(userId: string, password: string | null, sessionId?: string) {
+    if (password === null) {
+      // No password on the account: only a fresh sign-in (with Google) may confirm.
+      const state = await this.auth.confirmWithoutPassword(userId, sessionId ?? '');
+      if (state === 'has-password') throw new UnauthorizedException('INVALID_PASSWORD');
+      if (state === 'stale') throw new UnauthorizedException('REAUTH_REQUIRED');
+    } else if (!this.auth.limits.allowed('login-fail', userId, authLimits.loginFailuresPerEmail)) {
+      // The same limit as sign-in: a stolen session must not be able to guess the password here.
+      throw new HttpException('LOGIN_RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
+    } else if (!(await this.auth.confirmPassword(userId, password))) {
       this.auth.limits.hit('login-fail', userId, authLimits.loginFailuresPerEmail);
       throw new UnauthorizedException('INVALID_PASSWORD');
     }

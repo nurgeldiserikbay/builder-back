@@ -5211,7 +5211,9 @@ paths:
       operationId: deleteAccount
       summary: Delete the signed-in account
       description: |
-        Requires the password. Immediately: all sessions revoked (the cookie is cleared), live sites unpublished, specialists and members
+        Requires the password. An account without a password (made with Google, `hasPassword: false` in GET /me) instead sends
+        `confirmEmail` equal to its e-mail and must have signed in within the last 15 minutes, otherwise 401 REAUTH_REQUIRED.
+        Immediately: all sessions revoked (the cookie is cleared), live sites unpublished, specialists and members
         lose access to the user's projects, the user's own stage assignments revoked (owners see specialist_account_deleted), Telegram unlinked.
         Data is kept for the retention period from privacy settings (1–90 days, default 30) so staff can restore the account, then purged
         by the API process (hourly). Login during that period answers 403 ACCOUNT_DELETED.
@@ -5224,9 +5226,10 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [password, confirm]
+              required: [confirm]
               properties:
-                password: { type: string, maxLength: 128, writeOnly: true }
+                password: { type: string, maxLength: 128, writeOnly: true, description: 'Required when the account has a password.' }
+                confirmEmail: { type: string, maxLength: 320, description: 'For an account without a password: its e-mail, typed by the person.' }
                 confirm: { type: boolean, enum: [true] }
       responses:
         '200':
@@ -6402,7 +6405,7 @@ components:
         data:
           type: object
           additionalProperties: false
-          required: [id, email, locale, emailVerified, consentRequired, consentFirstTime]
+          required: [id, email, locale, emailVerified, consentRequired, consentFirstTime, hasPassword]
           properties:
             id: { type: string, format: uuid }
             email: { type: string, format: email }
@@ -6415,6 +6418,9 @@ components:
             consentFirstTime:
               type: boolean
               description: True when the person has never accepted them (an account made with Google); the app asks for consent instead of announcing an update.
+            hasPassword:
+              type: boolean
+              description: False for an account made with Google that never set a password; account deletion then confirms by e-mail and a recent sign-in.
     WorkspaceListResponse:
       type: object
       additionalProperties: false

@@ -52,10 +52,17 @@ export class AccountDeletionController {
   @Post()
   @HttpCode(200)
   async delete(@Req() request: AuthenticatedRequest, @Body() raw: unknown, @Res({ passthrough: true }) response: HttpResponse) {
-    const input = body(raw, ['password', 'confirm']);
+    const input = body(raw, ['password', 'confirm', 'confirmEmail']);
     if (input.confirm !== true) throw new BadRequestException('CONFIRMATION_REQUIRED');
-    if (typeof input.password !== 'string' || input.password.length < 1 || input.password.length > 128) throw new BadRequestException('INVALID_PASSWORD');
-    const result = await this.account.requestDeletion(request.user.id, input.password);
+    let result;
+    if (request.user.hasPassword) {
+      if (typeof input.password !== 'string' || input.password.length < 1 || input.password.length > 128) throw new BadRequestException('INVALID_PASSWORD');
+      result = await this.account.requestDeletion(request.user.id, input.password);
+    } else {
+      // An account made with Google has no password: the person types the account e-mail and must have signed in recently.
+      if (typeof input.confirmEmail !== 'string' || input.confirmEmail.trim().toLowerCase() !== request.user.email.toLowerCase()) throw new BadRequestException('CONFIRM_EMAIL_MISMATCH');
+      result = await this.account.requestDeletion(request.user.id, null, request.sessionId);
+    }
     response.setHeader('Set-Cookie', cookie('', 0));
     return result;
   }
