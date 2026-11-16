@@ -75,3 +75,5 @@ In production Caddy serves the app and `/api/*` on one address, so the session c
 service has its own address, so the app (and the admin console) forward `/api/*` to the API themselves over Render's
 private network when `API_INTERNAL_URL` is set. The forwarded request carries only the client address that Render's edge
 added, and the API trusts exactly one proxy hop (`TRUST_PROXY=true`).
+
+`RATE_LIMIT_STORE` — `memory` is enough for the single free buildpath-api instance; set `database` before running more than one instance, so sign-in and mail limits are shared.

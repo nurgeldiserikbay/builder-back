@@ -2044,3 +2044,15 @@ model StagePlaybook {
 
   @@map("stage_playbooks")
 }
+
+/// Shared rate-limit counters (RATE_LIMIT_STORE=database), written with raw SQL by security/rate-limit.ts. Keys are hashes.
+model RateLimitHit {
+  id        BigInt   @id @default(autoincrement())
+  key       String   @db.VarChar(80)
+  at        DateTime @db.Timestamptz(3)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+
+  @@index([key, at], map: "rate_limit_hits_key_at_idx")
+  @@index([expiresAt], map: "rate_limit_hits_expires_idx")
+  @@map("rate_limit_hits")
+}

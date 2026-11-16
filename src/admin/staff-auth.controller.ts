@@ -29,7 +29,7 @@ export class StaffAuthController {
   @Post('login')
   @HttpCode(200)
   async login(@Req() request: { ip?: string }, @Body() body: unknown, @Res({ passthrough: true }) response: HttpResponse) {
-    staffLimits.take('staff-login-ip', request.ip ?? 'unknown', STAFF_LOGIN_PER_IP, 'STAFF_LOGIN_RATE_LIMITED');
+    await staffLimits.take('staff-login-ip', request.ip ?? 'unknown', STAFF_LOGIN_PER_IP, 'STAFF_LOGIN_RATE_LIMITED');
     const input = parseBody(body);
     const result = await this.auth.login(input.email, input.password);
     response.setHeader('Set-Cookie', cookie(result.token, 12 * 60 * 60));
