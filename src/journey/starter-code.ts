@@ -10,11 +10,17 @@ import { fieldKind, type AppFeatures, type FieldKind } from './webapp.js';
  * The developer replaces the in-memory store and the demo role header with a real database and login;
  * the tests run in an isolated sandbox, never in the API process (TECHNICAL_SPECIFICATION.md, isolation).
  */
-export const STARTER_VERSION = '1.0.0';
+export const STARTER_VERSION = '1.1.0';
 export const STARTER_NODE_MAJOR = 20;
 
 export interface StarterFile { path: string; content: string }
-export interface StarterCode { starterVersion: string; files: StarterFile[]; collections: string[] }
+export type StarterFieldKind = FieldKind | 'link' | 'links';
+export interface StarterCollection { title: string; roles: string[]; fields: Record<string, { label: string; kind: StarterFieldKind; collection?: string }> }
+export interface StarterCode { starterVersion: string; files: StarterFile[]; collections: string[]; schema: { roles: string[]; collections: Record<string, StarterCollection> } }
+
+/** Business rules hook: the only file the AI writes (with its tests); the rest of the starter stays the platform's. */
+export const RULES_PATH = 'src/rules.js';
+export const RULES_TESTS_PATH = 'test/rules.test.js';
 
 const ident = (value: string) => {
   const base = pathFor(value).slice(1).replace(/-/g, '_') || 'item';
@@ -41,8 +47,8 @@ export function buildStarterCode(input: { brief: Brief | null; features: AppFeat
     const entities = input.plan.dataModel.filter((entity) => entity.key !== 'user');
     const keyOf = new Map(entities.map((entity) => [entity.key, unique(collectionNames, `${ident(entity.name)}s`)]));
     const collections = Object.fromEntries(entities.map((entity) => {
-      const fieldNames = new Set<string>(['id', 'created_at', 'updated_at']);
-      const fields: Record<string, { label: string; kind: FieldKind | 'link' | 'links'; collection?: string }> = {};
+      const fieldNames = new Set<string>(['id', 'created_by', 'created_at', 'updated_at']);
+      const fields: StarterCollection['fields'] = {};
       for (const field of entity.fields) fields[unique(fieldNames, ident(field.name))] = { label: field.name, kind: fieldKind(field.name) };
       for (const link of entity.links) {
         const target = link.to === 'user' ? 'users' : keyOf.get(link.to);
@@ -51,7 +57,7 @@ export function buildStarterCode(input: { brief: Brief | null; features: AppFeat
       }
       // Who may work with the records: roles of the features that use them; all roles when no feature names them.
       const using = [...new Set(input.features.features.filter((feature) => (feature.data ?? []).includes(entity.key)).flatMap((feature) => feature.roles))].filter((role) => roles.includes(role));
-      return [keyOf.get(entity.key)!, { title: entity.name, roles: using.length ? using : roles, fields }];
+      return [keyOf.get(entity.key)!, { title: entity.name, roles: using.length ? using : roles, fields } satisfies StarterCollection];
     }));
     const keys = Object.keys(collections);
 
@@ -67,6 +73,7 @@ export const collections = ${js(collections)};
 `;
 
     const app = `import { collections, roles } from './schema.js';
+import { check as checkRules } from './rules.js';
 
 const MAX_BODY = 100_000;
 const DATE = /^\\d{4}-\\d{2}-\\d{2}$/;
@@ -123,15 +130,28 @@ function readJson(request) {
 }
 
 /**
- * ${tr('Кто делает запрос. Заглушка для разработки: роль из заголовка x-demo-role.')}
+ * ${tr('Кто делает запрос. Заглушка для разработки: роль из заголовка x-demo-role, id из x-demo-user.')}
  * ${tr('Перед запуском замените на настоящий вход (сессия или токен) и роль из базы.')}
  */
 export function demoUser(request) {
   const role = request.headers['x-demo-role'];
-  return typeof role === 'string' && roles.includes(role) ? { id: 'demo', role } : null;
+  const id = request.headers['x-demo-user'];
+  if (typeof role !== 'string' || !roles.includes(role)) return null;
+  return { id: typeof id === 'string' && /^[\\w-]{1,64}$/.test(id) ? id : 'demo', role };
 }
 
-export function createApp({ store = memoryStore(), currentUser = demoUser, now = () => new Date() } = {}) {
+const RULE_STATUSES = new Set([400, 403, 409]);
+
+/** ${tr('Бизнес-правила из src/rules.js: null — можно, иначе ответ с кодом ошибки.')} */
+function ruled(rules, input) {
+  const verdict = rules(input);
+  if (!verdict) return null;
+  return { status: RULE_STATUSES.has(verdict.status) ? verdict.status : 400, body: { error: String(verdict.error ?? 'RULE_VIOLATION'), message: String(verdict.message ?? '') } };
+}
+
+export function createApp({ store = memoryStore(), currentUser = demoUser, now = () => new Date(), rules = checkRules } = {}) {
+  // Rules may look at other records but not change them.
+  const view = { list: (collection) => store.list(collection), get: (collection, id) => store.get(collection, id) };
   return async function handle(request, response) {
     try {
       const url = new URL(request.url, 'http://localhost');
@@ -146,29 +166,50 @@ export function createApp({ store = memoryStore(), currentUser = demoUser, now =
       if (!collections[collection].roles.includes(user.role)) return send(response, 403, { error: 'FORBIDDEN' });
       const id = parts[2];
       const method = request.method;
-      if (!id && method === 'GET') return send(response, 200, store.list(collection));
+      if (!id && method === 'GET') return send(response, 200, store.list(collection).filter((record) => !ruled(rules, { action: 'read', collection, user, record, changes: null, store: view })));
       if (!id && method === 'POST') {
         const checked = validate(collection, await readJson(request));
         if (checked.error) return send(response, 400, checked);
+        const refused = ruled(rules, { action: 'create', collection, user, record: null, changes: checked.value, store: view });
+        if (refused) return send(response, refused.status, refused.body);
         const at = now().toISOString();
-        return send(response, 201, store.put(collection, { ...checked.value, id: crypto.randomUUID(), created_at: at, updated_at: at }));
+        return send(response, 201, store.put(collection, { ...checked.value, id: crypto.randomUUID(), created_by: user.id, created_at: at, updated_at: at }));
       }
       if (!id) return send(response, 405, { error: 'METHOD_NOT_ALLOWED' });
       const record = store.get(collection, id);
       if (!record) return send(response, 404, { error: 'NOT_FOUND' });
+      const hidden = ruled(rules, { action: 'read', collection, user, record, changes: null, store: view });
+      if (hidden) return send(response, 404, { error: 'NOT_FOUND' });
       if (method === 'GET') return send(response, 200, record);
       if (method === 'PATCH') {
         const checked = validate(collection, await readJson(request));
         if (checked.error) return send(response, 400, checked);
+        const refused = ruled(rules, { action: 'update', collection, user, record, changes: checked.value, store: view });
+        if (refused) return send(response, refused.status, refused.body);
         return send(response, 200, store.put(collection, { ...record, ...checked.value, id, updated_at: now().toISOString() }));
       }
-      if (method === 'DELETE') { store.remove(collection, id); return send(response, 204); }
+      if (method === 'DELETE') {
+        const refused = ruled(rules, { action: 'delete', collection, user, record, changes: null, store: view });
+        if (refused) return send(response, refused.status, refused.body);
+        store.remove(collection, id); return send(response, 204);
+      }
       return send(response, 405, { error: 'METHOD_NOT_ALLOWED' });
     } catch (error) {
       const code = error instanceof Error && ['BODY_TOO_LARGE', 'INVALID_JSON'].includes(error.message) ? error.message : 'INTERNAL_ERROR';
       return send(response, code === 'INTERNAL_ERROR' ? 500 : 400, { error: code });
     }
   };
+}
+`;
+
+    const rules = `/**
+ * ${tr('Бизнес-правила приложения. Платформа вызывает check перед каждым действием с записью.')}
+ * action: create | read | update | delete; record — ${tr('запись до изменения (null при создании)')}; changes — ${tr('новые значения полей')};
+ * store.list(collection), store.get(collection, id) — ${tr('другие записи, только чтение')}.
+ * ${tr('Верните null, если действие разрешено, или { status: 400 | 403 | 409, error: \'КОД\', message: \'почему\' }.')}
+ */
+export function check({ action, collection, user, record, changes, store }) {
+  return null;
 }
 `;
 
@@ -262,16 +303,17 @@ for (const [collection, definition] of Object.entries(collections)) {
       `## ${tr('Что заменить перед запуском')}`, '',
       `- ${tr('Вход: сейчас роль берётся из заголовка x-demo-role (src/app.js, demoUser). Подключите сессию или токен и роль пользователя из базы.')}`,
       `- ${tr('Хранилище: данные живут в памяти и пропадают при перезапуске (memoryStore). Подключите базу данных по схеме data-model.md из пакета.')}`,
-      `- ${tr('Права: роль даёт доступ ко всему ресурсу. Если нужно «только свои записи», добавьте проверку владельца.')}`,
+      `- ${tr('Права: роль даёт доступ ко всему ресурсу. Ограничения внутри ресурса («только свои записи», переходы статусов) — в src/rules.js.')}`,
       `- ${tr('Бизнес-правила и критерии приёмки — в spec.md пакета; тесты проверяют только устройство API.')}`, ''].join('\n');
 
     return {
-      starterVersion: STARTER_VERSION, collections: keys,
+      starterVersion: STARTER_VERSION, collections: keys, schema: { roles, collections },
       files: [
         { path: 'package.json', content: `${js(pkg)}\n` },
         { path: 'README.md', content: readme },
         { path: 'src/schema.js', content: schema },
         { path: 'src/app.js', content: app },
+        { path: RULES_PATH, content: rules },
         { path: 'src/server.js', content: server },
         { path: 'test/api.test.js', content: tests },
       ],

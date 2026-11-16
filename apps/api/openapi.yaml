@@ -3840,6 +3840,64 @@ paths:
       responses:
         '200': { description: 'status of its run; files[] (path, content)' }
         '404': { description: 'PROJECT_NOT_FOUND, STAGE_NOT_FOUND, STARTER_NOT_BUILT' }
+  /projects/{projectId}/handoff/app-code:
+    get:
+      tags: [Journey]
+      operationId: getAppCode
+      summary: Web application route — business rules written by AI into the starter API, and the latest sandbox run of their tests
+      description: |
+        The AI writes only src/rules.js (export function check, called before create/read/update/delete) and
+        test/rules.test.js; routing, validation and roles stay the platform's starter. The answer is untrusted: the code
+        policy (parsed with acorn; allowed imports per file; no process, require, eval, Function, globalThis, dynamic import,
+        constructor/__proto__ access; no network in rules; check must be exported; tests must exist) decides whether it
+        may run. Code that breaks the policy is stored with status rejected, CODE_POLICY_FAILED and issues[], never queued
+        and never handed out. Compliant code runs with the starter tests in the isolated sandbox (see /handoff/starter).
+        covered[] and notCovered[] are the AI's own account and are shown as such.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'run (as /handoff/starter, status also rejected; plus instruction, covered[rule, how], notCovered[rule, reason], issues[file, message], rulesCode) or null; aiConfigured; sandboxConfigured; canGenerate; runsLeft' }
+        '404': { description: 'PROJECT_NOT_FOUND, STAGE_NOT_FOUND' }
+    post:
+      tags: [Journey]
+      operationId: generateAppCode
+      summary: Ask the AI to write the business rules for the current package; one AI request, counted against the daily limit, plan, spend limit and specialist budget; at most 10 per package version
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                instruction: { type: [string, 'null'], maxLength: 1000, description: 'The owner''s wish about the rules; data for the AI, it cannot change the policy.' }
+      responses:
+        '202': { description: Same as GET }
+        '400': { description: 'INVALID_BODY, INVALID_INSTRUCTION, INSTRUCTION_TOO_LONG' }
+        '403': { description: 'STAGE_WRITE_FORBIDDEN, APP_CODE_LIMIT' }
+        '409': { description: 'HANDOFF_NOT_BUILT, STAGE_INPUTS_NOT_ACCEPTED, APP_CODE_RUNNING, PROJECT_NOT_ACTIVE' }
+        '429': { description: 'AI_DAILY_LIMIT_REACHED, AI_BUDGET_EXHAUSTED' }
+        '502': { description: AI_INVALID_RESPONSE }
+        '503': { description: 'AI_NOT_CONFIGURED, AI_PROVIDER_UNAVAILABLE, AI_FAILED' }
+  /projects/{projectId}/handoff/app-code/files:
+    get:
+      tags: [Journey]
+      operationId: getAppCodeFiles
+      summary: Files of the latest AI-written project (starter with the rules and their tests), as sent to the sandbox
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'status of its run; files[] (path, content)' }
+        '404': { description: 'PROJECT_NOT_FOUND, STAGE_NOT_FOUND, APP_CODE_NOT_BUILT' }
+        '409': { description: 'APP_CODE_REJECTED — the code broke the policy and is not handed out' }
   /projects/{projectId}/prototype:
     get:
       tags: [Journey]
