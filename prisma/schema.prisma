@@ -2091,6 +2091,8 @@ model SandboxRun {
   files             Json
   filesDigest       String    @map("files_digest") @db.VarChar(64)
   result            Json?
+  /// For AI-written code: covered and left-out rules, the request and the AI run.
+  meta              Json?
   provider          String?   @db.VarChar(30)
   errorCode         String?   @map("error_code") @db.VarChar(60)
   attemptCount      Int       @default(0) @map("attempt_count")

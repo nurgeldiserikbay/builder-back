@@ -5,7 +5,11 @@ import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
 import { ACTOR_KINDS, CAPABILITIES } from './process.js';
 import { BLOCK_KINDS, PRIORITIES, SENSITIVITY } from './webapp.js';
 
-export interface StageAiRequest { system: string; user: string; schemaName: string; schema: Record<string, unknown> }
+export interface StageAiRequest {
+  system: string; user: string; schemaName: string; schema: Record<string, unknown>;
+  /** Longer answers (code) ask for more room and time than the defaults. */
+  maxOutputTokens?: number; timeoutMs?: number;
+}
 export interface StageAiUsage { inputTokens: number | null; outputTokens: number | null }
 export interface StageAiProvider {
   readonly name: string;
@@ -199,7 +203,7 @@ export class OpenAiStageProvider implements StageAiProvider {
         messages: [{ role: 'system', content: request.system }, { role: 'user', content: request.user }],
         response_format: { type: 'json_schema', json_schema: { name: request.schemaName, strict: true, schema: request.schema } },
         // Room for models that think before answering; the answer itself stays well under this.
-        max_tokens: 8000,
+        max_tokens: request.maxOutputTokens ?? 8000,
       }
       : {
         model: this.model,
@@ -209,13 +213,13 @@ export class OpenAiStageProvider implements StageAiProvider {
           { role: 'user', content: [{ type: 'input_text', text: request.user }] },
         ],
         text: { format: { type: 'json_schema', name: request.schemaName, strict: true, schema: request.schema } },
-        max_output_tokens: 4000,
+        max_output_tokens: request.maxOutputTokens ?? 4000,
       };
     const send = () => this.fetchImpl(`${this.baseUrl}/${chat ? 'chat/completions' : 'responses'}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(90_000),
+      signal: AbortSignal.timeout(request.timeoutMs ?? 90_000),
     });
     let response: Response;
     try {

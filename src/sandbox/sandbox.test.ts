@@ -67,7 +67,7 @@ describe('starter code of a web application', () => {
   it('follows the data schema and role rights of the package', () => {
     const { features, plan, code } = starter();
     const names = code.files.map((file) => file.path);
-    assert.deepEqual(names, ['package.json', 'README.md', 'src/schema.js', 'src/app.js', 'src/server.js', 'test/api.test.js']);
+    assert.deepEqual(names, ['package.json', 'README.md', 'src/schema.js', 'src/app.js', 'src/rules.js', 'src/server.js', 'test/api.test.js']);
     assert.equal(code.collections.length, plan.dataModel.filter((entity) => entity.key !== 'user').length);
     const schema = code.files.find((file) => file.path === 'src/schema.js')!.content;
     for (const role of features.roles) assert.ok(schema.includes(JSON.stringify(role.key)), role.key);

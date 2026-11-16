@@ -14,21 +14,23 @@ const STALE_MS = 15 * 60_000;
 const MAX_ATTEMPTS = 3;
 export const STARTER_RUNS_PER_VERSION = 5;
 const KIND = 'starter_check';
+export const ACTIVE_STATUSES = ['queued', 'running'];
 
 /** What runs in the sandbox, in order; a failed step skips the rest. The machine has no internet: the code needs no packages. */
 export const STARTER_COMMANDS: SandboxCommand[] = [
   { id: 'node', run: `node -e "process.exit(Number(process.versions.node.split('.')[0]) >= ${STARTER_NODE_MAJOR} ? 0 : 3)" && node --version`, timeoutMs: 20_000 },
-  { id: 'syntax', run: 'node --check src/schema.js && node --check src/app.js && node --check src/server.js && node --check test/api.test.js', timeoutMs: 30_000 },
+  { id: 'syntax', run: 'for file in $(find src test -name "*.js" | sort); do node --check "$file" || exit 1; done', timeoutMs: 30_000 },
   { id: 'tests', run: 'node --test --test-reporter=spec', timeoutMs: 120_000 },
 ];
 const commandLabels: Record<string, string> = { node: 'Node.js {0} или новее', syntax: 'Код читается без ошибок', tests: 'Тесты API проходят' };
-const statusLabels: Record<string, string> = { queued: 'В очереди', running: 'Идёт проверка', succeeded: 'Тесты прошли', failed: 'Тесты не прошли', unavailable: 'Проверка недоступна' };
+const statusLabels: Record<string, string> = { queued: 'В очереди', running: 'Идёт проверка', succeeded: 'Тесты прошли', failed: 'Тесты не прошли', unavailable: 'Проверка недоступна', rejected: 'Код не прошёл правила платформы' };
 const errorLabels: Record<string, string> = {
   SANDBOX_NOT_CONFIGURED: 'Изолированная среда для запуска кода не подключена на этом сервере. Код можно скачать; он не запускался.',
   SANDBOX_START_FAILED: 'Изолированная среда не запустилась. Попробуйте ещё раз позже.',
   SANDBOX_UPLOAD_FAILED: 'Файлы не загрузились в изолированную среду. Попробуйте ещё раз.',
   SANDBOX_FAILED: 'Проверка прервалась из-за ошибки изолированной среды.',
   CHECK_FAILED: 'Проверка прервалась из-за внутренней ошибки.',
+  CODE_POLICY_FAILED: 'ИИ написал код, который нарушает правила платформы, поэтому он не запускался. Попробуйте ещё раз или уточните запрос.',
 };
 
 export const digestOf = (files: StarterFile[]) => createHash('sha256').update(JSON.stringify(files)).digest('hex');
@@ -102,7 +104,26 @@ export class SandboxRunner {
   }
 }
 
-type RunRow = { id: string; sourceVersionId: string; status: string; result: unknown; errorCode: string | null; provider: string | null; createdAt: Date; finishedAt: Date | null; files: unknown };
+export type RunRow = { id: string; sourceVersionId: string; status: string; result: unknown; errorCode: string | null; provider: string | null; createdAt: Date; finishedAt: Date | null; files: unknown };
+
+/** One sandbox run for people: status, steps with output of what failed, and the files that were sent. */
+export function runView(run: RunRow | null, currentVersionId: string | null) {
+  if (!run) return null;
+  const result = run.result as SandboxResult | null;
+  return {
+    id: run.id, status: run.status, statusLabel: tr(statusLabels[run.status] ?? run.status), createdAt: run.createdAt, finishedAt: run.finishedAt,
+    // A check of an older package says nothing about the current one.
+    outdated: run.sourceVersionId !== currentVersionId,
+    provider: run.provider,
+    error: run.errorCode ? tr(errorLabels[run.errorCode] ?? 'Проверка не получилась.') : null,
+    steps: STARTER_COMMANDS.map((command) => {
+      const done = result?.commands.find((item) => item.id === command.id);
+      return { id: command.id, label: tr(commandLabels[command.id]!, [String(STARTER_NODE_MAJOR)]), status: done?.status ?? null, durationMs: done?.durationMs ?? null, output: done && done.status !== 'passed' ? [done.stdout, done.stderr].filter(Boolean).join('\n') : (command.id === 'tests' && done ? done.stdout : '') };
+    }),
+    files: (run.files as StarterFile[]).map((file) => ({ path: file.path, bytes: Buffer.byteLength(file.content) })),
+  };
+}
+
 
 /**
  * «Стартовый код» on the «Пакет для разработки» stage: the platform turns the accepted package into a
@@ -124,23 +145,6 @@ export class StarterChecksService implements OnApplicationBootstrap, OnModuleDes
     if (this.timer) clearInterval(this.timer);
   }
 
-  private view(run: RunRow | null, currentVersionId: string | null) {
-    if (!run) return null;
-    const result = run.result as SandboxResult | null;
-    return {
-      id: run.id, status: run.status, statusLabel: tr(statusLabels[run.status] ?? run.status), createdAt: run.createdAt, finishedAt: run.finishedAt,
-      // A check of an older package says nothing about the current one.
-      outdated: run.sourceVersionId !== currentVersionId,
-      provider: run.provider,
-      error: run.errorCode ? tr(errorLabels[run.errorCode] ?? 'Проверка не получилась.') : null,
-      steps: STARTER_COMMANDS.map((command) => {
-        const done = result?.commands.find((item) => item.id === command.id);
-        return { id: command.id, label: tr(commandLabels[command.id]!, [String(STARTER_NODE_MAJOR)]), status: done?.status ?? null, durationMs: done?.durationMs ?? null, output: done && done.status !== 'passed' ? [done.stdout, done.stderr].filter(Boolean).join('\n') : (command.id === 'tests' && done ? done.stdout : '') };
-      }),
-      files: (run.files as StarterFile[]).map((file) => ({ path: file.path, bytes: Buffer.byteLength(file.content) })),
-    };
-  }
-
   private async context(userId: string, projectId: string, access: 'read' | 'write') {
     const ctx = await this.core.load(userId, projectId, access, 'handoff');
     if (ctx.type.key !== 'web_app') throw new NotFoundException('STAGE_NOT_FOUND');
@@ -158,7 +162,7 @@ export class StarterChecksService implements OnApplicationBootstrap, OnModuleDes
     const runs = stage.currentVersionId ? await this.prisma.sandboxRun.count({ where: { projectId, kind: KIND, sourceVersionId: stage.currentVersionId } }) : 0;
     return {
       data: {
-        run: this.view(run, stage.currentVersionId),
+        run: runView(run, stage.currentVersionId),
         configured: Boolean(this.runner.sandbox()),
         canRun: canWrite && Boolean(stage.currentVersionId) && runs < STARTER_RUNS_PER_VERSION && !(run && ['queued', 'running'].includes(run.status)),
         runsLeft: Math.max(0, STARTER_RUNS_PER_VERSION - runs),
