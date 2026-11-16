@@ -22,9 +22,10 @@ import { MonitoringModule } from './monitoring/monitoring.module.js';
 import { TeamModule } from './team/team.module.js';
 import { AnalysisModule } from './analysis/analysis.module.js';
 import { BrowserChecksModule } from './quality/browser-checks.module.js';
+import { SandboxModule } from './sandbox/sandbox.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule, MonitoringModule, TeamModule, AnalysisModule, BrowserChecksModule],
+  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule, MonitoringModule, TeamModule, AnalysisModule, BrowserChecksModule, SandboxModule],
   controllers: [HealthController, WorkspacesController],
 })
 export class AppModule {}

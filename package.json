@@ -37,6 +37,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",
     "dotenv": "^17.2.3",
+    "e2b": "^2.64.0",
     "lighthouse": "^13.6.0",
     "parse5": "^8.1.1",
     "pg": "^8.16.3",
