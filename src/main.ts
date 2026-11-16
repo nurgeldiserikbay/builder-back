@@ -6,6 +6,8 @@ import { AppModule } from './app.module.js';
 import { ReportingExceptionFilter, initErrorReporting, reportError } from './observability/error-reporting.js';
 import { LocaleMiddleware, LocalizeInterceptor } from './i18n/locale.middleware.js';
 import { allowedOrigins, originRefusal } from './security/origin-check.js';
+import { DatabaseRateLimitStore, rateLimitStoreKind, useRateLimitStore, type SqlClient } from './security/rate-limit.js';
+import { PrismaService } from './database/prisma.service.js';
 
 initErrorReporting('api');
 
@@ -19,6 +21,8 @@ async function bootstrap(): Promise<void> {
   app.useGlobalFilters(new ReportingExceptionFilter(app.get(HttpAdapterHost).httpAdapter));
   // Behind the reverse proxy (Caddy) the client address comes from X-Forwarded-For.
   if (process.env.TRUST_PROXY === 'true') app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  // Several API instances must share sign-in and mail limits; otherwise each copy would count on its own.
+  if (rateLimitStoreKind() === 'database') useRateLimitStore(new DatabaseRateLimitStore(app.get(PrismaService) as unknown as SqlClient));
   // Cross-site request forgery guard: state-changing calls only from the app's own origins (see origin-check.ts).
   const trusted = allowedOrigins();
   app.use((request: { method: string; originalUrl: string; headers: Record<string, string | string[] | undefined>; hostname?: string; protocol?: string; get(name: string): string | undefined }, response: { status(code: number): { json(body: unknown): void } }, next: () => void) => {

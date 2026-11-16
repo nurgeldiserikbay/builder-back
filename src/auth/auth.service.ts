@@ -62,8 +62,8 @@ export class AuthService {
     if (input.acceptLegal !== true) throw new BadRequestException('CONSENT_REQUIRED');
     const normalized = input.email.trim().toLowerCase();
     const mail = this.mailConfig();
-    this.limits.take('register-ip', ip, authLimits.registerPerIp);
-    this.limits.take('mail-ip', ip, authLimits.mailPerIp);
+    await this.limits.take('register-ip', ip, authLimits.registerPerIp);
+    await this.limits.take('mail-ip', ip, authLimits.mailPerIp);
     const existing = await this.prisma.user.findUnique({ where: { emailNormalized: normalized } });
     // Registering again with an unconfirmed address sends a fresh link; the answer is the same either way, so it does not
     // reveal which addresses have accounts.
@@ -71,7 +71,7 @@ export class AuthService {
       if (!existing.emailVerifiedAt && !existing.deletionRequestedAt) await this.sendVerification(existing.id, existing.email).catch(() => undefined);
       return { status: 'verification_pending' as const };
     }
-    this.limits.take('mail-email', normalized, authLimits.mailPerEmail);
+    await this.limits.take('mail-email', normalized, authLimits.mailPerEmail);
 
     const passwordHash = await this.hashPassword(input.password);
     const rawToken = randomBytes(32).toString('base64url');
@@ -135,7 +135,7 @@ export class AuthService {
   async resendVerification(email: string, ip = ''): Promise<void> {
     const normalized = email.trim().toLowerCase();
     this.mailConfig();
-    this.limits.take('mail-ip', ip, authLimits.mailPerIp);
+    await this.limits.take('mail-ip', ip, authLimits.mailPerIp);
     const user = await this.prisma.user.findUnique({ where: { emailNormalized: normalized }, select: { id: true, email: true, emailVerifiedAt: true, deletionRequestedAt: true } });
     if (!user || user.emailVerifiedAt || user.deletionRequestedAt) return;
     await this.sendVerification(user.id, user.email);
@@ -143,8 +143,8 @@ export class AuthService {
 
   private async sendVerification(userId: string, email: string): Promise<void> {
     const normalized = email.trim().toLowerCase();
-    if (!this.limits.allowed('mail-email', normalized, authLimits.mailPerEmail)) return;
-    this.limits.hit('mail-email', normalized, authLimits.mailPerEmail);
+    if (!await this.limits.allowed('mail-email', normalized, authLimits.mailPerEmail)) return;
+    await this.limits.hit('mail-email', normalized, authLimits.mailPerEmail);
     const mail = this.mailConfig();
     const rawToken = randomBytes(32).toString('base64url');
     await this.prisma.emailVerificationToken.create({ data: { userId, tokenHash: this.digest(rawToken), expiresAt: new Date(Date.now() + VERIFY_TTL_MS) } });
@@ -159,11 +159,11 @@ export class AuthService {
   async requestPasswordReset(email: string, ip = ''): Promise<void> {
     const normalized = email.trim().toLowerCase();
     const mail = this.mailConfig();
-    this.limits.take('mail-ip', ip, authLimits.mailPerIp);
+    await this.limits.take('mail-ip', ip, authLimits.mailPerIp);
     const user = await this.prisma.user.findUnique({ where: { emailNormalized: normalized }, select: { id: true, email: true, deletionRequestedAt: true } });
     if (!user || user.deletionRequestedAt) return;
-    if (!this.limits.allowed('mail-email', normalized, authLimits.mailPerEmail)) return;
-    this.limits.hit('mail-email', normalized, authLimits.mailPerEmail);
+    if (!await this.limits.allowed('mail-email', normalized, authLimits.mailPerEmail)) return;
+    await this.limits.hit('mail-email', normalized, authLimits.mailPerEmail);
     const rawToken = randomBytes(32).toString('base64url');
     await this.prisma.passwordResetToken.create({ data: { userId: user.id, tokenHash: this.digest(rawToken), expiresAt: new Date(Date.now() + RESET_TTL_MS) } });
     const url = new URL('/reset-password', mail.appUrl);
@@ -175,7 +175,7 @@ export class AuthService {
 
   /** Sets the new password, confirms the address (the link came to it) and signs out every session. */
   async resetPassword(token: string, password: string, ip = ''): Promise<void> {
-    this.limits.take('token-ip', ip, authLimits.tokenPerIp);
+    await this.limits.take('token-ip', ip, authLimits.tokenPerIp);
     const now = new Date();
     const record = await this.prisma.passwordResetToken.findUnique({ where: { tokenHash: this.digest(token) } });
     if (!record || record.consumedAt || record.expiresAt <= now) throw new UnauthorizedException('RESET_TOKEN_INVALID');
@@ -191,7 +191,7 @@ export class AuthService {
   }
 
   async verifyEmail(token: string, ip = ''): Promise<void> {
-    this.limits.take('token-ip', ip, authLimits.tokenPerIp);
+    await this.limits.take('token-ip', ip, authLimits.tokenPerIp);
     const tokenHash = this.digest(token);
     const now = new Date();
     const record = await this.prisma.emailVerificationToken.findUnique({ where: { tokenHash } });
@@ -209,17 +209,17 @@ export class AuthService {
 
   async login(email: string, password: string, ip = ''): Promise<{ token: string; user: SafeUser }> {
     const normalized = email.trim().toLowerCase();
-    this.limits.take('login-ip', ip, authLimits.loginPerIp, 'LOGIN_RATE_LIMITED');
-    if (!this.limits.allowed('login-fail', normalized, authLimits.loginFailuresPerEmail)) throw new HttpException('LOGIN_RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
+    await this.limits.take('login-ip', ip, authLimits.loginPerIp, 'LOGIN_RATE_LIMITED');
+    if (!await this.limits.allowed('login-fail', normalized, authLimits.loginFailuresPerEmail)) throw new HttpException('LOGIN_RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
     const user = await this.prisma.user.findUnique({
       where: { emailNormalized: normalized },
       include: { consents: latestConsent },
     });
     if (!user || !(await this.verifyPassword(password, user.passwordHash))) {
-      this.limits.hit('login-fail', normalized, authLimits.loginFailuresPerEmail);
+      await this.limits.hit('login-fail', normalized, authLimits.loginFailuresPerEmail);
       throw new UnauthorizedException('INVALID_CREDENTIALS');
     }
-    this.limits.clear('login-fail', normalized);
+    await this.limits.clear('login-fail', normalized);
     // Shown only after the correct password, so it does not reveal which emails have accounts.
     if (user.deletionRequestedAt) throw new ForbiddenException('ACCOUNT_DELETED');
     if (!user.emailVerifiedAt) throw new UnauthorizedException('EMAIL_NOT_VERIFIED');
@@ -263,7 +263,7 @@ export class AuthService {
   async startGoogle(input: { next: unknown; locale: string }, ip = ''): Promise<{ url: string; binding: string }> {
     const config = googleConfig();
     if (!config) throw new ServiceUnavailableException('GOOGLE_NOT_CONFIGURED');
-    this.limits.take('oauth-ip', ip, authLimits.oauthPerIp);
+    await this.limits.take('oauth-ip', ip, authLimits.oauthPerIp);
     const state = randomToken();
     const binding = randomToken();
     const codeVerifier = randomToken(48);
@@ -284,7 +284,7 @@ export class AuthService {
   async finishGoogle(input: { code: string | null; state: string | null; binding: string | null; error: string | null }, ip = '', fetchImpl: typeof fetch = fetch): Promise<{ token: string; next: string; created: boolean }> {
     const config = googleConfig();
     if (!config) throw new GoogleAuthError('GOOGLE_NOT_CONFIGURED');
-    if (!this.limits.allowed('oauth-ip', ip, authLimits.oauthPerIp)) throw new GoogleAuthError('LOGIN_RATE_LIMITED');
+    if (!await this.limits.allowed('oauth-ip', ip, authLimits.oauthPerIp)) throw new GoogleAuthError('LOGIN_RATE_LIMITED');
     if (!input.state || input.state.length > 100) throw new GoogleAuthError('GOOGLE_STATE_INVALID');
     const now = new Date();
     const row = await this.prisma.oAuthLoginState.findUnique({ where: { stateHash: sha256(input.state) } });

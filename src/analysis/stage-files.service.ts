@@ -91,7 +91,7 @@ export class StageFilesService {
 
   private async store(userId: string, projectId: string, stage: { id: string; key: string } | null, file: { buffer: Buffer; size: number; originalname?: string } | undefined, body: Record<string, unknown> | undefined, onlyZip: boolean) {
     if (!file || !file.buffer?.length) throw new BadRequestException('FILE_REQUIRED');
-    this.limits.take('stage-file-upload', userId, StageFilesService.uploadsPerUser, 'FILE_UPLOADS_TOO_FREQUENT');
+    await this.limits.take('stage-file-upload', userId, StageFilesService.uploadsPerUser, 'FILE_UPLOADS_TOO_FREQUENT');
     if (file.size > STAGE_FILE_LIMITS.fileBytes) throw new UnprocessableEntityException('FILE_TOO_LARGE');
     const name = cleanFileName(body?.name ?? multipartName(file.originalname));
     if (!name) throw new BadRequestException('FILE_NAME_INVALID');

@@ -121,11 +121,11 @@ export class AccountService implements OnApplicationBootstrap, OnApplicationShut
       const state = await this.auth.confirmWithoutPassword(userId, sessionId ?? '');
       if (state === 'has-password') throw new UnauthorizedException('INVALID_PASSWORD');
       if (state === 'stale') throw new UnauthorizedException('REAUTH_REQUIRED');
-    } else if (!this.auth.limits.allowed('login-fail', userId, authLimits.loginFailuresPerEmail)) {
+    } else if (!await this.auth.limits.allowed('login-fail', userId, authLimits.loginFailuresPerEmail)) {
       // The same limit as sign-in: a stolen session must not be able to guess the password here.
       throw new HttpException('LOGIN_RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
     } else if (!(await this.auth.confirmPassword(userId, password))) {
-      this.auth.limits.hit('login-fail', userId, authLimits.loginFailuresPerEmail);
+      await this.auth.limits.hit('login-fail', userId, authLimits.loginFailuresPerEmail);
       throw new UnauthorizedException('INVALID_PASSWORD');
     }
     const now = new Date();
