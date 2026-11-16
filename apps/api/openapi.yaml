@@ -3808,11 +3808,64 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/pause:
+    post:
+      tags: [Journey]
+      operationId: pauseProject
+      summary: Pause an active project
+      description: Owner, manager. Stage work stops until resume; specialists keep their access. A live site must be taken down first (409 UNPUBLISH_FIRST).
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/cancel:
+    post:
+      tags: [Journey]
+      operationId: cancelProject
+      summary: Cancel an abandoned project
+      description: |
+        Owner only, from draft, active or paused. The project becomes read-only, stops counting against the plan and can only be
+        archived afterwards. Specialists lose access at once; payments already due to them are not affected. The optional reason is
+        kept in the project log. A live site must be taken down first (409 UNPUBLISH_FIRST).
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string, maxLength: 300 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/resume:
     post:
       tags: [Journey]
       operationId: resumeProject
-      summary: Continue a completed project
+      summary: Continue a completed or paused project
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -6466,7 +6519,7 @@ components:
         name: { type: string }
         summary: { type: [string, 'null'] }
         startMode: { type: string, enum: [build, improve, design_implementation, analysis_only] }
-        status: { type: string, enum: [draft, active, paused, completed, archived, live] }
+        status: { type: string, enum: [draft, active, paused, completed, archived, live, cancelled] }
         locale: { type: string, enum: [en, ru, kk] }
         projectType: { type: [string, 'null'], enum: [landing, company_site, multipage, store, booking, web_app, null] }
         createdAt: { type: string, format: date-time }
@@ -6767,7 +6820,7 @@ components:
               properties:
                 id: { type: string, format: uuid }
                 name: { type: string }
-                status: { type: string, enum: [draft, active, paused, completed, archived, live] }
+                status: { type: string, enum: [draft, active, paused, completed, archived, live, cancelled] }
                 locale: { type: string, enum: [en, ru, kk] }
                 role: { type: string }
                 projectType: { type: string }

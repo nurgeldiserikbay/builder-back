@@ -153,6 +153,8 @@ enum ProjectStatus {
   completed
   archived
   live
+  /// The owner abandoned the project: read-only, does not count against the plan; can only go to the archive.
+  cancelled
 }
 
 enum ProjectRole {

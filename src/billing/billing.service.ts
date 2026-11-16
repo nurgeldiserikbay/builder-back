@@ -23,7 +23,7 @@ export class BillingService {
 
   async usage(userId: string): Promise<Record<LimitKey, number>> {
     const [projects, aiPerMonth, liveSites] = await Promise.all([
-      this.prisma.project.count({ where: { ownerUserId: userId, projectType: { not: null }, status: { not: 'archived' } } }),
+      this.prisma.project.count({ where: { ownerUserId: userId, projectType: { not: null }, status: { notIn: ['archived', 'cancelled'] } } }),
       this.prisma.generationRun.count({ where: { project: { ownerUserId: userId }, provider: { not: 'template' }, status: 'succeeded', createdAt: { gte: monthStart() } } }),
       this.prisma.sitePublication.count({ where: { project: { ownerUserId: userId }, status: 'live' } }),
     ]);
