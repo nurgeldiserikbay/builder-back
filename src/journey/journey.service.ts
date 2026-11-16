@@ -122,6 +122,8 @@ export class JourneyService {
           routeVersion: ctx.project.routeVersion, changeResponseDays: ctx.project.changeResponseDays, technology,
         },
         viewer: this.core.viewerInfo(ctx),
+        // Change proposals waiting for a decision (owners and managers), or the specialist's own open ones.
+        openProposals: await this.prisma.changeProposal.count({ where: { projectId, status: 'open', ...(canAccept ? {} : { authorUserId: userId }) } }),
         progress: { accepted: approved, total: ctx.route.length, percent: Math.round((approved / ctx.route.length) * 100) },
         nextAction: next ? { stageKey: next, title: stageDefinitions[next].title, text: nextText } : { stageKey: null, title: 'Готово', text: nextText },
         stages: visible.map((key) => {

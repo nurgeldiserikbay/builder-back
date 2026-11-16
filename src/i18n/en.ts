@@ -2286,4 +2286,8 @@ export const en: Record<string, string> = {
   "Цены услуг": "Service prices",
   "Цены товаров и доставки": "Product and delivery prices",
   "Видеть остальные этапы проекта": "See the remaining project stages",
+  "Специалист этапа «{0}» предлагает изменить «{1}»: {2}\n{3}": "The specialist on «{0}» proposes to change «{1}»: {2}\n{3}",
+  "Предложение изменения от специалиста, принятое владельцем: {0}": "A change proposed by the specialist and accepted by the owner: {0}",
+  "Владелец принял ваше предложение изменить «{0}».{1}": "The owner accepted your proposal to change «{0}».{1}",
+  "Владелец отклонил ваше предложение изменить «{0}».{1}": "The owner declined your proposal to change «{0}».{1}",
 };

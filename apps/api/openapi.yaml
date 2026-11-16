@@ -4831,6 +4831,116 @@ paths:
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/change-proposals:
+    post:
+      tags: [Specialists]
+      operationId: proposeChange
+      summary: Propose a change to an accepted requirement
+      description: |
+        A specialist with an active assignment on this stage cannot change accepted requirements through AI instructions; instead they
+        propose a change to an accepted input of their stage (or a result the owner opened to them). Nothing changes until an owner or
+        manager accepts. Owners and managers get a Telegram notice. Up to 10 open proposals per author.
+        400 PROPOSAL_TEXT_INVALID (10–1000 characters), PROPOSAL_TARGET_INVALID; 403 PROPOSAL_ONLY_FOR_SPECIALISTS; 409 PROPOSAL_TARGET_NOT_ACCEPTED, PROPOSAL_LIMIT.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [targetStageKey, text]
+              properties:
+                targetStageKey: { type: string }
+                text: { type: string, minLength: 10, maxLength: 1000 }
+      responses:
+        '200':
+          description: Created
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/change-proposals:
+    get:
+      tags: [Specialists]
+      operationId: listChangeProposals
+      summary: Change proposals of a project
+      description: |
+        Owners and managers see all (canDecide true); a specialist sees their own. Other members get 403 PROPOSALS_FORBIDDEN.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/change-proposals/{proposalId}/decide:
+    post:
+      tags: [Specialists]
+      operationId: decideChangeProposal
+      summary: Accept or decline a change proposal
+      description: |
+        Owner or manager. accept reopens the requirement stage if it was accepted and, with applyWithAi, asks the AI to draft the change
+        from the proposal text (generation.ok false with the error code when that fails; the decision stands). The owner then accepts the
+        stage as usual, which notifies the stages built on it. reject closes it with an optional note. The author is notified.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: proposalId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [accept, reject] }
+                note: { type: string, maxLength: 500 }
+                applyWithAi: { type: boolean }
+      responses:
+        '200':
+          description: Decided
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/change-proposals/{proposalId}/withdraw:
+    post:
+      tags: [Specialists]
+      operationId: withdrawChangeProposal
+      summary: Withdraw your open change proposal
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: proposalId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Withdrawn
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/assignments/{assignmentId}/revoke:
     post:
       tags: [Specialists]
@@ -6870,6 +6980,7 @@ components:
                 accepted: { type: integer }
                 total: { type: integer }
                 percent: { type: integer, description: 'Share of accepted, imported or skipped stages in the route.' }
+            openProposals: { type: integer, description: "Change proposals waiting for a decision (owners and managers) or the specialist's own open ones." }
             nextAction:
               type: object
               required: [stageKey, title, text]
