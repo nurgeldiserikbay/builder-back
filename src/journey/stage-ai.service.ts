@@ -40,7 +40,9 @@ export class StageAiService {
     const base = await this.core.versionContent(stage.currentVersionId);
     if (input.targetKey && (!base || !lockableKeys(definition.artifactType, base.content).includes(input.targetKey))) throw new NotFoundException('TARGET_NOT_FOUND');
     if (stageKey === 'goal' && !base && !input.instruction) throw new BadRequestException('DESCRIPTION_REQUIRED');
-    const inputs = await this.core.acceptedInputs(ctx, stageKey);
+    // The AI a specialist directs sees what the specialist sees: hidden parts replaced, extra results the owner opened added.
+    const inputs = await this.core.viewInputs(ctx, stageKey);
+    const extras = await this.core.extraReads(ctx, stageKey);
     const provider = this.core.ai();
     const started = Date.now();
 
@@ -82,7 +84,7 @@ export class StageAiService {
     const ruleTexts = rules.map((rule) => rule.text);
     const prompt = buildStagePrompt({
       stage: definition, locale: ctx.project.locale, projectTypeTitle: ctx.type.title,
-      inputs: Object.fromEntries(Object.entries(inputs).map(([inputKey, value]) => [inputKey, value.content])),
+      inputs: Object.fromEntries([...Object.entries(inputs), ...Object.entries(extras)].map(([inputKey, value]) => [inputKey, value.content])),
       current: base?.content ?? null, lockedKeys: stage.lockedKeys, targetKey: input.targetKey, rules: ruleTexts, instruction: instruction?.text ?? null,
     });
     // Tokens are spent even when the output is rejected, so failures record usage too.

@@ -4796,6 +4796,41 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/assignments/{assignmentId}/access:
+    put:
+      tags: [Specialists]
+      operationId: updateSpecialistAccess
+      summary: Change what a specialist can see and do
+      description: Owner or manager. Applies at once, also to an accepted or completed assignment (the read period then counts from the stage acceptance). Logged as specialist_access_changed.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: assignmentId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AccessScopeInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      access: { $ref: '#/components/schemas/AccessScope' }
+                      accessText: { type: object }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/assignments/{assignmentId}/revoke:
     post:
       tags: [Specialists]
@@ -6904,6 +6939,8 @@ components:
           type: object
           required: [stage, inputs, current, issues, versions, rules, ai, options]
           properties:
+            extraReads: { type: array, items: { type: object }, description: 'For a specialist: accepted results the owner opened beyond the inputs (key, title, versionNumber, content). Empty for members.' }
+            access: { type: [object, 'null'], description: 'For a specialist: hiddenParts, allowDownload, readDays of their assignment. Null for members. Inputs shown to a specialist have hidden parts replaced with «скрыто владельцем».' }
             stage:
               type: object
               required: [key, title, status, artifactType, canEdit, canAccept, canReopen, canImport, inputsReady, lockedKeys]
@@ -7276,6 +7313,26 @@ components:
         weeklyHourLimit: { type: integer, minimum: 1, maximum: 80 }
         revisionsIncluded: { type: integer, minimum: 0, maximum: 20, description: Revision rounds included in a fixed price. }
         onlyResultTime: { type: boolean, default: false, description: For hourly — pay only tracked intervals with actions on the stage. }
+        access: { $ref: '#/components/schemas/AccessScopeInput' }
+    AccessScopeInput:
+      type: object
+      additionalProperties: false
+      description: |
+        What the specialist and the AI they direct may see and do (STAGE_WORK_MODEL §7.2). Missing fields keep the current value
+        (defaults for a new invitation: nothing extra, nothing hidden, no downloads, 7 days of reading after acceptance).
+      properties:
+        extraReadStages: { type: array, maxItems: 10, items: { type: string }, description: 'More accepted results to read (route stages other than this one; inputs are visible anyway). Accepted version only; the stage page itself stays closed. 400 ACCESS_EXTRA_STAGES_INVALID.' }
+        hiddenParts: { type: array, items: { type: string, enum: [goal.contacts, offer.prices, products.prices] }, description: 'Replaced with «скрыто владельцем» for the specialist, their AI and their preview. Not for build, hand-off or tech plan stages (400 ACCESS_HIDE_NOT_FOR_BUILD), nor for parts the stage copies into its result (400 ACCESS_HIDE_USED_BY_STAGE).' }
+        allowDownload: { type: boolean, description: 'Download stage files uploaded by others (own files always). Otherwise 403 DOWNLOAD_NOT_ALLOWED.' }
+        readDays: { type: integer, minimum: 0, maximum: 30, description: 'Days the stage stays readable after it is accepted; 0 closes access at acceptance.' }
+    AccessScope:
+      type: object
+      required: [extraReadStages, hiddenParts, allowDownload, readDays]
+      properties:
+        extraReadStages: { type: array, items: { type: string } }
+        hiddenParts: { type: array, items: { type: string } }
+        allowDownload: { type: boolean }
+        readDays: { type: integer }
     StageAssignment:
       type: object
       required: [id, email, role, status]
@@ -7292,6 +7349,8 @@ components:
         acceptedAt: { type: [string, 'null'], format: date-time }
         completedAt: { type: [string, 'null'], format: date-time }
         readUntil: { type: [string, 'null'], format: date-time }
+        access: { $ref: '#/components/schemas/AccessScope' }
+        accessText: { type: object, description: 'Plain lines: can, cannot, afterAcceptance.' }
     AssignmentListResponse:
       type: object
       required: [data]
@@ -7302,6 +7361,8 @@ components:
           properties:
             assignments: { type: array, items: { $ref: '#/components/schemas/StageAssignment' } }
             roles: { type: object, description: Plain-language access summary per role. }
+            accessOptions: { type: object, description: 'For the invitation form: the stage inputs (always visible), stages that can be opened additionally, parts that can be hidden, readDaysMax.' }
+            defaultAccess: { $ref: '#/components/schemas/AccessScope' }
     InviteSpecialistResponse:
       type: object
       required: [data]

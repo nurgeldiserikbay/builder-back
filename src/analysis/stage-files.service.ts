@@ -37,11 +37,13 @@ export class StageFilesService {
     const people = await this.core.historyPeople(ctx, projectId, userId);
     const managing = ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role);
     const canUpload = this.core.canWrite(ctx, key) && editableProject(ctx.project.status);
+    const assignment = this.core.assignmentFor(ctx, key);
+    const mayDownload = (authorId: string) => !assignment || assignment.scope.allowDownload || authorId === userId;
     return {
       data: {
         files: rows.map((row) => ({
           id: row.id, name: row.name, kind: row.kind, mime: row.mime, sizeBytes: row.sizeBytes, sha256: row.sha256, note: row.note, createdAt: row.createdAt,
-          author: people.get(row.createdByUserId)?.name ?? tr('Участник'), mine: row.createdByUserId === userId,
+          author: people.get(row.createdByUserId)?.name ?? tr('Участник'), mine: row.createdByUserId === userId, canDownload: mayDownload(row.createdByUserId),
           canDelete: canUpload && (managing || row.createdByUserId === userId), canAnalyze: ['zip', 'pdf', 'docx', 'text'].includes(row.kind) && ctx.viewer.kind === 'member' && ctx.role !== 'viewer',
         })),
         canUpload, limits: { fileBytes: STAGE_FILE_LIMITS.fileBytes, perStage: STAGE_FILE_LIMITS.perStage, note: STAGE_FILE_LIMITS.note },
@@ -119,8 +121,11 @@ export class StageFilesService {
     const ctx = await this.core.load(userId, projectId, 'read', key);
     const stage = this.core.stageOf(ctx, key);
     if (!isUuid(fileId)) throw new NotFoundException('FILE_NOT_FOUND');
-    const row = await this.prisma.stageFile.findFirst({ where: { id: fileId, stageId: stage.id }, select: { name: true, mime: true, kind: true, data: true, sha256: true } });
+    const row = await this.prisma.stageFile.findFirst({ where: { id: fileId, stageId: stage.id }, select: { name: true, mime: true, kind: true, data: true, sha256: true, createdByUserId: true } });
     if (!row) throw new NotFoundException('FILE_NOT_FOUND');
+    // A specialist downloads what others uploaded only when the owner allowed it; their own files always.
+    const assignment = this.core.assignmentFor(ctx, key);
+    if (assignment && !assignment.scope.allowDownload && row.createdByUserId !== userId) throw new ForbiddenException('DOWNLOAD_NOT_ALLOWED');
     return { name: row.name, mime: row.kind === 'text' ? 'text/plain; charset=utf-8' : row.mime, data: Buffer.from(row.data), etag: row.sha256 };
   }
 

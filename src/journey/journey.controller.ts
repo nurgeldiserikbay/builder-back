@@ -155,7 +155,7 @@ export class JourneyController {
 
   @Post('projects/:projectId/stages/:stageKey/assignments')
   async invite(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
-    const input = body(raw, ['email', 'profileId', 'role', 'aiBudget', 'payKind', 'fixedAmount', 'hourlyRate', 'hourLimit', 'weeklyHourLimit', 'revisionsIncluded', 'onlyResultTime']);
+    const input = body(raw, ['email', 'profileId', 'role', 'aiBudget', 'payKind', 'fixedAmount', 'hourlyRate', 'hourLimit', 'weeklyHourLimit', 'revisionsIncluded', 'onlyResultTime', 'access']);
     // From the catalog the owner picks a profile; the address stays on the server and is never shown in the catalog.
     if ((input.email === undefined) === (input.profileId === undefined)) throw new BadRequestException('INVITE_EMAIL_OR_PROFILE');
     const email = input.profileId !== undefined ? await this.specialistCatalog.emailForInvite(String(input.profileId)) : text(input.email, 'email', 3, 254)!;
@@ -163,7 +163,13 @@ export class JourneyController {
     if (input.role !== 'lead' && input.role !== 'consultant') throw new BadRequestException('INVALID_ROLE');
     const aiBudget = input.aiBudget ?? null;
     if (aiBudget !== null && (!Number.isInteger(aiBudget) || (aiBudget as number) < 0 || (aiBudget as number) > 1000)) throw new BadRequestException('INVALID_AIBUDGET');
-    return this.specialists.invite(request.user.id, projectId, stageKey(key), { email, role: input.role, aiBudget: aiBudget as number | null, terms: termsInput(input) });
+    return this.specialists.invite(request.user.id, projectId, stageKey(key), { email, role: input.role, aiBudget: aiBudget as number | null, terms: termsInput(input), access: input.access });
+  }
+
+  /** What the specialist can see and do: { extraReadStages?, hiddenParts?, allowDownload?, readDays? }; applies at once. */
+  @Put('projects/:projectId/assignments/:assignmentId/access')
+  updateAccess(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('assignmentId') assignmentId: string, @Body() raw: unknown) {
+    return this.specialists.updateAccess(request.user.id, projectId, assignmentId, raw);
   }
 
   @Post('projects/:projectId/assignments/:assignmentId/revoke')
