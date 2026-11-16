@@ -394,6 +394,21 @@ export class JourneyController {
     return this.journey.setProjectStatus(request.user.id, projectId, 'unarchive');
   }
 
+  @Post('projects/:projectId/pause')
+  @HttpCode(200)
+  pause(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.journey.setProjectStatus(request.user.id, projectId, 'pause');
+  }
+
+  /** Optional body: { reason } — why the project is abandoned, kept in the project log. */
+  @Post('projects/:projectId/cancel')
+  @HttpCode(200)
+  cancel(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const reason = raw && typeof raw === 'object' && typeof (raw as { reason?: unknown }).reason === 'string' ? (raw as { reason: string }).reason : null;
+    if (reason !== null && reason.length > 300) throw new BadRequestException('CANCEL_REASON_TOO_LONG');
+    return this.journey.setProjectStatus(request.user.id, projectId, 'cancel', reason);
+  }
+
   @Post('projects/:projectId/resume')
   @HttpCode(200)
   resume(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {

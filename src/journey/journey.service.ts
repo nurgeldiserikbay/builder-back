@@ -30,6 +30,8 @@ import { buildHandoff as buildHandoffPackage, renderPrototype, type AppFeatures,
 import type { BusinessProcess } from './process.js';
 import { inProject, acceptRoles, editableProject, notEditableCode, normalizedOrRaw, SPECIALIST_READ_GRACE_MS, isUuid, validationError } from './journey-core.js';
 
+export type ProjectAction = 'pause' | 'complete' | 'resume' | 'cancel' | 'archive' | 'unarchive';
+
 @Injectable()
 export class JourneyService {
   constructor(
@@ -94,6 +96,8 @@ export class JourneyService {
       return canAccept && !leads.has(key);
     };
     const needsYou = (key: StageKey): string | null => {
+      // Nothing waits for anyone in a paused, cancelled, completed or archived project.
+      if (!editableProject(ctx.project.status)) return null;
       const status = ctx.statuses[key];
       const incoming = ctx.openNotices.filter((notice) => notice.targetKey === key);
       if (incoming.some((notice) => notice.status === 'open') && actsFor(key)) return 'Изменился вход — решите';
@@ -787,24 +791,33 @@ export class JourneyService {
     return { data: { id: suggestion.id, status: action === 'apply' ? 'applied' : 'dismissed', generation: result } };
   }
 
-  async setProjectStatus(userId: string, projectId: string, action: 'complete' | 'resume' | 'archive' | 'unarchive') {
+  /**
+   * Project life cycle (STAGE_WORK_MODEL §12.1):
+   * pause: active → paused; resume: paused/completed → active; complete: active/paused → completed;
+   * cancel: draft/active/paused → cancelled (owner; specialists lose access; frees the plan slot);
+   * archive: active/paused/completed/draft/cancelled → archived (owner); unarchive: archived → active (owner, plan permitting).
+   * Stage work is possible only in active and live projects (editableProject).
+   */
+  async setProjectStatus(userId: string, projectId: string, action: ProjectAction, reason?: string | null) {
     const ctx = await this.core.load(userId, projectId, 'members');
-    // Archiving and restoring change plan usage, so only the owner may do them.
-    const ownerOnly = action === 'archive' || action === 'unarchive';
+    // Archiving, cancelling and restoring change plan usage and close specialists' access, so only the owner may do them.
+    const ownerOnly = action === 'archive' || action === 'unarchive' || action === 'cancel';
     if (ownerOnly ? ctx.role !== 'owner' : !acceptRoles.has(ctx.role)) throw new ForbiddenException('PROJECT_STATUS_FORBIDDEN');
-    const from: Record<typeof action, string[]> = {
-      complete: ['active', 'paused'], resume: ['completed', 'paused'], archive: ['active', 'paused', 'completed', 'draft'], unarchive: ['archived'],
+    const from: Record<ProjectAction, string[]> = {
+      pause: ['active'], complete: ['active', 'paused'], resume: ['completed', 'paused'], cancel: ['draft', 'active', 'paused'],
+      archive: ['active', 'paused', 'completed', 'draft', 'cancelled'], unarchive: ['archived'],
     };
-    if (action === 'archive' && ctx.project.status === 'live') throw new ConflictException('UNPUBLISH_BEFORE_ARCHIVE');
+    if ((action === 'archive' || action === 'cancel' || action === 'pause') && ctx.project.status === 'live') throw new ConflictException(action === 'archive' ? 'UNPUBLISH_BEFORE_ARCHIVE' : 'UNPUBLISH_FIRST');
     if (!from[action].includes(ctx.project.status)) throw new ConflictException('PROJECT_STATUS_CONFLICT');
     if (action === 'unarchive') await this.billing.assertCanCreateProject(ctx.project.ownerUserId);
-    const status = action === 'complete' ? 'completed' : action === 'archive' ? 'archived' : 'active';
-    const eventType = { complete: 'project_completed', resume: 'project_resumed', archive: 'project_archived', unarchive: 'project_unarchived' }[action];
+    const status = ({ pause: 'paused', complete: 'completed', resume: 'active', cancel: 'cancelled', archive: 'archived', unarchive: 'active' } as const)[action];
+    const eventType = { pause: 'project_paused', complete: 'project_completed', resume: 'project_resumed', cancel: 'project_cancelled', archive: 'project_archived', unarchive: 'project_unarchived' }[action];
+    const note = typeof reason === 'string' && reason.trim() ? reason.trim().slice(0, 300) : null;
     await this.prisma.$transaction(async (tx) => {
       await tx.project.update({ where: { id: projectId }, data: { status } });
-      // Specialists stop working on an archived project.
-      if (action === 'archive') await tx.stageAssignment.updateMany({ where: { projectId, status: { in: ['invited', 'active'] } }, data: { status: 'revoked', revokedAt: new Date() } });
-      await this.core.event(tx, projectId, userId, eventType, null, {});
+      // Specialists stop working on a cancelled or archived project. Money already due to them is not touched.
+      if (action === 'archive' || action === 'cancel') await tx.stageAssignment.updateMany({ where: { projectId, status: { in: ['invited', 'active'] } }, data: { status: 'revoked', revokedAt: new Date() } });
+      await this.core.event(tx, projectId, userId, eventType, null, note ? { reason: note } : {});
     });
     return this.journey(userId, projectId);
   }

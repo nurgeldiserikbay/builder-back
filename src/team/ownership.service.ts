@@ -199,7 +199,7 @@ export class OwnershipService {
     if (blockers.length) throw new ConflictException({ message: 'OWNERSHIP_BLOCKED', blockers });
     const full = await this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { projectType: true, status: true, publication: { select: { status: true } } } });
     const others = await this.prisma.projectMember.count({ where: { projectId, status: 'active', userId: { notIn: [userId, offer.fromUserId] } } });
-    await this.billing.assertCanReceiveProject(userId, { counts: Boolean(full.projectType) && full.status !== 'archived', live: full.publication?.status === 'live', team: others > 0 || offer.keepAccess });
+    await this.billing.assertCanReceiveProject(userId, { counts: Boolean(full.projectType) && full.status !== 'archived' && full.status !== 'cancelled', live: full.publication?.status === 'live', team: others > 0 || offer.keepAccess });
     await this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ownership:${projectId}`}))`;
       const taken = await tx.ownershipTransfer.updateMany({ where: { id: offer.id, status: 'pending', expiresAt: { gt: new Date() } }, data: { status: 'accepted', decidedAt: new Date() } });

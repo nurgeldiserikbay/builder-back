@@ -332,7 +332,7 @@ export class TelegramBotService {
 
   private async showProjects(ctx: Ctx) {
     const memberProjects = await this.prisma.project.findMany({
-      where: { projectType: { not: null }, status: { not: 'archived' }, members: { some: { userId: ctx.userId, status: 'active' } } },
+      where: { projectType: { not: null }, status: { notIn: ['archived', 'cancelled'] }, members: { some: { userId: ctx.userId, status: 'active' } } },
       orderBy: { updatedAt: 'desc' }, take: 20, select: { id: true, name: true },
     });
     const assignments = localizeDeep((await this.specialists.mine(ctx.userId)).data, currentLocale());
