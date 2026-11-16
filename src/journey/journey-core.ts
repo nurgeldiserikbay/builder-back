@@ -18,6 +18,7 @@ import { configuredStageProvider, type StageAiProvider } from './stage-ai.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
 import { BillingService } from '../billing/billing.service.js';
 import { effectiveStatuses, isSatisfied, type StageStatus, type StatusMap } from './stage-state.js';
+import { redact, scopeOf, type AccessScope, type HiddenPart } from './access-scope.js';
 
 /** Templates, imports and the architecture are project content: written in the project's language. */
 export const inProject = <T>(ctx: { project: { locale: string } }, work: () => T): T => runWithLocale(contentLocale(ctx.project.locale), work);
@@ -25,7 +26,7 @@ export const inProject = <T>(ctx: { project: { locale: string } }, work: () => T
 export const writeRoles = new Set(['owner', 'manager', 'contributor']);
 export const acceptRoles = new Set(['owner', 'manager']);
 export type Access = 'read' | 'write' | 'accept' | 'members';
-export type AssignmentRow = { id: string; stageId: string; stageKey: string; role: 'lead' | 'consultant'; status: string; aiBudget: number | null; aiUsed: number; readUntil: Date | null };
+export type AssignmentRow = { id: string; stageId: string; stageKey: string; role: 'lead' | 'consultant'; status: string; aiBudget: number | null; aiUsed: number; readUntil: Date | null; scope: AccessScope };
 /** stageKeys — a contributor limited to these stages; empty — every stage. */
 export type Viewer = { kind: 'member'; role: string; stageKeys: string[] } | { kind: 'specialist'; assignments: AssignmentRow[] };
 export const editableProject = (status: string) => status === 'active' || status === 'live';
@@ -85,7 +86,7 @@ export class JourneyCore {
       select: {
         id: true, name: true, status: true, locale: true, projectType: true, startStageKey: true, routeVersion: true, ownerUserId: true, changeResponseDays: true,
         members: { where: { userId, status: 'active' }, select: { role: true, stageKeys: true } },
-        assignments: { where: { userId, status: { in: ['active', 'completed'] } }, select: { id: true, stageId: true, role: true, status: true, aiBudget: true, aiUsed: true, readUntil: true } },
+        assignments: { where: { userId, status: { in: ['active', 'completed'] } }, select: { id: true, stageId: true, role: true, status: true, aiBudget: true, aiUsed: true, readUntil: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true } },
         stages: { orderBy: { position: 'asc' }, select: { id: true, stageKey: true, position: true, status: true, currentVersionId: true, approvedVersionId: true, lockedKeys: true, approvedAt: true, updatedAt: true, definitionVersion: true, reviewNote: true } },
       },
     });
@@ -97,7 +98,7 @@ export class JourneyCore {
     const now = Date.now();
     const assignments: AssignmentRow[] = project.assignments
       .filter((item) => item.status === 'active' || (item.readUntil && item.readUntil.getTime() > now))
-      .map((item) => ({ ...item, stageKey: stages.find((stage) => stage.id === item.stageId)?.stageKey ?? '' }));
+      .map(({ extraReadStages, hiddenParts, allowDownload, readDays, ...item }) => ({ ...item, scope: scopeOf({ extraReadStages, hiddenParts, allowDownload, readDays }), stageKey: stages.find((stage) => stage.id === item.stageId)?.stageKey ?? '' }));
     const viewer: Viewer = member ? { kind: 'member', role: member.role, stageKeys: member.role === 'contributor' ? member.stageKeys : [] } : { kind: 'specialist', assignments };
     if (viewer.kind === 'specialist' && assignments.length === 0) throw new NotFoundException('PROJECT_NOT_FOUND');
     const role = member?.role ?? 'specialist';
@@ -193,6 +194,29 @@ export class JourneyCore {
     for (const input of routeInputs(ctx.route, key)) {
       const version = await this.versionContent(this.acceptedVersionId(ctx, input, key));
       if (version) result[input] = { versionId: version.id, versionNumber: version.versionNumber, content: version.content };
+    }
+    return result;
+  }
+
+  /**
+   * What the viewer of a stage sees of its inputs: for members the accepted inputs as they are; for a specialist with hidden
+   * parts, the same inputs with those parts replaced. The AI the specialist directs receives exactly this.
+   */
+  async viewInputs(ctx: { viewer: Viewer; route: StageKey[]; stages: StageRow[]; dep: StatusMap; pins: Map<StageKey, Map<StageKey, string>> }, key: StageKey) {
+    const inputs = await this.acceptedInputs(ctx, key);
+    const scope = this.assignmentFor(ctx, key)?.scope;
+    if (!scope?.hiddenParts.length) return inputs;
+    return Object.fromEntries(Object.entries(inputs).map(([inputKey, value]) => [inputKey, { ...value, content: redact(inputKey, value.content, scope.hiddenParts) }]));
+  }
+
+  /** Extra accepted results the owner opened to a specialist on this stage (read-only, accepted version only). Empty for members. */
+  async extraReads(ctx: { viewer: Viewer; route: StageKey[]; stages: StageRow[]; dep: StatusMap; pins: Map<StageKey, Map<StageKey, string>> }, key: StageKey) {
+    const scope = this.assignmentFor(ctx, key)?.scope;
+    const result: Record<string, { versionId: string; versionNumber: number; content: unknown }> = {};
+    for (const extra of scope?.extraReadStages ?? []) {
+      if (!ctx.route.includes(extra) || !isSatisfied(ctx.dep[extra])) continue;
+      const version = await this.versionContent(this.stageOf(ctx, extra).approvedVersionId);
+      if (version) result[extra] = { versionId: version.id, versionNumber: version.versionNumber, content: redact(extra, version.content, scope!.hiddenParts) };
     }
     return result;
   }
@@ -297,14 +321,16 @@ export class JourneyCore {
     });
   }
 
-  async renderSources(ctx: { route: StageKey[]; stages: StageRow[]; dep: StatusMap; pins: Map<StageKey, Map<StageKey, string>>; project: { id: string; locale: string } }, acceptedOnly: boolean, draftKeys?: string[]) {
+  async renderSources(ctx: { route: StageKey[]; stages: StageRow[]; dep: StatusMap; pins: Map<StageKey, Map<StageKey, string>>; project: { id: string; locale: string } }, acceptedOnly: boolean, draftKeys?: string[], hidden: HiddenPart[] = []) {
     const pick = async (key: StageKey) => {
       if (!ctx.route.includes(key)) return null;
       const stage = this.stageOf(ctx, key);
       const accepted = this.acceptedVersionId(ctx, key, 'build');
       const useDraft = !acceptedOnly && (!draftKeys || draftKeys.includes(key));
       const id = useDraft ? stage.currentVersionId ?? stage.approvedVersionId : accepted;
-      return this.versionContent(id);
+      const version = await this.versionContent(id);
+      // A specialist's preview shows what they may see: hidden parts replaced (never used for builds).
+      return version && hidden.length ? { ...version, content: redact(key, version.content, hidden) as typeof version.content } : version;
     };
     const [goal, offer, content, design, schedule, techplan, sitemap, products] = await Promise.all([pick('goal'), pick('offer'), pick('content'), pick('design'), pick('schedule'), pick('techplan'), pick('sitemap'), pick('products')]);
     if (acceptedOnly && ctx.route.includes('products') && !products) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');

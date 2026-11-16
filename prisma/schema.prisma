@@ -1095,6 +1095,12 @@ model StageAssignment {
   revisionsIncluded Int?                @map("revisions_included")
   onlyResultTime  Boolean               @default(false) @map("only_result_time")
   limitWarnedAt   DateTime?             @map("limit_warned_at") @db.Timestamptz(3)
+  /// Access scope (STAGE_WORK_MODEL §7.2): more accepted results to read, parts hidden from the specialist and their AI,
+  /// downloads of other people's stage files, and how many days the stage stays readable after acceptance.
+  extraReadStages String[]              @default([]) @map("extra_read_stages") @db.VarChar(40)
+  hiddenParts     String[]              @default([]) @map("hidden_parts") @db.VarChar(40)
+  allowDownload   Boolean               @default(false) @map("allow_download")
+  readDays        Int                   @default(7) @map("read_days")
   timeEntries     TimeEntry[]
   payments        StagePayment[]
   disputes        Dispute[]

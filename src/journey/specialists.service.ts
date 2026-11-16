@@ -4,7 +4,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 import { emailConfig, sendEmail } from '../notifications/email.js';
 import { escapeHtml } from './site-renderer.js';
-import { stageDefinitions, type StageKey } from './catalog.js';
+import { routeInputs, stageDefinitions, type StageKey } from './catalog.js';
+import { DEFAULT_SCOPE, HIDEABLE_PARTS, hideableFor, parseScope, scopeLines, scopeOf, type AccessScope } from './access-scope.js';
 import { BillingService } from '../billing/billing.service.js';
 import { reviewState } from '../catalog/catalog-rules.js';
 
@@ -102,7 +103,7 @@ export class SpecialistsService {
         id: true, name: true, status: true,
         members: { where: { userId, status: 'active' }, select: { role: true } },
         owner: { select: { name: true, email: true } },
-        stages: { select: { id: true, stageKey: true, status: true } },
+        stages: { orderBy: { position: 'asc' }, select: { id: true, stageKey: true, status: true } },
       },
     });
     if (!project) throw new NotFoundException('PROJECT_NOT_FOUND');
@@ -112,30 +113,71 @@ export class SpecialistsService {
     return { project, stage };
   }
 
+  /** The route and the stage's inputs, for checking an access scope. */
+  private scopeContext(project: { stages: Array<{ stageKey: string }> }, stageKey: string) {
+    const route = project.stages.map((item) => item.stageKey as StageKey);
+    return { route, stageKey: stageKey as StageKey, inputs: routeInputs(route, stageKey as StageKey) };
+  }
+
+  /** What the owner can choose for an assignment on this stage: more results to open and parts to hide. */
+  private scopeOptions(project: { stages: Array<{ stageKey: string }> }, stageKey: string) {
+    const ctx = this.scopeContext(project, stageKey);
+    const extra = ctx.route.filter((key) => key !== stageKey && !ctx.inputs.includes(key));
+    return {
+      inputs: ctx.inputs.map((key) => ({ key, title: stageDefinitions[key].title })),
+      extraStages: extra.map((key) => ({ key, title: stageDefinitions[key].title })),
+      hideable: hideableFor(ctx.stageKey, ctx.route).map((part) => ({ key: part, title: HIDEABLE_PARTS[part].title, stageKey: HIDEABLE_PARTS[part].stage })),
+      readDaysMax: 30,
+    };
+  }
+
+  /** Changes what a specialist can see and do; applies at once, also to an already accepted invitation. */
+  async updateAccess(userId: string, projectId: string, assignmentId: string, raw: unknown) {
+    const { project } = await this.manager(userId, projectId);
+    if (!isUuid(assignmentId)) throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
+    const row = await this.prisma.stageAssignment.findFirst({
+      where: { id: assignmentId, projectId, status: { in: ['invited', 'active', 'completed'] } },
+      select: { id: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, completedAt: true, status: true, stage: { select: { stageKey: true } } },
+    });
+    if (!row) throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
+    const scope = parseScope(raw, this.scopeContext(project, row.stage.stageKey), scopeOf(row));
+    // After acceptance the read period counts from the moment the stage was accepted.
+    const readUntil = row.status === 'completed' && row.completedAt ? new Date(row.completedAt.getTime() + scope.readDays * 86_400_000) : undefined;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.stageAssignment.update({ where: { id: row.id }, data: { ...scope, ...(readUntil ? { readUntil } : {}) } });
+      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'specialist_access_changed', stageKey: row.stage.stageKey, details: { assignmentId: row.id, ...scope } } });
+    });
+    return { data: { id: row.id, access: scope, accessText: scopeLines(scope) } };
+  }
+
   async list(userId: string, projectId: string, stageKey: string) {
-    const { stage } = await this.manager(userId, projectId, stageKey);
+    const { project, stage } = await this.manager(userId, projectId, stageKey);
     const rows = await this.prisma.stageAssignment.findMany({
       where: { stageId: stage!.id, status: { not: 'revoked' } }, orderBy: { createdAt: 'desc' },
-      select: { id: true, userId: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, user: { select: { name: true, specialistProfile: { select: { id: true, displayName: true, published: true } } } }, review: { select: { rating: true, text: true, reply: true, createdAt: true, authorUserId: true, hiddenAt: true, moderationNote: true } }, ...termsSelect },
+      select: { id: true, userId: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, user: { select: { name: true, specialistProfile: { select: { id: true, displayName: true, published: true } } } }, review: { select: { rating: true, text: true, reply: true, createdAt: true, authorUserId: true, hiddenAt: true, moderationNote: true } }, ...termsSelect },
     });
     return {
       data: {
-        assignments: rows.map(({ user, review, userId: specialistId, payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime, ...row }) => {
+        assignments: rows.map(({ user, review, userId: specialistId, payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime, extraReadStages, hiddenParts, allowDownload, readDays, ...row }) => {
+          const access = scopeOf({ extraReadStages, hiddenParts, allowDownload, readDays });
           const terms = termsView({ payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime });
           const profile = user?.specialistProfile?.published ? user.specialistProfile : null;
           return {
-            ...row, name: profile?.displayName ?? user?.name ?? null, profileId: profile?.id ?? null, inviteExpired: row.status === 'invited' && row.inviteExpiresAt < new Date(), terms, termsText: termsText(terms),
+            ...row, name: profile?.displayName ?? user?.name ?? null, profileId: profile?.id ?? null, inviteExpired: row.status === 'invited' && row.inviteExpiresAt < new Date(), terms, termsText: termsText(terms), access, accessText: scopeLines(access),
             review: review ? { rating: review.rating, text: review.text, reply: review.reply, hidden: Boolean(review.hiddenAt), moderationNote: review.hiddenAt ? review.moderationNote : null } : null,
             canReview: !review?.hiddenAt && reviewState({ status: row.status, userId: specialistId }, review, userId).allowed,
           };
         }),
         roles: roleAccess,
+        accessOptions: this.scopeOptions(project, stageKey),
+        defaultAccess: DEFAULT_SCOPE,
       },
     };
   }
 
-  async invite(userId: string, projectId: string, stageKey: string, input: { email: string; role: 'lead' | 'consultant'; aiBudget: number | null; terms: SpecialistTerms }) {
+  async invite(userId: string, projectId: string, stageKey: string, input: { email: string; role: 'lead' | 'consultant'; aiBudget: number | null; terms: SpecialistTerms; access?: unknown }) {
     const { project, stage } = await this.manager(userId, projectId, stageKey);
+    const scope = parseScope(input.access, this.scopeContext(project, stageKey));
     if (!['active', 'live'].includes(project.status)) throw new ConflictException('PROJECT_NOT_ACTIVE');
     if (stage!.status === 'approved' || stage!.status === 'imported') throw new ConflictException('STAGE_ACCEPTED_REOPEN_FIRST');
     await this.billing.assertCanInviteSpecialists(projectId);
@@ -149,11 +191,11 @@ export class SpecialistsService {
     const token = randomBytes(24).toString('base64url');
     const assignment = await this.prisma.$transaction(async (tx) => {
       const created = await tx.stageAssignment.create({
-        data: { projectId, stageId: stage!.id, email, role: input.role, inviteTokenHash: digest(token), inviteExpiresAt: new Date(Date.now() + INVITE_TTL_MS), aiBudget: input.aiBudget, invitedByUserId: userId, ...termsData(input.terms) },
+        data: { projectId, stageId: stage!.id, email, role: input.role, inviteTokenHash: digest(token), inviteExpiresAt: new Date(Date.now() + INVITE_TTL_MS), aiBudget: input.aiBudget, invitedByUserId: userId, ...termsData(input.terms), ...scope },
         select: { id: true, email: true, role: true, status: true, aiBudget: true, inviteExpiresAt: true },
       });
       if (input.role === 'lead' && stage!.status === 'ready') await tx.projectStage.update({ where: { id: stage!.id }, data: { status: 'awaiting_lead' } });
-      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'specialist_invited', stageKey, details: { assignmentId: created.id, role: input.role, aiBudget: input.aiBudget, payKind: input.terms.payKind } } });
+      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'specialist_invited', stageKey, details: { assignmentId: created.id, role: input.role, aiBudget: input.aiBudget, payKind: input.terms.payKind, ...scope } } });
       return created;
     });
     const appUrl = process.env.PUBLIC_APP_URL ?? 'http://localhost:3000';
@@ -183,7 +225,7 @@ export class SpecialistsService {
     const assignment = await this.prisma.stageAssignment.findUnique({
       where: { inviteTokenHash: digest(token) },
       select: {
-        id: true, email: true, role: true, status: true, aiBudget: true, inviteExpiresAt: true, userId: true, projectId: true, stageId: true, ...termsSelect,
+        id: true, email: true, role: true, status: true, aiBudget: true, inviteExpiresAt: true, userId: true, projectId: true, stageId: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, ...termsSelect,
         stage: { select: { stageKey: true, status: true } },
         project: { select: { name: true, owner: { select: { name: true, email: true } } } },
       },
@@ -195,12 +237,13 @@ export class SpecialistsService {
   async inviteInfo(token: string) {
     const invite = await this.byToken(token);
     const definition = stageDefinitions[invite.stage.stageKey as StageKey];
+    const lines = scopeLines(scopeOf(invite));
     return {
       data: {
         projectName: invite.project.name, invitedBy: invite.project.owner.name ?? maskEmail(invite.project.owner.email),
         stageKey: invite.stage.stageKey, stageTitle: definition.title, stagePurpose: definition.purpose,
         role: invite.role, roleTitle: roleAccess[invite.role].title, roleExplanation: roleAccess[invite.role].forSpecialist.explanation,
-        can: roleAccess[invite.role].forSpecialist.can, cannot: roleAccess.cannot, afterAcceptance: roleAccess.afterAcceptanceForSpecialist,
+        can: [...roleAccess[invite.role].forSpecialist.can, ...lines.can], cannot: [...roleAccess.cannot.map((item) => (invite.extraReadStages.length && item === 'Видеть другие этапы проекта' ? 'Видеть остальные этапы проекта' : item)), ...lines.cannot], afterAcceptance: lines.afterAcceptance,
         aiBudget: invite.aiBudget, email: maskEmail(invite.email), status: invite.status,
         terms: termsView(invite), termsText: termsText(termsView(invite)), timeRules: TIME_RULES,
         expired: invite.status === 'invited' && invite.inviteExpiresAt < new Date(), projectId: invite.status === 'active' ? invite.projectId : null,

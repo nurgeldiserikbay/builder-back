@@ -28,7 +28,7 @@ import { BrowserChecksService } from '../quality/browser-checks.js';
 import { CommentsService } from './comments.service.js';
 import { buildHandoff as buildHandoffPackage, renderPrototype, type AppFeatures, type AppScreens, type HandoffArtifact } from './webapp.js';
 import type { BusinessProcess } from './process.js';
-import { inProject, acceptRoles, editableProject, notEditableCode, normalizedOrRaw, SPECIALIST_READ_GRACE_MS, isUuid, validationError } from './journey-core.js';
+import { inProject, acceptRoles, editableProject, notEditableCode, normalizedOrRaw, isUuid, validationError } from './journey-core.js';
 
 @Injectable()
 export class JourneyService {
@@ -158,7 +158,8 @@ export class JourneyService {
       const hasWork = Boolean(dependent.currentVersionId) || ['approved', 'imported', 'stale'].includes(dependent.status);
       return { key: item, title: stageDefinitions[item].title, status: dependent.status, hasWork, opens: dependent.status === 'locked' && inputsSatisfied(ctx.route, { ...ctx.dep, [stageKey]: 'approved' }, item) };
     });
-    const inputs = await this.core.acceptedInputs(ctx, stageKey);
+    const inputs = await this.core.viewInputs(ctx, stageKey);
+    const extras = await this.core.extraReads(ctx, stageKey);
     const [current, versions, instructions] = await Promise.all([
       this.prisma.stageArtifactVersion.findUnique({ where: { id: stage.currentVersionId ?? '00000000-0000-4000-8000-000000000000' }, select: { id: true, versionNumber: true, content: true, origin: true, note: true, createdAt: true, createdByUserId: true, generationRunId: true } }),
       this.prisma.stageArtifactVersion.findMany({ where: { stageId: stage.id }, orderBy: { versionNumber: 'desc' }, take: 30, select: { id: true, versionNumber: true, origin: true, note: true, createdAt: true, generationRunId: true } }),
@@ -234,6 +235,9 @@ export class JourneyService {
           key: input, title: stageDefinitions[input].title, satisfied: isSatisfied(ctx.dep[input]),
           versionNumber: inputs[input]?.versionNumber ?? null, content: inputs[input]?.content ?? null,
         })),
+        // Results the owner opened to this specialist beyond the stage's inputs (read-only).
+        extraReads: Object.entries(extras).map(([extraKey, value]) => ({ key: extraKey, title: stageDefinitions[extraKey as StageKey].title, versionNumber: value.versionNumber, content: value.content })),
+        access: assignment ? { hiddenParts: assignment.scope.hiddenParts, allowDownload: assignment.scope.allowDownload, readDays: assignment.scope.readDays } : null,
         current: current ? {
           id: current.id, versionNumber: current.versionNumber, origin: current.origin, note: current.note, createdAt: current.createdAt,
           content: site ? { checks: site.checks, quality: site.quality ?? null, compiledAt: site.compiledAt, sourceVersionIds: site.sourceVersionIds }
@@ -481,7 +485,8 @@ export class JourneyService {
       const page = built.pages?.find((item) => item.path === pagePath) ?? null;
       return { data: { html: await this.core.inline(projectId, page?.html ?? built.html), draft: false, versionNumber: version.versionNumber, pages: (built.pages ?? []).map(({ path, title }) => ({ path, title })) } };
     }
-    const sources = await this.core.renderSources(ctx, false, own);
+    const hidden = ctx.viewer.kind === 'specialist' ? [...new Set(ctx.viewer.assignments.flatMap((item) => item.scope.hiddenParts))] : [];
+    const sources = await this.core.renderSources(ctx, false, own, hidden);
     const map = sources.input.sitemap;
     const page = map?.pages.find((item) => item.path === pagePath) ?? null;
     return { data: { html: await this.core.inline(projectId, renderSite(sources.input, page?.key ?? null)), draft: true, versionNumber: null, pages: (map?.pages ?? []).map(({ path, title }) => ({ path, title })) } };
@@ -555,11 +560,13 @@ export class JourneyService {
     if (moved.count !== 1) throw new ConflictException('STAGE_VERSION_CONFLICT');
     // What paid specialists are owed is fixed at acceptance: the fixed price, or approved minutes × rate within the limit.
     await this.worktime.paymentsOnAccept(tx, stage.id, version.versionNumber);
-    // Specialists keep read access for a grace period after acceptance; writing and AI use stop now.
-    const completed = await tx.stageAssignment.updateMany({
-      where: { stageId: stage.id, status: 'active' },
-      data: { status: 'completed', completedAt: new Date(), readUntil: new Date(Date.now() + SPECIALIST_READ_GRACE_MS) },
-    });
+    // Specialists keep read access for the period the owner set (7 days unless changed); writing and AI use stop now.
+    const finishing = await tx.stageAssignment.findMany({ where: { stageId: stage.id, status: 'active' }, select: { id: true, readDays: true } });
+    const doneAt = new Date();
+    for (const row of finishing) {
+      await tx.stageAssignment.update({ where: { id: row.id }, data: { status: 'completed', completedAt: doneAt, readUntil: new Date(doneAt.getTime() + row.readDays * 86_400_000) } });
+    }
+    const completed = { count: finishing.length };
     if (completed.count) await this.core.event(tx, ctx.project.id, userId, 'assignments_completed', key, { count: completed.count });
     await this.core.writeStatuses(tx, { project: ctx.project, statuses: { ...ctx.statuses, [stageKey]: 'approved' } }, unlockDependents(ctx.route, { ...ctx.statuses, [stageKey]: 'approved' }));
     await this.core.event(tx, ctx.project.id, userId, 'stage_accepted', key, { versionNumber: version.versionNumber, ...(approvals ? { approvals: approvals.count, policy: approvals.policy } : {}) });
