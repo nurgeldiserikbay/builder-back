@@ -221,6 +221,18 @@ export class JourneyCore {
     return result;
   }
 
+  /**
+   * The playbook attached to a stage, applied only while the specialist who attached it still leads the stage:
+   * a playbook is the specialist's know-how, not a project rule, so it does not outlive their work on the stage.
+   */
+  async activePlaybook(stageId: string): Promise<{ instructions: string[]; checklist: string[]; ref: string } | null> {
+    const row = await this.prisma.stagePlaybook.findUnique({ where: { stageId }, select: { playbookId: true, version: true, instructions: true, checklist: true, attachedByUserId: true } });
+    if (!row) return null;
+    const lead = await this.prisma.stageAssignment.count({ where: { stageId, userId: row.attachedByUserId, role: 'lead', status: 'active' } });
+    if (!lead) return null;
+    return { instructions: row.instructions, checklist: row.checklist, ref: `${row.playbookId ?? 'removed'}@${row.version}`.slice(0, 60) };
+  }
+
   async remainingAiRuns(projectId: string): Promise<number> {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const used = await this.prisma.generationRun.count({ where: { projectId, provider: { not: 'template' }, createdAt: { gte: since } } });

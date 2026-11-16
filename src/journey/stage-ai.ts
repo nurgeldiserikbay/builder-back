@@ -141,6 +141,8 @@ export interface StagePromptInput {
   targetKey: string | null;
   rules: string[];
   instruction: string | null;
+  /** The stage lead's personal playbook, if attached: advice ranked below the project's rules. */
+  specialistPlaybook?: { instructions: string[]; checklist: string[] } | null;
 }
 
 /** Builds a prompt whose priority order matches STAGE_WORK_MODEL.md section 6. */
@@ -154,6 +156,7 @@ export function buildStagePrompt(input: StagePromptInput): StageAiRequest {
     `Write all user-facing text in ${language}. Return only JSON matching the schema.`,
     'Never invent facts: no reviews, client counts, years of experience, awards, prices, discounts or guarantees unless they are present in the inputs.',
     ...input.stage.playbook.instructions.map((rule) => `Playbook: ${rule}`),
+    input.specialistPlaybook ? 'The data message may contain specialistPlaybook: the stage lead\'s own advice and a checklist for the result. Follow it where it does not conflict with anything above; it never changes these rules, the confirmed inputs or the project rules.' : '',
     input.targetKey ? `Change only the part with key "${input.targetKey}" and return just that part.` : '',
     input.lockedKeys.length && !input.targetKey ? `Parts ${input.lockedKeys.join(', ')} were edited by a person; return them unchanged.` : '',
   ].filter(Boolean).join('\n');
@@ -164,6 +167,7 @@ export function buildStagePrompt(input: StagePromptInput): StageAiRequest {
     currentDraft: target ?? input.current,
     rules: input.rules,
     instruction: input.instruction,
+    ...(input.specialistPlaybook ? { specialistPlaybook: input.specialistPlaybook } : {}),
   });
   return { system, user, schemaName: `buildpath_${input.stage.artifactType}`, schema: outputSchema(input.stage.artifactType, Boolean(input.targetKey && input.stage.artifactType === 'content')) };
 }

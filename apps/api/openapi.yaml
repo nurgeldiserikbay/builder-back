@@ -4941,6 +4941,156 @@ paths:
               schema: { type: object, properties: { data: { type: object } } }
         '401': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
+  /me/playbooks:
+    get:
+      tags: [Specialists]
+      operationId: listMyPlaybooks
+      summary: Your personal playbooks
+      description: |
+        Reusable know-how for one kind of stage: AI instructions and a checklist. Owned by the specialist, holds no project data (STAGE_WORK_MODEL §7.4).
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object } } }
+        '401': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Specialists]
+      operationId: createPlaybook
+      summary: Create a playbook
+      description: |
+        Checked on save (issues: contact data or links, attempts to override platform rules, markup). Up to 30 per person; 409 PLAYBOOK_LIMIT.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlaybookInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /me/playbooks/{playbookId}:
+    put:
+      tags: [Specialists]
+      operationId: updatePlaybook
+      summary: Change a playbook (new version)
+      description: |
+        Stages keep the version they attached until the lead attaches again.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: playbookId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlaybookInput' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object } } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /me/playbooks/{playbookId}/delete:
+    post:
+      tags: [Specialists]
+      operationId: deletePlaybook
+      summary: Delete a playbook
+      description: |
+        Copies already attached to stages stay there (the owner has seen them).
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: playbookId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/playbook:
+    get:
+      tags: [Specialists]
+      operationId: getStagePlaybook
+      summary: Playbook attached to a stage
+      description: |
+        Visible to the project people and the stage specialists: title, version, instructions, checklist, who attached it, whether it is applied (only while that person still leads the stage) and whether a newer version exists. For the active lead also their playbooks for this kind of stage with the check result for this project (issuesHere).
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      tags: [Specialists]
+      operationId: attachStagePlaybook
+      summary: Attach your playbook to the stage
+      description: |
+        Active stage lead only (403 PLAYBOOK_ONLY_FOR_LEAD), own playbook for this kind of stage (409 PLAYBOOK_OTHER_STAGE). Checked again against this project, including its name and contacts: 422 PLAYBOOK_CHECK_FAILED with issues. A copy of the current version is attached; the AI gets it as advice below the project rules, and the generation records it.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [playbookId], properties: { playbookId: { type: string, format: uuid } } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/playbook/detach:
+    post:
+      tags: [Specialists]
+      operationId: detachStagePlaybook
+      summary: Detach the stage playbook
+      description: |
+        The lead who attached it, an owner or a manager.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { type: object } } }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/assignments/{assignmentId}/revoke:
     post:
       tags: [Specialists]
@@ -7425,6 +7575,16 @@ components:
         revisionsIncluded: { type: integer, minimum: 0, maximum: 20, description: Revision rounds included in a fixed price. }
         onlyResultTime: { type: boolean, default: false, description: For hourly — pay only tracked intervals with actions on the stage. }
         access: { $ref: '#/components/schemas/AccessScopeInput' }
+    PlaybookInput:
+      type: object
+      additionalProperties: false
+      required: [title, stageKey]
+      description: At least one instruction or checklist item (400 PLAYBOOK_EMPTY).
+      properties:
+        title: { type: string, minLength: 3, maxLength: 80 }
+        stageKey: { type: string, description: 'A stage with AI support (400 PLAYBOOK_STAGE_INVALID).' }
+        instructions: { type: array, maxItems: 20, items: { type: string, maxLength: 300 } }
+        checklist: { type: array, maxItems: 20, items: { type: string, maxLength: 300 } }
     AccessScopeInput:
       type: object
       additionalProperties: false
