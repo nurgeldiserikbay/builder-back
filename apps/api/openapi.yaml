@@ -3796,6 +3796,50 @@ paths:
         '201': { description: 'versionId, versionNumber, checks[]' }
         '404': { description: 'STAGE_NOT_FOUND — not a web application project' }
         '409': { description: 'STAGE_INPUTS_NOT_ACCEPTED, STAGE_ACCEPTED_REOPEN_FIRST' }
+  /projects/{projectId}/handoff/starter:
+    get:
+      tags: [Journey]
+      operationId: getStarterCheck
+      summary: Web application route — starter API code and the latest run of its tests in an isolated sandbox
+      description: |
+        The platform turns the accepted features (roles and rights) and architecture (data schema) into a dependency-free
+        Node.js API with tests — deterministic, no AI. The tests run only in a throwaway virtual machine at the sandbox
+        provider (SANDBOX_PROVIDER=e2b with E2B_API_KEY), without internet; never in the API or web process. Steps: node
+        (Node.js 20+), syntax (node --check), tests (node --test); a failed step skips the rest. Status unavailable with
+        SANDBOX_NOT_CONFIGURED means no sandbox is connected — the code was not run, not that it failed. outdated is true when
+        the package was rebuilt after the run. Nothing is published, pushed or deployed.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'run (id, status queued|running|succeeded|failed|unavailable, statusLabel, outdated, provider, error, steps[id, label, status passed|failed|timed_out|skipped|null, durationMs, output], files[path, bytes], createdAt, finishedAt) or null; configured; canRun; runsLeft' }
+        '404': { description: 'PROJECT_NOT_FOUND, STAGE_NOT_FOUND — not a web application project' }
+    post:
+      tags: [Journey]
+      operationId: startStarterCheck
+      summary: Build the starter code from the current package's inputs and queue its tests; at most 5 runs per package version
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '202': { description: Same as GET }
+        '403': { description: 'STAGE_WRITE_FORBIDDEN, STARTER_CHECK_LIMIT' }
+        '404': { description: 'PROJECT_NOT_FOUND, STAGE_NOT_FOUND' }
+        '409': { description: 'HANDOFF_NOT_BUILT, STAGE_INPUTS_NOT_ACCEPTED, STARTER_CHECK_RUNNING, PROJECT_NOT_ACTIVE' }
+  /projects/{projectId}/handoff/starter/files:
+    get:
+      tags: [Journey]
+      operationId: getStarterFiles
+      summary: Files of the latest starter code, exactly as sent to the sandbox (to download as an archive)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'status of its run; files[] (path, content)' }
+        '404': { description: 'PROJECT_NOT_FOUND, STAGE_NOT_FOUND, STARTER_NOT_BUILT' }
   /projects/{projectId}/prototype:
     get:
       tags: [Journey]

@@ -342,6 +342,7 @@ model Project {
   stageFiles       StageFile[]
   analysisRuns     AnalysisRun[]
   browserChecks    BrowserCheck[]
+  sandboxRuns      SandboxRun[]
   ownershipTransfers OwnershipTransfer[]
   leads            SiteLead[]
   bookings         Booking[]
@@ -2079,4 +2080,28 @@ model HostingConnection {
   project            Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@map("hosting_connections")
+}
+
+model SandboxRun {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId         String    @map("project_id") @db.Uuid
+  kind              String    @db.VarChar(30)
+  sourceVersionId   String    @map("source_version_id") @db.Uuid
+  status            String    @default("queued") @db.VarChar(20)
+  files             Json
+  filesDigest       String    @map("files_digest") @db.VarChar(64)
+  result            Json?
+  provider          String?   @db.VarChar(30)
+  errorCode         String?   @map("error_code") @db.VarChar(60)
+  attemptCount      Int       @default(0) @map("attempt_count")
+  requestedByUserId String    @map("requested_by_user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt         DateTime? @map("started_at") @db.Timestamptz(3)
+  finishedAt        DateTime? @map("finished_at") @db.Timestamptz(3)
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt], map: "sandbox_runs_status_created_idx")
+  @@index([projectId, kind, createdAt], map: "sandbox_runs_project_kind_created_idx")
+  @@index([sourceVersionId], map: "sandbox_runs_source_version_idx")
+  @@map("sandbox_runs")
 }
