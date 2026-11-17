@@ -29,6 +29,8 @@ import { APPROVER_ROLES, approvalState, approveBlocker, checkPolicy, policyText,
 import { qualityReport } from '../quality/quality.js';
 import { BrowserChecksService } from '../quality/browser-checks.js';
 import { CommentsService } from './comments.service.js';
+import { docxParagraphs, DocumentError, pdfParagraphs, textParagraphs, type Paragraph } from '../analysis/document-analysis.js';
+import { importSpec, importSpecText, type SpecImport } from './spec-import.js';
 import { FIRST_VERSION_SOFT_LIMIT, buildHandoff as buildHandoffPackage, normalizeFeatures, renderPrototype, specMarkdown, type AppFeatures, type AppScreens, type HandoffArtifact } from './webapp.js';
 import type { BusinessProcess } from './process.js';
 import { inProject, acceptRoles, editableProject, notEditableCode, normalizedOrRaw, isUuid, validationError } from './journey-core.js';
@@ -405,17 +407,29 @@ export class JourneyService {
     return { data: { versionId: version.id, versionNumber: version.versionNumber } };
   }
 
-  async importText(userId: string, projectId: string, key: string, text: string) {
+  async importText(userId: string, projectId: string, key: string, source: { text: string } | { fileId: string }) {
     const ctx = await this.core.load(userId, projectId, 'write', key);
     const stage = this.core.stageOf(ctx, key);
     const stageKey = key as StageKey;
     const definition = stageDefinitions[stageKey];
     if (!definition.importHint) throw new BadRequestException('IMPORT_NOT_SUPPORTED');
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
+    // A document comes only from the stage's own files: they were scanned for malware when uploaded (fail closed).
+    if ('fileId' in source && definition.artifactType !== 'features') throw new BadRequestException('IMPORT_FILE_NOT_SUPPORTED');
+    const paragraphs = 'fileId' in source ? await this.stageFileParagraphs(ctx, stage.id, key, source.fileId, userId) : null;
     let content: unknown;
+    let found: SpecImport['found'] | null = null;
     try {
       const { sitemap } = await this.core.checkContext(ctx, stageKey);
-      content = inProject(ctx, () => (definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : definition.artifactType === 'catalog' ? importCatalogText(text) : importContentText(text, sitemap)));
+      content = inProject(ctx, () => {
+        if (definition.artifactType === 'features') {
+          const parsed = paragraphs ? importSpec(paragraphs) : importSpecText((source as { text: string }).text);
+          found = parsed.found;
+          return parsed.content;
+        }
+        const text = (source as { text: string }).text;
+        return definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : definition.artifactType === 'catalog' ? importCatalogText(text) : importContentText(text, sitemap);
+      });
     } catch (error) { validationError(error); }
     const issues = completenessIssues(definition.artifactType, content, await this.core.checkContext(ctx, stageKey));
     // Imported material counts as accepted only when it is complete, its own inputs are accepted and the person importing
@@ -431,7 +445,25 @@ export class JourneyService {
       return created;
     });
     await this.worktime.recordAction(userId, projectId, key);
-    return { data: { versionId: result.id, versionNumber: result.versionNumber, status: complete ? 'imported' : 'in_progress', issues } };
+    return { data: { versionId: result.id, versionNumber: result.versionNumber, status: complete ? 'imported' : 'in_progress', issues, ...(found ? { found } : {}) } };
+  }
+
+  /** Paragraphs of a PDF, Word or text file of this stage, read the way «Только анализ» reads documents. */
+  private async stageFileParagraphs(ctx: Awaited<ReturnType<JourneyCore['load']>>, stageId: string, key: string, fileId: string, userId: string): Promise<Paragraph[]> {
+    const row = /^[0-9a-f-]{36}$/i.test(fileId) ? await this.prisma.stageFile.findFirst({ where: { id: fileId, stageId }, select: { kind: true, data: true, createdByUserId: true } }) : null;
+    if (!row) throw new NotFoundException('FILE_NOT_FOUND');
+    const assignment = this.core.assignmentFor(ctx, key);
+    if (assignment && !assignment.scope.allowDownload && row.createdByUserId !== userId) throw new ForbiddenException('DOWNLOAD_NOT_ALLOWED');
+    const bytes = Buffer.from(row.data);
+    try {
+      if (row.kind === 'pdf') return (await pdfParagraphs(bytes)).paragraphs;
+      if (row.kind === 'docx') return docxParagraphs(bytes);
+      if (row.kind === 'text') return textParagraphs(bytes.toString('utf8'));
+    } catch (error) {
+      if (error instanceof DocumentError) throw new UnprocessableEntityException(error.code);
+      throw error;
+    }
+    throw new BadRequestException('IMPORT_FILE_KIND');
   }
 
   async build(userId: string, projectId: string) {

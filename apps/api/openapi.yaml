@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.18.0
+  version: 1.19.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -3373,8 +3373,8 @@ paths:
     post:
       tags: [Journey]
       operationId: importStageMaterial
-      summary: Bring ready material for a stage as pasted text
-      description: Complete material whose inputs are accepted becomes status imported and unlocks later stages; otherwise it stays a draft with listed gaps.
+      summary: Bring ready material for a stage as pasted text or, for the ТЗ, a document from the stage files
+      description: 'Complete material whose inputs are accepted becomes status imported and unlocks later stages; otherwise it stays a draft with listed gaps. For the ТЗ stage (features) the material is laid out deterministically into the ТЗ sections — headings decide the section, words like «первая версия» or «позже» the priority, «Готово, когда:» lines the conditions of the function above — and found counts what was recognised. fileId takes a PDF, Word or text file already uploaded to this stage''s files (scanned on upload): 400 IMPORT_FILE_NOT_SUPPORTED for other stages, 400 IMPORT_FILE_KIND for other kinds, 404 FILE_NOT_FOUND, 422 DOCUMENT_UNREADABLE or DOCUMENT_TOO_LARGE.'
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -7246,9 +7246,10 @@ components:
     ImportStageRequest:
       type: object
       additionalProperties: false
-      required: [text]
+      description: Exactly one of text or fileId.
       properties:
         text: { type: string, minLength: 2, maxLength: 20000 }
+        fileId: { type: string, format: uuid, description: 'A stage file (pdf, docx or text) of the ТЗ stage.' }
     StageReview:
       type: object
       required: [rulesVersion, score, findings, blocking, uncoveredBlocking, overrides, ai]
@@ -7627,6 +7628,17 @@ components:
             versionId: { type: string, format: uuid }
             versionNumber: { type: integer }
             status: { type: string, enum: [imported, in_progress] }
+            found:
+              type: object
+              description: ТЗ stage only — what was recognised in the material.
+              properties:
+                summary: { type: boolean }
+                roles: { type: integer }
+                features: { type: integer }
+                acceptance: { type: integer }
+                requirements: { type: integer }
+                limits: { type: integer }
+                questions: { type: integer }
             issues:
               type: array
               items:

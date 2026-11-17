@@ -370,8 +370,10 @@ export class JourneyController {
 
   @Post('projects/:projectId/stages/:stageKey/import')
   importText(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
-    const input = body(raw, ['text']);
-    return this.journey.importText(request.user.id, projectId, stageKey(key), text(input.text, 'text', 2, 20_000)!);
+    const input = body(raw, ['text', 'fileId']);
+    // Either pasted text or a document already uploaded to the stage's files (scanned on upload).
+    if (typeof input.fileId === 'string') return this.journey.importText(request.user.id, projectId, stageKey(key), { fileId: input.fileId });
+    return this.journey.importText(request.user.id, projectId, stageKey(key), { text: text(input.text, 'text', 2, 20_000)! });
   }
 
   /** The owner explains in writing why the stage moves on although these blocking findings stay. */

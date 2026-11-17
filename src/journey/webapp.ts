@@ -103,7 +103,8 @@ export function featuresIssues(value: AppFeatures): AppIssue[] {
   if (!value.features.some((feature) => feature.priority === 'must')) issues.push({ key: 'features', message: 'Отметьте хотя бы одну функцию как обязательную в первой версии.' });
   for (const feature of value.features) {
     if (!feature.roles.length) issues.push({ key: feature.key, message: `У функции «${feature.title}» не указано, кто ей пользуется.` });
-    if (!feature.acceptance.length) issues.push({ key: feature.key, message: `У функции «${feature.title}» нет критерия приёмки: как понять, что она работает.` });
+    // What is put off for later is described when its turn comes.
+    if (!feature.acceptance.length && feature.priority !== 'later') issues.push({ key: feature.key, message: `У функции «${feature.title}» нет условия «готово»: как понять, что она сделана.` });
   }
   return issues;
 }
