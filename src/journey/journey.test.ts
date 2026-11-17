@@ -222,6 +222,8 @@ describe('stage AI adapter', () => {
     // The style comes from the environment; unknown styles switch AI off instead of guessing.
     assert.equal(configuredStageProvider({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_OPENAI_MODEL: 'm', BUILDER_AI_OPENAI_API_STYLE: 'chat' })?.name, 'openai-chat');
     assert.equal(configuredStageProvider({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_OPENAI_MODEL: 'm' })?.name, 'openai');
+    // Empty values, as copied from .env.example, mean the defaults.
+    assert.equal(configuredStageProvider({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_OPENAI_MODEL: 'm', BUILDER_AI_OPENAI_API_STYLE: '', BUILDER_AI_OPENAI_BASE_URL: '' })?.name, 'openai');
     assert.equal(configuredStageProvider({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_OPENAI_MODEL: 'm', BUILDER_AI_OPENAI_API_STYLE: 'soap' }), null);
   });
   it('reports token usage when the provider returns it', async () => {

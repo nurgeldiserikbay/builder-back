@@ -1,11 +1,12 @@
 import { CommentsService } from './comments.service.js';
 import { StageReviewService } from './stage-review.service.js';
-import { BadRequestException, Body, Controller, Get, HttpCode, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { JourneyService } from './journey.service.js';
 import { SpecialistsService, type SpecialistTerms } from './specialists.service.js';
 import { ChangeProposalsService } from './change-proposals.service.js';
+import { InterviewService } from './interview.service.js';
 import { PlaybooksService } from './playbooks.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { WorktimeService } from './worktime.service.js';
@@ -59,7 +60,7 @@ function uuid(value: string, code: string): string {
 @Controller()
 @UseGuards(AuthGuard)
 export class JourneyController {
-  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService, private readonly review: StageReviewService, private readonly proposals: ChangeProposalsService, private readonly playbooks: PlaybooksService) {}
+  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService, private readonly review: StageReviewService, private readonly proposals: ChangeProposalsService, private readonly playbooks: PlaybooksService, private readonly interviews: InterviewService) {}
 
   @Get('projects/:projectId/stages/:stageKey/comments')
   listComments(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
@@ -338,6 +339,25 @@ export class JourneyController {
     return this.journey.generate(request.user.id, projectId, stageKey(key), {
       instruction, saveAs: saveAs as 'one_off' | 'stage_rule' | 'project_rule', targetKey: text(input.targetKey, 'targetKey', 1, 60, true),
     });
+  }
+
+  @Get('projects/:projectId/stages/:stageKey/interview')
+  @Header('Cache-Control', 'no-store')
+  interview(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
+    return this.interviews.get(request.user.id, projectId, stageKey(key));
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/interview')
+  @HttpCode(200)
+  interviewSay(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw ?? {}, ['message', 'restart']);
+    return this.interviews.say(request.user.id, projectId, stageKey(key), { message: text(input.message, 'message', 1, 1000, true), restart: input.restart === true });
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/interview/apply')
+  @HttpCode(200)
+  interviewApply(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
+    return this.interviews.apply(request.user.id, projectId, stageKey(key));
   }
 
   @Post('projects/:projectId/stages/:stageKey/locks')

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.23.0
+  version: 1.24.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -3318,6 +3318,70 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/interview:
+    get:
+      tags: [Journey]
+      operationId: getStageInterview
+      summary: The «Разговор» that fills a form stage (goal, offer)
+      description: |
+        Messages, what was found so far by field (extracted), filled and missingRequired field keys, done, applied, turnsLeft and mode
+        (ai, or template — the form's questions one by one when no AI is connected). 404 INTERVIEW_NOT_AVAILABLE on other stages.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200': { description: 'data: version, mode, messages (role assistant|owner, text, at), extracted, filled, missingRequired, done, applied, turnsLeft' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Journey]
+      operationId: sayInStageInterview
+      summary: Start the conversation or answer the next question
+      description: |
+        message null starts it (a greeting, and without AI the first question; free). With AI each answer is one AI request: it holds
+        the project's AI money, counts toward the daily limit and is recorded as a generation run with targetKey interview. The answer
+        is schema-checked: only the stage's fields, choices from the form's options, lengths cut; done only when every required field is
+        known. restart=true starts over. 429 INTERVIEW_TOO_LONG after 40 messages, AI_DAILY_LIMIT_REACHED; 502/503 as for generate.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { message: { type: [string, 'null'], maxLength: 1000 }, restart: { type: boolean } } }
+      responses:
+        '200': { description: 'The conversation, as in GET' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/interview/apply:
+    post:
+      tags: [Journey]
+      operationId: applyStageInterview
+      summary: Fill the stage form from the conversation
+      description: A new version on top of the current one, noted «Из разговора». Fields a person filled in and locked stay as they are. The owner checks the form and accepts the stage as usual. 400 INTERVIEW_NOTHING_TO_APPLY, 404 INTERVIEW_NOT_STARTED.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StageVersionResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/stages/{stageKey}/generate:
     post:
       tags: [Journey]

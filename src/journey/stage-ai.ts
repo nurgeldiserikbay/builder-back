@@ -268,9 +268,10 @@ export function configuredStageProvider(env: NodeJS.ProcessEnv = process.env): S
   const model = env.BUILDER_AI_OPENAI_MODEL;
   if (!apiKey || !model) return null;
   // Optional OpenAI-compatible endpoint (a gateway, Groq, Gemini, or a local mock in development).
-  const baseUrl = (env.BUILDER_AI_OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, '');
+  const baseUrl = (env.BUILDER_AI_OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
   if (!/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(`${baseUrl}/`)) return null;
-  const style = (env.BUILDER_AI_OPENAI_API_STYLE ?? 'responses').trim().toLowerCase();
+  // An empty value (as in .env.example) means the default, like an absent one.
+  const style = (env.BUILDER_AI_OPENAI_API_STYLE || 'responses').trim().toLowerCase();
   if (style !== 'responses' && style !== 'chat') return null;
   return new OpenAiStageProvider(apiKey, model, fetch, baseUrl, style);
 }
