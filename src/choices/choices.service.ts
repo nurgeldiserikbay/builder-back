@@ -11,6 +11,7 @@ import { JourneyService } from '../journey/journey.service.js';
 import { ReviewTargetPolicyError, resolveAndValidateReviewTarget } from '../reviews/url-target-policy.js';
 import { choiceCards, recommend, technologiesCard, type CardKey, githubOauthSteps } from './cards.js';
 import { domainTarget } from '../publishing/domain.js';
+import { sitesConfig } from '../publishing/slug.js';
 import { checkSite } from './site-check.js';
 import { GITHUB_SCOPES, authorizeUrl, createRepo, exchangeCode, githubOauthConfig, githubUser, writableRepos, type GithubOauthConfig } from './github-oauth.js';
 import { bookingBundle, bookingPackageFiles } from '../export/booking-package.js';
@@ -61,6 +62,57 @@ export class ChoicesService {
       provider: repo.provider, connectedVia: repo.connectedVia, repoPath: repo.repoPath, webUrl: repo.webUrl, defaultBranch: repo.defaultBranch, isPrivate: repo.isPrivate,
       tokenHint: `…${repo.tokenHint}`, verifiedAt: repo.verifiedAt, lastPushAt: repo.lastPushAt, lastCommitUrl: repo.lastCommitUrl, lastError: repo.lastError,
     } : null;
+  }
+
+  /**
+   * «Уже решено за вас»: every decision of the project as it stands — the owner's choice or, until they make one, the
+   * platform's default (the recommendation) — with what it means right now and the other options behind «Изменить».
+   * A newcomer never has to decide; someone who knows can change any of it. A web application is not published here,
+   * so it has only the code decision.
+   */
+  async summary(userId: string, projectId: string) {
+    const access = await this.access(userId, projectId, false);
+    const cards: CardKey[] = access.projectType === 'web_app' ? ['code_hosting'] : ['technologies', 'deployment', 'domain', 'code_hosting'];
+    const [choices, repo, publication, hosting] = await Promise.all([
+      this.prisma.projectChoice.findMany({ where: { projectId }, select: { cardKey: true, optionKey: true, chosenAt: true } }),
+      this.prisma.codeRepository.findUnique({ where: { projectId }, select: { provider: true, repoPath: true, webUrl: true } }),
+      this.prisma.sitePublication.findUnique({ where: { projectId }, select: { status: true, slug: true, customDomain: true, domainStatus: true } }),
+      this.prisma.hostingConnection.findUnique({ where: { projectId }, select: { provider: true, siteUrl: true } }),
+    ]);
+    const live = publication?.status === 'live';
+    const items = cards.map((key) => {
+      const card = key === 'technologies' ? technologiesCard(access.projectType) : choiceCards[key];
+      const choice = choices.find((item) => item.cardKey === key);
+      const recommendation = recommend(key, access);
+      const optionKey = choice?.optionKey ?? recommendation.optionKey;
+      const option = card.options.find((item) => item.key === optionKey) ?? card.options[0]!;
+      return {
+        cardKey: key, title: card.title, optionKey: option.key, optionTitle: option.title,
+        decidedBy: choice ? 'owner' as const : 'default' as const,
+        // What the decision means for this project right now, in one sentence.
+        now: this.decisionNow(key, option.key, { live, slug: publication?.slug ?? null, domain: publication?.customDomain && publication.domainStatus === 'active' ? publication.customDomain : null, repo, hosting }),
+        why: choice ? null : recommendation.reason,
+        others: card.options.filter((item) => item.key !== option.key).map((item) => ({ key: item.key, title: item.title, summary: item.summary })),
+      };
+    });
+    return { data: { items, canDecide: access.canDecide } };
+  }
+
+  private decisionNow(card: CardKey, option: string, state: { live: boolean; slug: string | null; domain: string | null; repo: { provider: string; repoPath: string; webUrl: string } | null; hosting: { provider: string; siteUrl: string | null } | null }): string {
+    if (card === 'technologies') return option === 'buildpath' ? tr('Сайт собирает и проверяет BuildPath; файлы ваши, их можно скачать в любой момент.') : option === 'developer' ? tr('Сайт делает разработчик на своём стеке; BuildPath готовит для него тексты, схемы и ТЗ.') : tr('Сайт собираете в конструкторе сами, перенося тексты; BuildPath готовит материалы.');
+    if (card === 'deployment') {
+      if (option === 'buildpath') return state.live ? tr('Сайт работает на BuildPath.') : tr('После публикации сайт будет работать на BuildPath — одной кнопкой на вкладке «Публикация».');
+      if (state.hosting?.siteUrl) return tr('Сайт выкладывается на {0}: {1}.', [state.hosting.provider, state.hosting.siteUrl]);
+      return tr('Сайт будет работать у вас — пошаговая инструкция в «Изменить».');
+    }
+    if (card === 'domain') {
+      if (state.domain) return tr('Сайт открывается по вашему адресу {0}.', [state.domain]);
+      if (option === 'own_domain') return tr('Свой домен ещё не подключён — шаги в «Изменить».');
+      return state.live && state.slug ? tr('Адрес сайта: {0}.', [sitesConfig().urlFor(state.slug)]) : tr('Бесплатный адрес BuildPath выберете при публикации; свой домен можно подключить позже.');
+    }
+    if (state.repo) return tr('Код в репозитории {0}: {1}.', [state.repo.provider === 'github' ? 'GitHub' : 'GitLab', state.repo.webUrl]);
+    if (option === 'archive') return tr('Копию всех файлов можно скачать архивом на вкладке «Результат» — на случай переезда или для разработчика.');
+    return tr('Репозиторий ещё не подключён — шаги в «Изменить».');
   }
 
   async card(userId: string, projectId: string, cardKey: string) {
