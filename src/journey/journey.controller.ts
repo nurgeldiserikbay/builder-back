@@ -257,6 +257,14 @@ export class JourneyController {
   @Get('journey/catalog')
   catalog() { return this.journey.catalog(); }
 
+  /** «Расскажите о своём деле»: the kind of project from the description and a few plain questions; no AI, no charge. */
+  @Post('journey/type-suggestion')
+  @HttpCode(200)
+  typeSuggestion(@Body() body: { description?: unknown; answers?: unknown }) {
+    if (body.description !== undefined && (typeof body.description !== 'string' || body.description.length > 1000)) throw new BadRequestException('FIELD_INVALID:description');
+    return this.journey.typeSuggestion(typeof body.description === 'string' ? body.description : '', body.answers);
+  }
+
   @Get('projects/:projectId/journey')
   get(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
     return this.journey.journey(request.user.id, projectId);

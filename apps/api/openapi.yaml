@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.15.0
+  version: 1.16.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -1365,6 +1365,67 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/JourneyCatalogResponse' }
+        '401': { $ref: '#/components/responses/Problem' }
+  /journey/type-suggestion:
+    post:
+      tags: [Journey]
+      operationId: suggestProjectType
+      summary: Pick the project type from the owner's description and a few plain questions
+      description: Deterministic, no AI and no charge. Words in the description pre-select «yes» answers (hinted); answers the owner gives win. The size question is left out once the business books, sells or needs accounts. suggestion is null while missing lists questions still needed.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                description: { type: string, maxLength: 1000 }
+                answers:
+                  type: object
+                  properties:
+                    appointments: { type: boolean }
+                    products: { type: boolean }
+                    accounts: { type: boolean }
+                    size: { type: string, enum: [one, few, many] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [version, questions, hinted, answers, suggestion, missing]
+                    properties:
+                      version: { type: string }
+                      questions:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            key: { type: string, enum: [appointments, products, accounts, size] }
+                            question: { type: string }
+                            hint: { type: string }
+                            options: { type: array, items: { type: object, properties: { value: { type: string }, label: { type: string } } } }
+                      hinted: { type: object, additionalProperties: true }
+                      answers: { type: object, additionalProperties: true }
+                      suggestion:
+                        oneOf:
+                          - type: 'null'
+                          - type: object
+                            properties:
+                              type: { type: string }
+                              reason: { type: string }
+                              alternatives: { type: array, items: { type: string } }
+                      missing: { type: array, items: { type: string } }
+        '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/ai-history:
     get:
@@ -7480,7 +7541,7 @@ components:
             ai: { type: object }
             options:
               type: object
-              description: 'Stage-specific choices. For a business process, process.situations = { version, items[] }: the questions of this project type — key, level (blocking | important | minor), question, why, options[] (value, label, rule, typical).'
+              description: 'Stage-specific choices. For a business process, process.situations = { version, items[] }: the questions of this project type — key, level (blocking | important | minor), question, why, options[] (value, label, rule, typical). Stage-specific choices. For the goal stage without a version yet, brief.intro is the owner''s story given when the project was created (project summary), to start the passport from.'
     StageRule:
       type: object
       required: [id, kind, status, text, createdAt]

@@ -4,6 +4,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { WorktimeService } from './worktime.service.js';
 import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, weekdayShort, type Schedule } from './schedule.js';
 import { CAPABILITIES, PROCESS_LIMITS } from './process.js';
+import { TYPE_QUESTIONS, TYPE_QUESTIONS_VERSION, hintAnswers, parseAnswers, suggestType, type TypeAnswers } from './type-suggest.js';
 import { SITUATIONS_VERSION, situationsFor } from './situations.js';
 import { bookingApiContract, sameTechPlan, techPlanMarkdown, techPlanNotes, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
@@ -40,6 +41,27 @@ export class JourneyService {
     private readonly core: JourneyCore, private readonly stageAi: StageAiService, private readonly changes: ChangeNoticesService,
     private readonly review: StageReviewService,
   ) {}
+
+  /**
+   * Answers hinted by the description are pre-selected; the owner's own answers win. The questions not needed any more
+   * (the size one once the business books, sells or needs accounts) are left out.
+   */
+  typeSuggestion(description: string, rawAnswers: unknown) {
+    const hinted = hintAnswers(description);
+    const given = parseAnswers(rawAnswers);
+    const answers: TypeAnswers = { ...hinted, ...given };
+    const result = suggestType(answers);
+    const decidedByNeed = (['appointments', 'products', 'accounts'] as const).some((key) => answers[key] === true);
+    return {
+      data: {
+        version: TYPE_QUESTIONS_VERSION,
+        questions: TYPE_QUESTIONS.filter((question) => !(question.onlyIfNoneOf && decidedByNeed)),
+        hinted, answers,
+        suggestion: 'type' in result ? { type: result.type, reason: result.reason, alternatives: result.alternatives } : null,
+        missing: result.missing,
+      },
+    };
+  }
 
   catalog() {
     return {
@@ -276,6 +298,8 @@ export class JourneyService {
           ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.core.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
           ...(stageKey === 'content' && ctx.route.includes('sitemap') ? { pages: (await this.core.checkContext(ctx, stageKey)).sitemap?.pages ?? null } : {}),
+          // The owner's story from «Расскажите о своём деле» starts the passport until the first version exists.
+          ...(definition.artifactType === 'brief' && !stage.currentVersionId ? { brief: { intro: (await this.prisma.project.findUnique({ where: { id: projectId }, select: { summary: true } }))?.summary ?? null } } : {}),
           ...(definition.artifactType === 'schedule' ? { schedule: { template: scheduleTemplate, timezones: TIMEZONES, weekdays: WEEKDAYS, slotSteps: SLOT_STEPS } } : {}),
           ...(stageKey === 'build' ? { technology: (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'technologies' } }, select: { optionKey: true } }))?.optionKey ?? null } : {}),
         },
