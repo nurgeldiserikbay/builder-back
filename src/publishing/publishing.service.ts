@@ -1,8 +1,15 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { assertBrowserGate } from '../quality/browser-gate.js';
 import { PrismaService } from '../database/prisma.service.js';
 import type { SiteArtifact } from '../journey/artifacts.js';
 import { emailConfig } from '../notifications/email.js';
+import { sendTestLead, type ChannelStatus } from '../notifications/lead-notifier.js';
+import { launchReadiness } from './readiness.js';
+import { projectTypes, stageDefinitions, type StageKey } from '../journey/catalog.js';
+import type { Brief, Offer } from '../journey/artifacts.js';
+import type { BusinessProcess } from '../journey/process.js';
+import type { AppFeatures } from '../journey/webapp.js';
+
 import { telegramConfig } from '../notifications/telegram.js';
 import { sitesConfig, slugProblem, suggestSlug } from './slug.js';
 import { BillingService } from '../billing/billing.service.js';
@@ -117,6 +124,8 @@ export class PublishingService {
     const problem = slugProblem(input.slug);
     if (problem) throw new BadRequestException('INVALID_SLUG');
     await this.billing.assertCanPublish(projectId);
+    // A product version: which accepted version of every stage went live, to show what changed between versions.
+    const stages = await this.stageSnapshot(projectId);
     const now = new Date();
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -128,13 +137,53 @@ export class PublishingService {
           update: { slug: input.slug, status: 'live', buildVersionId: build.versionId, publishedAt: now, publishedByUserId: userId, unpublishedAt: null },
         });
         await tx.project.update({ where: { id: projectId }, data: { status: 'live' } });
-        await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'site_published', stageKey: 'build', details: { slug: input.slug, buildVersion: build.versionNumber, previousSlug: project.publication?.slug ?? null } } });
+        await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'site_published', stageKey: 'build', details: { slug: input.slug, buildVersion: build.versionNumber, previousSlug: project.publication?.slug ?? null, stages } } });
       });
     } catch (error) {
       if ((error as { code?: string }).code === 'P2002') throw new ConflictException('SLUG_TAKEN');
       throw error;
     }
     return this.status(userId, projectId);
+  }
+
+  /** Accepted version numbers of every stage, as of now. */
+  private async stageSnapshot(projectId: string): Promise<Record<string, number>> {
+    const rows = await this.prisma.projectStage.findMany({ where: { projectId, approvedVersionId: { not: null } }, select: { stageKey: true, approvedVersionId: true } });
+    const versions = await this.prisma.stageArtifactVersion.findMany({ where: { id: { in: rows.map((row) => row.approvedVersionId!) } }, select: { id: true, versionNumber: true } });
+    const number = new Map(versions.map((version) => [version.id, version.versionNumber]));
+    return Object.fromEntries(rows.filter((row) => number.has(row.approvedVersionId!)).map((row) => [row.stageKey, number.get(row.approvedVersionId!)!]));
+  }
+
+  /** «Готов ли бизнес принимать клиентов?» — the build gate plus advice, from the accepted stages and the notification channels. */
+  async readiness(userId: string, projectId: string) {
+    const { project } = await this.load(userId, projectId, false);
+    const full = await this.prisma.project.findUniqueOrThrow({ where: { id: projectId }, select: { projectType: true, stages: { orderBy: { position: 'asc' }, select: { stageKey: true, approvedVersionId: true } } } });
+    const wanted = full.stages.filter((stage) => ['goal', 'process', 'features', 'offer'].includes(stage.stageKey) && stage.approvedVersionId);
+    const contents = await this.prisma.stageArtifactVersion.findMany({ where: { id: { in: wanted.map((stage) => stage.approvedVersionId!) } }, select: { id: true, content: true } });
+    const accepted = <T>(key: string) => (contents.find((version) => version.id === full.stages.find((stage) => stage.stageKey === key)?.approvedVersionId)?.content as T | undefined) ?? null;
+    const build = await this.acceptedBuild(project);
+    const telegram = telegramConfig();
+    const lastTest = await this.prisma.projectEvent.findFirst({ where: { projectId, type: 'test_lead_sent' }, orderBy: { createdAt: 'desc' }, select: { details: true, createdAt: true } });
+    const type = full.projectType ?? '';
+    const route = type in projectTypes ? projectTypes[type as keyof typeof projectTypes].stages.filter((key) => full.stages.some((stage) => stage.stageKey === key)) : full.stages.map((stage) => stage.stageKey);
+    const result = launchReadiness({
+      projectType: type, route,
+      build: { accepted: Boolean(build), qualityPassed: build?.quality?.status === 'passed' },
+      brief: accepted<Brief>('goal'), process: accepted<BusinessProcess>('process'), spec: accepted<AppFeatures>('features'), offer: accepted<Offer>('offer'),
+      channels: { telegram: !telegram ? 'not_configured' : project.owner.externalIdentities.length ? 'linked' : 'not_linked', email: Boolean(emailConfig()) && (project.publication?.notifyEmail ?? true) },
+      lastTest: lastTest ? (lastTest.details as { telegram: ChannelStatus; email: ChannelStatus }) : null,
+    });
+    return { data: { ...result, lastTestAt: lastTest?.createdAt ?? null } };
+  }
+
+  /** Sends the owner a test request through the real channels; one a minute per project. */
+  async testLead(userId: string, projectId: string) {
+    await this.load(userId, projectId, true);
+    const recent = await this.prisma.projectEvent.findFirst({ where: { projectId, type: 'test_lead_sent', createdAt: { gt: new Date(Date.now() - 60_000) } }, select: { id: true } });
+    if (recent) throw new HttpException('TEST_LEAD_TOO_OFTEN', HttpStatus.TOO_MANY_REQUESTS);
+    const result = await sendTestLead(this.prisma, projectId);
+    await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'test_lead_sent', details: result } });
+    return this.readiness(userId, projectId);
   }
 
   /**
@@ -159,13 +208,33 @@ export class PublishingService {
       select: { id: true, versionNumber: true, createdAt: true },
     }) : [];
     const live = project.publication?.status === 'live' ? project.publication.buildVersionId : null;
+    // Product versions: each build in the order it first went live; its stages come from that publication.
+    const firstPublished = [...events].reverse().filter((event) => event.type === 'site_published');
+    const product = new Map<number, { number: number; stages: Record<string, number> | null }>();
+    for (const event of firstPublished) {
+      const details = event.details as { buildVersion?: number; stages?: Record<string, number> } | null;
+      if (typeof details?.buildVersion === 'number' && !product.has(details.buildVersion)) product.set(details.buildVersion, { number: product.size + 1, stages: details.stages ?? null });
+    }
+    const byNumber = new Map([...product.values()].map((item) => [item.number, item]));
+    const titled = (key: string) => (key in stageDefinitions ? stageDefinitions[key as StageKey].title : key);
     return {
       data: {
         canRollback: manageRoles.has(role) && Boolean(live),
-        versions: versions.map((version) => ({
-          versionId: version.id, versionNumber: version.versionNumber, builtAt: version.createdAt, lastPublishedAt: numbers.get(version.versionNumber) ?? null,
-          live: version.id === live, accepted: version.id === stage?.approvedVersionId,
-        })),
+        versions: versions.map((version) => {
+          const own = product.get(version.versionNumber) ?? null;
+          const previous = own ? byNumber.get(own.number - 1) ?? null : null;
+          // What changed against the previous product version: stages whose accepted version differs.
+          const changes = own?.stages && previous?.stages
+            ? Object.keys({ ...previous.stages, ...own.stages }).filter((key) => previous.stages![key] !== own.stages![key]).map((key) => ({ key, title: titled(key), from: previous.stages![key] ?? null, to: own.stages![key] ?? null }))
+            : null;
+          return {
+            versionId: version.id, versionNumber: version.versionNumber, builtAt: version.createdAt, lastPublishedAt: numbers.get(version.versionNumber) ?? null,
+            live: version.id === live, accepted: version.id === stage?.approvedVersionId,
+            productVersion: own?.number ?? null,
+            stages: own?.stages ? Object.entries(own.stages).map(([key, number]) => ({ key, title: titled(key), versionNumber: number })) : null,
+            changes,
+          };
+        }),
       },
     };
   }

@@ -63,6 +63,21 @@ export class PublishingController {
     return this.publishing.unpublish(request.user.id, projectId);
   }
 
+  /** «Готов ли бизнес принимать клиентов?»: the launch check with links to fix each point. */
+  @Get('projects/:projectId/publication/readiness')
+  @UseGuards(AuthGuard)
+  readiness(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.publishing.readiness(request.user.id, projectId);
+  }
+
+  /** A test request to the owner through the real notification channels. */
+  @Post('projects/:projectId/publication/test-lead')
+  @HttpCode(200)
+  @UseGuards(AuthGuard)
+  testLead(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.publishing.testLead(request.user.id, projectId);
+  }
+
   @Post('projects/:projectId/publication/settings')
   @HttpCode(200)
   @UseGuards(AuthGuard)

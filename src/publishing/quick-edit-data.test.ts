@@ -95,7 +95,7 @@ describe('quick edit of prices and hours (database)', async () => {
     assert.equal(built.data.quality.status, 'passed', JSON.stringify(built.data.quality.findings.filter((finding) => finding.blocking)));
     await journey.accept(owner.id, projectId, 'build', built.data.versionId);
     await publishing.publish(owner.id, projectId, { slug: `qd-${randomUUID().slice(0, 8)}`, confirm: true });
-    return { owner, projectId, quick: new QuickEditService(prisma!, journey, publishing), journey, version };
+    return { owner, projectId, quick: new QuickEditService(prisma!, journey, publishing), journey, version, publishing };
   }
 
   it('store: new prices and stock reach the live site; the plan is answered «no change»', { skip }, async () => {
@@ -130,6 +130,31 @@ describe('quick edit of prices and hours (database)', async () => {
     assert.ok(stages.every((stage) => stage.status === 'approved'), JSON.stringify(stages));
     // Products are not part of this route.
     await assert.rejects(quick.products(owner.id, projectId, { products: [{ key: 'p1', price: 1, available: true }] }), /QUICK_EDIT_TARGET_INVALID/);
+  });
+
+  it('launch readiness and product versions: a test request is sent once a minute; a republish becomes version 2 with its changes', { skip }, async () => {
+    const { owner, projectId, quick, publishing } = await publishedProject('store');
+    const ready = (await publishing.readiness(owner.id, projectId)).data;
+    const byKey = new Map(ready.checks.map((check) => [check.key, check]));
+    assert.equal(byKey.get('build')?.status, 'ok');
+    assert.equal(byKey.get('contacts')?.status, 'ok');
+    assert.equal(byKey.get('situations')?.status, 'ok');
+    assert.ok(byKey.has('spec') && !byKey.has('cancellation') && !ready.blocking);
+    assert.equal(byKey.get('requests')?.status, 'warn');
+    const tested = (await publishing.testLead(owner.id, projectId)).data;
+    assert.ok(tested.lastTestAt);
+    await assert.rejects(publishing.testLead(owner.id, projectId), /TEST_LEAD_TOO_OFTEN/);
+
+    const first = (await publishing.history(owner.id, projectId)).data.versions;
+    assert.equal(first.length, 1);
+    assert.equal(first[0]!.productVersion, 1);
+    assert.ok(first[0]!.stages?.some((stage) => stage.key === 'features' && stage.versionNumber === 1));
+    assert.equal(first[0]!.changes, null);
+    await quick.products(owner.id, projectId, { products: [{ key: 'p1', price: 9900, available: true }, { key: 'p2', price: 3500, available: true }] });
+    const versions = (await publishing.history(owner.id, projectId)).data.versions;
+    const latest = versions.find((version) => version.live)!;
+    assert.equal(latest.productVersion, 2);
+    assert.ok(latest.changes?.some((change) => change.key === 'products' && change.from === 1 && change.to === 2), JSON.stringify(latest.changes));
   });
 });
 
