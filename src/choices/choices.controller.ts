@@ -52,9 +52,36 @@ export class ChoicesController {
   @Post('repository')
   @HttpCode(200)
   connect(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
-    const input = body(raw, ['provider', 'repoUrl', 'token']);
+    const input = body(raw, ['provider', 'repoUrl', 'token', 'branch', 'hostFingerprint']);
     if (!GIT_PROVIDERS.includes(input.provider as GitProviderKey)) throw new BadRequestException('REPO_PROVIDER_INVALID');
+    if (input.provider === 'ssh') {
+      const optional = (value: unknown, code: string, max: number) => (value === undefined || value === null || value === '' ? null : str(value, code, max));
+      return this.choices.connect(request.user.id, projectId, {
+        provider: 'ssh', repoUrl: str(input.repoUrl, 'REPO_SSH_URL_INVALID', 500), token: '',
+        branch: optional(input.branch, 'REPO_BRANCH_INVALID', 100), hostFingerprint: optional(input.hostFingerprint, 'REPO_SSH_HOST_KEY_NOT_CONFIRMED', 100),
+      });
+    }
     return this.choices.connect(request.user.id, projectId, { provider: input.provider as GitProviderKey, repoUrl: str(input.repoUrl, 'REPO_URL_INVALID', 500), token: str(input.token, 'REPO_TOKEN_INVALID', 400) });
+  }
+
+  @Get('repository/ssh/key')
+  @Header('Cache-Control', 'no-store')
+  sshKey(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.choices.sshKey(request.user.id, projectId);
+  }
+
+  @Post('repository/ssh/key')
+  @HttpCode(200)
+  createSshKey(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw ?? {}, ['rotate']);
+    return this.choices.createSshKey(request.user.id, projectId, input.rotate === true);
+  }
+
+  @Post('repository/ssh/host-keys')
+  @HttpCode(200)
+  sshHostKeys(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    const input = body(raw, ['repoUrl']);
+    return this.choices.sshHostKeys(request.user.id, projectId, str(input.repoUrl, 'REPO_SSH_URL_INVALID', 500));
   }
 
   @Post('repository/github/start')

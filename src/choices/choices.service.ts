@@ -1,5 +1,5 @@
 import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { decryptToken, encryptToken, tokenKey } from '../security/token-crypto.js';
 import { HOSTING_PROVIDERS, HostingError, hostingProvider, hostingProviderName, type HostingProviderKey } from './hosting-providers.js';
@@ -16,8 +16,9 @@ import { checkSite } from './site-check.js';
 import { GITHUB_SCOPES, authorizeUrl, createRepo, exchangeCode, githubOauthConfig, githubUser, writableRepos, type GithubOauthConfig } from './github-oauth.js';
 import { bookingBundle, bookingPackageFiles } from '../export/booking-package.js';
 import type { SiteArtifact } from '../journey/artifacts.js';
-import { BitbucketClient, GitHubClient, GiteaClient, GitLabClient, GitProviderError, gitProviderName, parseRepoUrl, type GitFile, type GitProviderKey } from './git-providers.js';
-import { ciDeployFile, renderBlueprint, staticDockerfile } from './infra-files.js';
+import { BitbucketClient, GitHubClient, GiteaClient, GitLabClient, GitProviderError, gitProviderName, parseRepoUrl, type ApiGitProviderKey, type GitFile, type GitProviderKey } from './git-providers.js';
+import { BOOKING_APP_DIR, ciDeployFile, renderBlueprint, staticDockerfile } from './infra-files.js';
+import { generateDeployKey, parseSshUrl, scanHostKeys, sshDisplayUrl, SshGitClient, sshToolsAvailable, type SshRemote } from './ssh-git.js';
 
 const isCard = (key: string): key is CardKey => key in choiceCards;
 
@@ -50,7 +51,7 @@ export class ChoicesService {
     return process.env.CODE_HOSTING_ALLOW_LOCAL === 'true' && process.env.NODE_ENV !== 'production';
   }
 
-  private client(provider: GitProviderKey, token: string, baseUrl: string) {
+  private client(provider: ApiGitProviderKey, token: string, baseUrl: string) {
     if (provider === 'github') {
       const api = baseUrl === 'https://github.com' ? (process.env.GITHUB_API_URL ?? 'https://api.github.com') : `${baseUrl}/api/v3`;
       return new GitHubClient(token, api.replace(/\/$/, ''));
@@ -178,12 +179,13 @@ export class ChoicesService {
   }
 
   /** Checks the address and key against the provider and stores the connection only when writing is allowed. */
-  async connect(userId: string, projectId: string, input: { provider: GitProviderKey; repoUrl: string; token: string }) {
+  async connect(userId: string, projectId: string, input: { provider: GitProviderKey; repoUrl: string; token: string; branch?: string | null; hostFingerprint?: string | null }) {
     await this.access(userId, projectId, true);
     const key = this.key();
     if (!key) throw new ServiceUnavailableException('REPO_CONNECT_NOT_CONFIGURED');
     const choice = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'code_hosting' } }, select: { optionKey: true } });
     if (choice?.optionKey !== input.provider) throw new ConflictException('CHOICE_NOT_MADE');
+    if (input.provider === 'ssh') return this.connectSsh(userId, projectId, { repoUrl: input.repoUrl, branch: input.branch ?? null, hostFingerprint: input.hostFingerprint ?? null }, key);
     const token = input.token.trim();
     if (token.length < 20 || token.length > 400 || /\s/.test(token)) throw new BadRequestException('REPO_TOKEN_INVALID');
     let parsed: { baseUrl: string; repoPath: string };
@@ -200,7 +202,7 @@ export class ChoicesService {
   }
 
   /** Checks write access with the token and saves the connection; the token is stored only encrypted. */
-  private async storeRepository(userId: string, projectId: string, provider: GitProviderKey, parsed: { baseUrl: string; repoPath: string }, token: string, key: Buffer, via: 'token' | 'oauth') {
+  private async storeRepository(userId: string, projectId: string, provider: ApiGitProviderKey, parsed: { baseUrl: string; repoPath: string }, token: string, key: Buffer, via: 'token' | 'oauth') {
     let info;
     try {
       info = await this.client(provider, token, parsed.baseUrl).inspect(parsed.repoPath);
@@ -330,6 +332,121 @@ export class ChoicesService {
     return { data: { forgotten: true, revokeUrl: 'https://github.com/settings/applications' } };
   }
 
+  /** Resolves the server name and refuses private and internal addresses; returns the checked IP git will connect to. */
+  private async sshAddress(remote: SshRemote): Promise<string> {
+    if (this.allowLocal() && (remote.host === 'localhost' || remote.host === '127.0.0.1')) return '127.0.0.1';
+    try {
+      const checked = await resolveAndValidateReviewTarget(`https://${remote.host.includes(':') ? `[${remote.host}]` : remote.host}/`);
+      return checked.resolvedAddresses[0];
+    } catch (error) {
+      if (error instanceof ReviewTargetPolicyError) throw new BadRequestException('REPO_HOST_NOT_ALLOWED');
+      throw error;
+    }
+  }
+
+  private async sshReady() {
+    const key = this.key();
+    if (!key) throw new ServiceUnavailableException('REPO_CONNECT_NOT_CONFIGURED');
+    if (!(await sshToolsAvailable())) throw new ServiceUnavailableException('SSH_GIT_NOT_AVAILABLE');
+    return key;
+  }
+
+  private sshKeyView(row: { publicKey: string; fingerprint: string; createdAt: Date } | null) {
+    return row ? { publicKey: row.publicKey, fingerprint: row.fingerprint, createdAt: row.createdAt } : null;
+  }
+
+  async sshKey(userId: string, projectId: string) {
+    await this.access(userId, projectId, true);
+    const row = await this.prisma.sshDeployKey.findUnique({ where: { projectId } });
+    return { data: { key: this.sshKeyView(row), available: Boolean(this.key()) && await sshToolsAvailable() } };
+  }
+
+  /**
+   * The project's deploy key: created once and kept when the repository is disconnected, so the owner does not have to add it
+   * again. A new key (rotate) disconnects the repository — the old key stops working here at once.
+   */
+  async createSshKey(userId: string, projectId: string, rotate: boolean) {
+    const access = await this.access(userId, projectId, true);
+    const key = await this.sshReady();
+    const existing = await this.prisma.sshDeployKey.findUnique({ where: { projectId } });
+    if (existing && !rotate) return { data: { key: this.sshKeyView(existing), available: true } };
+    let generated;
+    try { generated = await generateDeployKey(`buildpath-${projectId.slice(0, 8)}`); } catch { throw new ServiceUnavailableException('SSH_GIT_NOT_AVAILABLE'); }
+    const data = { publicKey: generated.publicKey.slice(0, 200), fingerprint: generated.fingerprint.slice(0, 80), privateKeyEncrypted: this.encrypt(generated.privateKey, key), createdByUserId: userId };
+    const repo = await this.prisma.codeRepository.findUnique({ where: { projectId }, select: { provider: true } });
+    await this.prisma.$transaction([
+      this.prisma.sshDeployKey.upsert({ where: { projectId }, create: { projectId, ...data }, update: { ...data, createdAt: new Date() } }),
+      ...(repo?.provider === 'ssh' ? [this.prisma.codeRepository.delete({ where: { projectId } })] : []),
+      this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'ssh_key_created', details: { fingerprint: data.fingerprint, rotated: Boolean(existing), project: access.name.slice(0, 80) } } }),
+    ]);
+    const row = await this.prisma.sshDeployKey.findUnique({ where: { projectId } });
+    return { data: { key: this.sshKeyView(row), available: true } };
+  }
+
+  /** The server's host keys to show the owner before anything is trusted. */
+  async sshHostKeys(userId: string, projectId: string, repoUrl: string) {
+    await this.access(userId, projectId, true);
+    await this.sshReady();
+    let remote: SshRemote;
+    try { remote = parseSshUrl(repoUrl); } catch (error) { throw new BadRequestException(error instanceof GitProviderError ? error.code : 'REPO_SSH_URL_INVALID'); }
+    const address = await this.sshAddress(remote);
+    try {
+      const keys = await scanHostKeys(remote, address);
+      return { data: { host: remote.host, port: remote.port, url: sshDisplayUrl(remote), keys: keys.map(({ type, fingerprint }) => ({ type, fingerprint })) } };
+    } catch (error) {
+      throw new UnprocessableEntityException(error instanceof GitProviderError ? error.code : 'REPO_SSH_HOST_UNREACHABLE');
+    }
+  }
+
+  /** Trusts only the host key the owner confirmed, proves the deploy key can read the repository and saves the connection. */
+  private async connectSsh(userId: string, projectId: string, input: { repoUrl: string; branch: string | null; hostFingerprint: string | null }, key: Buffer) {
+    await this.sshReady();
+    const deployKey = await this.prisma.sshDeployKey.findUnique({ where: { projectId } });
+    if (!deployKey) throw new ConflictException('SSH_KEY_REQUIRED');
+    if (!input.hostFingerprint) throw new BadRequestException('REPO_SSH_HOST_KEY_NOT_CONFIRMED');
+    if (input.branch !== null && (!/^[A-Za-z0-9._/-]{1,100}$/.test(input.branch) || input.branch.startsWith('-') || input.branch.includes('..'))) throw new BadRequestException('REPO_BRANCH_INVALID');
+    let remote: SshRemote;
+    try { remote = parseSshUrl(input.repoUrl); } catch (error) { throw new BadRequestException(error instanceof GitProviderError ? error.code : 'REPO_SSH_URL_INVALID'); }
+    const address = await this.sshAddress(remote);
+    const privateKey = this.decrypt(deployKey.privateKeyEncrypted, key);
+    let branch: string;
+    let knownHosts: string;
+    try {
+      const keys = await scanHostKeys(remote, address);
+      const trusted = keys.filter((item) => item.fingerprint === input.hostFingerprint);
+      if (!trusted.length) throw new GitProviderError('REPO_SSH_HOST_KEY_MISMATCH');
+      knownHosts = trusted.map((item) => item.line).join('\n');
+      const info = await new SshGitClient(remote, address, privateKey, knownHosts).inspect();
+      branch = input.branch ?? info.defaultBranch ?? 'main';
+    } catch (error) {
+      if (error instanceof GitProviderError) throw new UnprocessableEntityException(error.code);
+      throw error;
+    }
+    const display = sshDisplayUrl(remote);
+    const data = {
+      provider: 'ssh', baseUrl: `ssh://${remote.host.includes(':') ? `[${remote.host}]` : remote.host}:${remote.port}`.slice(0, 300), repoPath: remote.path.slice(0, 200), webUrl: display.slice(0, 500),
+      defaultBranch: branch, isPrivate: true, tokenEncrypted: deployKey.privateKeyEncrypted, tokenHint: deployKey.fingerprint.slice(-6), connectedVia: 'ssh_key',
+      sshKnownHosts: knownHosts, connectedByUserId: userId, verifiedAt: new Date(), lastError: null,
+    };
+    await this.prisma.$transaction([
+      this.prisma.codeRepository.upsert({ where: { projectId }, create: { projectId, ...data }, update: data }),
+      this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'repository_connected', details: { provider: 'ssh', repoPath: display, via: 'ssh_key', hostFingerprint: input.hostFingerprint } } }),
+    ]);
+    const choice = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'code_hosting' } } });
+    if (choice) await this.prisma.projectChoice.update({ where: { id: choice.id }, data: { stepsDone: [...new Set([...choice.stepsDone, 'ssh_key', 'connect'])] } });
+    return this.card(userId, projectId, 'code_hosting');
+  }
+
+  /** Pushes over SSH: the server name is resolved and checked again, and only the confirmed host key is trusted. */
+  private async sshCommit(repo: { baseUrl: string; repoPath: string; webUrl: string; defaultBranch: string; tokenEncrypted: string; sshKnownHosts: string | null }, key: Buffer, files: GitFile[], message: string) {
+    if (!repo.sshKnownHosts) throw new GitProviderError('REPO_SSH_HOST_KEY_CHANGED');
+    if (!(await sshToolsAvailable())) throw new ServiceUnavailableException('SSH_GIT_NOT_AVAILABLE');
+    const remote = parseSshUrl(repo.webUrl);
+    const address = await this.sshAddress(remote);
+    const { commit } = await new SshGitClient(remote, address, this.decrypt(repo.tokenEncrypted, key), repo.sshKnownHosts).commit(repo.defaultBranch, files, message);
+    return { commitUrl: '', commit };
+  }
+
   async disconnect(userId: string, projectId: string) {
     await this.access(userId, projectId, true);
     const repo = await this.prisma.codeRepository.findUnique({ where: { projectId }, select: { repoPath: true } });
@@ -351,21 +468,31 @@ export class ChoicesService {
       const files = [...base.files];
       // Render builds from the repository: the Blueprint goes with the site when Render is the chosen place.
       if (infra.deployment === 'render' && base.siteIncluded) files.push(renderBlueprint((await this.prisma.project.findUnique({ where: { id: projectId }, select: { name: true } }))?.name ?? 'site'));
-      const ciAvailable = base.siteIncluded && infra.staticSite;
+      // Pipelines exist for the services with CI; a plain git server over SSH has none BuildPath can write for.
+      const ciAvailable = base.siteIncluded && infra.kind !== 'store' && infra.kind !== null && options.provider !== 'ssh';
       if (options.ci && !ciAvailable) throw new ConflictException('CI_NOT_AVAILABLE');
-      if (options.ci && options.provider) files.push(ciDeployFile(options.provider, options.branch ?? 'main'));
-      return { ...base, files, ciAvailable };
+      if (options.ci && options.provider && options.provider !== 'ssh' && infra.kind && infra.kind !== 'store') {
+        if (infra.kind === 'booking') {
+          // The booking program for the server goes with the pipeline: the same app/ files as in the server package.
+          let bundle: string;
+          try { bundle = await bookingBundle(); } catch { throw new ServiceUnavailableException('EXPORT_NOT_BUILT'); }
+          for (const file of bookingPackageFiles(infra.artifact!, bundle).filter((item) => item.name.startsWith('app/'))) files.push({ path: `${BOOKING_APP_DIR}/${file.name.slice('app/'.length)}`, content: file.content });
+        }
+        files.push(ciDeployFile(options.provider, options.branch ?? 'main', infra.kind));
+      }
+      return { ...base, files, ciAvailable, ciKind: infra.kind === 'booking' ? 'booking' as const : 'static' as const };
     });
   }
 
-  /** What the infrastructure files depend on: the chosen place and whether the site is plain pages (no booking app or store). */
-  private async infraState(projectId: string): Promise<{ deployment: string | null; staticSite: boolean }> {
+  /** What the infrastructure files depend on: the chosen place and what the accepted site is (plain pages, booking, store). */
+  private async infraState(projectId: string): Promise<{ deployment: string | null; kind: 'static' | 'booking' | 'store' | null; artifact: SiteArtifact | null }> {
     const [choice, build] = await Promise.all([
       this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'deployment' } }, select: { optionKey: true } }),
       this.prisma.projectStage.findFirst({ where: { projectId, stageKey: 'build' }, select: { approvedVersionId: true } }),
     ]);
     const artifact = build?.approvedVersionId ? (await this.prisma.stageArtifactVersion.findUnique({ where: { id: build.approvedVersionId }, select: { content: true } }))?.content as unknown as SiteArtifact | undefined : undefined;
-    return { deployment: choice?.optionKey ?? null, staticSite: Boolean(artifact) && !artifact?.meta?.booking && !artifact?.meta?.store };
+    const kind = !artifact ? null : artifact.meta?.store ? 'store' : artifact.meta?.booking ? 'booking' : 'static';
+    return { deployment: choice?.optionKey ?? null, kind, artifact: artifact ?? null };
   }
 
   /** README and instructions are project files: in the project's language. */
@@ -395,10 +522,10 @@ export class ChoicesService {
     await this.access(userId, projectId, true);
     const repo = await this.prisma.codeRepository.findUnique({ where: { projectId } });
     if (!repo) throw new NotFoundException('REPO_NOT_CONNECTED');
-    const { files, siteIncluded, complete, ciAvailable } = await this.files(userId, projectId, { ci, provider: repo.provider as GitProviderKey, branch: repo.defaultBranch });
+    const { files, siteIncluded, complete, ciAvailable, ciKind } = await this.files(userId, projectId, { ci, provider: repo.provider as GitProviderKey, branch: repo.defaultBranch });
     return { data: {
       repository: this.repositoryView(repo), branch: repo.defaultBranch, files: files.map((file) => ({ path: file.path, bytes: Buffer.byteLength(file.content) })), siteIncluded, complete,
-      ci: { available: ciAvailable, included: ci, secrets: ['SSH_HOST', 'SSH_USER', 'SSH_PRIVATE_KEY', 'SSH_KNOWN_HOSTS'], optional: ['DEPLOY_PATH', 'SSH_PORT'] },
+      ci: { available: ciAvailable, included: ci, kind: ciKind, secrets: ['SSH_HOST', 'SSH_USER', 'SSH_PRIVATE_KEY', 'SSH_KNOWN_HOSTS'], optional: ['DEPLOY_PATH', 'SSH_PORT'] },
     } };
   }
 
@@ -413,12 +540,19 @@ export class ChoicesService {
     const { files } = await this.files(userId, projectId, { ci, provider: repo.provider as GitProviderKey, branch: repo.defaultBranch });
     const token = this.decrypt(repo.tokenEncrypted, key);
     try {
-      const { commitUrl } = await this.client(repo.provider as GitProviderKey, token, repo.baseUrl).commit(repo.repoPath, repo.defaultBranch, files, tr("BuildPath: {0} — принятая версия", [access.name]));
+      const message = tr("BuildPath: {0} — принятая версия", [access.name]);
+      const pushed: { commitUrl: string; commit?: string } = repo.provider === 'ssh'
+        ? await this.sshCommit(repo, key, files, message)
+        : await this.client(repo.provider as ApiGitProviderKey, token, repo.baseUrl).commit(repo.repoPath, repo.defaultBranch, files, message);
       await this.prisma.$transaction([
-        this.prisma.codeRepository.update({ where: { projectId }, data: { lastPushAt: new Date(), lastCommitUrl: commitUrl || null, lastError: null } }),
-        this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'repository_pushed', details: { repoPath: repo.repoPath, files: files.map((file) => file.path), commitUrl, ci } } }),
+        this.prisma.codeRepository.update({ where: { projectId }, data: { lastPushAt: new Date(), lastCommitUrl: pushed.commitUrl || null, lastError: null } }),
+        this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'repository_pushed', details: { repoPath: repo.repoPath, files: files.map((file) => file.path), commitUrl: pushed.commitUrl, commit: pushed.commit ?? null, ci } } }),
       ]);
     } catch (error) {
+      if (error instanceof HttpException) {
+        await this.prisma.codeRepository.update({ where: { projectId }, data: { lastError: String(error.message).slice(0, 80) } });
+        throw error;
+      }
       const code = error instanceof GitProviderError ? error.code : 'REPO_PROVIDER_FAILED';
       await this.prisma.codeRepository.update({ where: { projectId }, data: { lastError: code } });
       throw new UnprocessableEntityException(code);

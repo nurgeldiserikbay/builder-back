@@ -1,9 +1,11 @@
 // Minimal GitHub, GitLab, Gitea/Forgejo and Bitbucket clients: check write access to one repository and commit a set of files.
 // Errors carry safe codes; tokens never appear in messages.
 
-export type GitProviderKey = 'github' | 'gitlab' | 'gitea' | 'bitbucket';
-export const GIT_PROVIDERS: GitProviderKey[] = ['github', 'gitlab', 'gitea', 'bitbucket'];
-export const gitProviderName: Record<GitProviderKey, string> = { github: 'GitHub', gitlab: 'GitLab', gitea: 'Gitea', bitbucket: 'Bitbucket' };
+/** ssh: any git server over SSH with BuildPath's deploy key (ssh-git.ts); the others are reached through their HTTPS APIs. */
+export type GitProviderKey = 'github' | 'gitlab' | 'gitea' | 'bitbucket' | 'ssh';
+export type ApiGitProviderKey = Exclude<GitProviderKey, 'ssh'>;
+export const GIT_PROVIDERS: GitProviderKey[] = ['github', 'gitlab', 'gitea', 'bitbucket', 'ssh'];
+export const gitProviderName: Record<GitProviderKey, string> = { github: 'GitHub', gitlab: 'GitLab', gitea: 'Gitea', bitbucket: 'Bitbucket', ssh: 'git (SSH)' };
 /**
  * `marker`: the file is BuildPath's only when it already contains this text or does not exist. Used for files the owner may
  * already have (.gitlab-ci.yml, bitbucket-pipelines.yml): BuildPath never overwrites someone else's pipeline.
@@ -48,7 +50,7 @@ function statusError(status: number): GitProviderError {
 const segment = /^[A-Za-z0-9_.-]{1,100}$/;
 
 /** Parses the address the user copied from the browser. GitLab may have nested groups and its own server. */
-export function parseRepoUrl(provider: GitProviderKey, raw: string, allowLocal: boolean): { baseUrl: string; repoPath: string } {
+export function parseRepoUrl(provider: ApiGitProviderKey, raw: string, allowLocal: boolean): { baseUrl: string; repoPath: string } {
   let url: URL;
   try { url = new URL(raw.trim()); } catch { throw new GitProviderError('REPO_URL_INVALID'); }
   const local = allowLocal && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
