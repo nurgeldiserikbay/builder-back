@@ -19,6 +19,13 @@ const str = (value: unknown, code: string, max: number) => {
 export class ChoicesController {
   constructor(private readonly choices: ChoicesService) {}
 
+  /** «Уже решено за вас»: all decisions of the project, chosen or by default. */
+  @Get('choices')
+  @Header('Cache-Control', 'no-store')
+  summary(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.choices.summary(request.user.id, projectId);
+  }
+
   @Get('choices/:cardKey')
   @Header('Cache-Control', 'no-store')
   card(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('cardKey') cardKey: string) {

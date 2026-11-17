@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.20.0
+  version: 1.21.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -1546,6 +1546,19 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem', description: CHANGE_NOTICE_CLOSED, CHANGE_NOT_DISCUSSED, PROJECT_NOT_ACTIVE }
+  /projects/{projectId}/choices:
+    get:
+      tags: [Choices]
+      operationId: getDecisionsSummary
+      summary: «Уже решено за вас» — every decision of the project, chosen or by default
+      description: 'items[] (cardKey, title, optionKey, optionTitle, decidedBy owner | default, now — what it means for the project right now, why — the reason of the default (null once the owner chose), others[] (key, title, summary)), canDecide. Until the owner chooses, the decision is the platform recommendation. A web application has only code_hosting.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/choices/{cardKey}:
     get:
       tags: [Choices]
