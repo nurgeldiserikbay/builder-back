@@ -51,3 +51,32 @@ async function notifyLeadIn(prisma: PrismaClient, leadId: string): Promise<{ tel
   await prisma.siteLead.update({ where: { id: lead.id }, data: { telegramStatus: telegram, emailStatus: email } });
   return { telegram, email };
 }
+
+/**
+ * «Отправить себе тестовую заявку»: the owner sees where real requests will arrive, before the first client. Goes through
+ * the same channels and settings as a real request (all on until the site is published); nothing is stored as a lead.
+ */
+export async function sendTestLead(prisma: PrismaClient, projectId: string): Promise<{ telegram: ChannelStatus; email: ChannelStatus }> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { name: true, publication: { select: { notifyTelegram: true, notifyEmail: true } }, owner: { select: { locale: true, email: true, externalIdentities: { where: { provider: 'telegram' }, select: { chatId: true } } } } },
+  });
+  if (!project) return { telegram: 'failed', email: 'failed' };
+  return runWithLocale(contentLocale(project.owner.locale), async () => {
+    const text = [tr('Тестовая заявка от BuildPath — так будут приходить заявки с сайта «{0}».', [project.name]), tr('Имя: {0}', [tr('Тестовый клиент')]), tr('Контакт: {0}', ['+7 700 000 00 00']), tr('Отвечать на неё не нужно.')].join('\n');
+    const settings = project.publication ?? { notifyTelegram: true, notifyEmail: true };
+    let telegram: ChannelStatus = 'off';
+    if (settings.notifyTelegram) {
+      const config = telegramConfig();
+      const chatId = project.owner.externalIdentities[0]?.chatId;
+      telegram = !config ? 'not_configured' : !chatId ? 'not_linked' : (await sendTelegramMessage(config, chatId, text)) ? 'sent' : 'failed';
+    }
+    let email: ChannelStatus = 'off';
+    if (settings.notifyEmail) {
+      const config = emailConfig();
+      email = !config ? 'not_configured'
+        : (await sendEmail(config, project.owner.email, tr('Тестовая заявка: {0}', [project.name]), `<pre style="font:15px/1.5 system-ui,sans-serif;white-space:pre-wrap">${escapeHtml(text)}</pre>`)) ? 'sent' : 'failed';
+    }
+    return { telegram, email };
+  });
+}

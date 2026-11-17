@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.19.0
+  version: 1.20.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -4642,8 +4642,36 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       responses:
-        '200': { description: 'canRollback, versions[] (versionId, versionNumber, builtAt, lastPublishedAt, live, accepted)' }
+        '200': { description: 'canRollback, versions[] (versionId, versionNumber, builtAt, lastPublishedAt, live, accepted, productVersion — the order in which the build first went live, stages[] (key, title, versionNumber) — accepted stage versions it was published with, changes[] (key, title, from, to) against the previous product version; null for publications made before this was recorded)' }
         '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/publication/readiness:
+    get:
+      tags: [Publishing]
+      operationId: getLaunchReadiness
+      summary: «Готов ли бизнес принимать клиентов?» — the check before going live
+      description: 'checks[] (key, status ok | warn | todo, title, text, fix { stageKey } or { publication: channels | test } or null), ready, total, blocking, lastTestAt. Only todo blocks, and it is the existing release gate (accepted build with a passed quality report); warn is advice the owner may publish over: contacts, whether requests reach the owner (a test request), «Вы это учли?» answers, ТЗ open questions, service prices, the cancellation rule of a booking site.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/publication/test-lead:
+    post:
+      tags: [Publishing]
+      operationId: sendTestLead
+      summary: Send the owner a test request through the real notification channels (owner or manager)
+      description: Same channels and settings as a real request (all on before the first publication); nothing is stored as a lead. Once a minute per project (429 TEST_LEAD_TOO_OFTEN). Returns the readiness check with the result. Logged as test_lead_sent.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/publication/rollback:
     post:
       tags: [Publishing]
