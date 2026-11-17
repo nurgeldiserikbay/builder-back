@@ -1,9 +1,10 @@
 // «Бизнес-процесс»: who takes part, how the main scenarios go step by step, the business rules and the information the
 // business keeps. Plain language for the owner; each step carries a capability so the architecture can say honestly
 // which steps the built product covers and which need a developer or stay manual.
-import { tr } from '../i18n/i18n.js';
+import { currentLocale, tr } from '../i18n/i18n.js';
 import type { Brief } from './artifacts.js';
 import { ArtifactValidationError } from './artifacts.js';
+import { ruleOf, situationOf, situationRuleTexts } from './situations.js';
 
 export const ACTOR_KINDS = ['client', 'business', 'staff', 'system', 'external'] as const;
 export type ActorKind = (typeof ACTOR_KINDS)[number];
@@ -38,9 +39,15 @@ export interface ProcessStep { key: string; actor: string; action: string; capab
 export interface ProcessScenario { key: string; title: string; goal: string; steps: ProcessStep[] }
 export interface ProcessLink { to: string; kind: 'one' | 'many'; label: string }
 export interface ProcessEntity { key: string; name: string; fields: string[]; links: ProcessLink[] }
-export interface BusinessProcess { actors: ProcessActor[]; scenarios: ProcessScenario[]; rules: string[]; data: ProcessEntity[] }
+/**
+ * The owner's answer to a «Вы это учли?» question (situations.ts): one of the ready answers, their own wording («custom»)
+ * or «later» — not decided yet. `rule` is the rule the answer added; the platform keeps it in `rules` itself.
+ */
+export interface ProcessSituation { key: string; answer: string; custom?: string; rule?: string }
+export interface BusinessProcess { actors: ProcessActor[]; scenarios: ProcessScenario[]; rules: string[]; data: ProcessEntity[]; situations?: ProcessSituation[] }
 
-export const PROCESS_LIMITS = { actors: 6, scenarios: 6, steps: 12, rules: 12, entities: 8, fields: 10, links: 6 };
+/** rules: the owner's own rules; rules from answered situations come on top of them. */
+export const PROCESS_LIMITS = { actors: 6, scenarios: 6, steps: 12, rules: 12, entities: 8, fields: 10, links: 6, situations: 30 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 function text(value: unknown, field: string, max: number, required = true): string {
@@ -102,8 +109,39 @@ export function normalizeProcess(raw: unknown): BusinessProcess {
       }),
     };
   });
-  const rules = list(raw.rules, 'rules', PROCESS_LIMITS.rules).map((rule) => text(rule, 'rules', 200, false)).filter(Boolean);
-  return { actors, scenarios, rules, data };
+  const situations = normalizeSituations(raw.situations);
+  // Rules that came from answers are the platform's to keep: drop every copy of them (the answer may have changed), keep
+  // the owner's own rules and add the rules of the current answers after them.
+  const platform = situationRuleTexts();
+  for (const item of situations) { if (item.rule) platform.add(item.rule); if (item.custom) platform.add(item.custom); }
+  const incoming = list(raw.rules, 'rules', PROCESS_LIMITS.rules + PROCESS_LIMITS.situations).map((rule) => text(rule, 'rules', 200, false)).filter(Boolean);
+  const own = incoming.filter((rule) => !platform.has(rule));
+  if (own.length > PROCESS_LIMITS.rules) throw new ArtifactValidationError('FIELD_TOO_MANY:rules');
+  const resolved = situations.map((item): ProcessSituation => {
+    const rule = item.answer === 'custom' ? item.custom : item.answer === 'later' ? undefined : ruleOf(situationOf(item.key)!, item.answer, currentLocale(), item.rule) ?? undefined;
+    return rule ? { ...item, rule } : { key: item.key, answer: item.answer, ...(item.custom ? { custom: item.custom } : {}) };
+  });
+  const rules = [...own, ...resolved.flatMap((item) => (item.rule && !own.includes(item.rule) ? [item.rule] : []))];
+  return { actors, scenarios, rules, data, ...(resolved.length ? { situations: resolved } : {}) };
+}
+
+/** Answers to known questions only; one answer per question, the last one wins. */
+function normalizeSituations(value: unknown): ProcessSituation[] {
+  const byKey = new Map<string, ProcessSituation>();
+  for (const item of list(value, 'situations', PROCESS_LIMITS.situations)) {
+    if (!isRecord(item) || typeof item.key !== 'string') throw new ArtifactValidationError('FIELD_INVALID:situations');
+    const situation = situationOf(item.key);
+    if (!situation) continue;
+    const answer = typeof item.answer === 'string' ? item.answer : '';
+    const previous = typeof item.rule === 'string' ? text(item.rule, 'situations', 200, false) : '';
+    if (answer === 'custom') {
+      const custom = text(item.custom, 'situations', 200);
+      byKey.set(item.key, { key: item.key, answer, custom, ...(previous ? { rule: previous } : {}) });
+    } else if (answer === 'later' || situation.options.some((option) => option.value === answer)) {
+      byKey.set(item.key, { key: item.key, answer, ...(previous ? { rule: previous } : {}) });
+    } else throw new ArtifactValidationError('FIELD_INVALID:situations');
+  }
+  return [...byKey.values()];
 }
 
 export interface ProcessIssue { key: string; message: string }
@@ -180,7 +218,7 @@ export function templateProcess(projectType: string, brief: Brief | null): Busin
           { key: 'p2', actor: 'site', action: tr("Показывает клиентам новое свободное время"), capability: 'view_info' },
         ] },
       ],
-      rules: [tr("Одно время у мастера может занять только один клиент."), tr("Клиент может отменить запись не позже чем за несколько часов до визита."), consentRule()],
+      rules: [tr("Одно время у мастера может занять только один клиент."), consentRule()],
       data: [
         { key: 'client', name: tr("Клиент"), fields: [tr("Имя"), tr("Телефон"), tr("Почта для напоминания")], links: [{ to: 'booking', kind: 'many', label: tr("записывается") }] },
         { key: 'booking', name: tr("Запись"), fields: [tr("Услуга"), tr("Мастер"), tr("Время"), tr("Комментарий"), tr("Статус")], links: [{ to: 'service', kind: 'one', label: tr("на услугу") }, { to: 'master', kind: 'one', label: tr("к мастеру") }] },

@@ -18,9 +18,9 @@ const brief: Brief = {
 };
 
 describe('routes', () => {
-  it('company site content depends on goal and offer', () => {
-    assert.deepEqual(routeInputs(projectTypes.company_site.stages, 'content'), ['goal', 'offer']);
-    assert.deepEqual(routeInputs(projectTypes.landing.stages, 'content'), ['goal']);
+  it('company site content depends on goal, offer and the business process', () => {
+    assert.deepEqual(routeInputs(projectTypes.company_site.stages, 'content'), ['goal', 'offer', 'process']);
+    assert.deepEqual(routeInputs(projectTypes.landing.stages, 'content'), ['goal', 'process']);
   });
   it('computes dependents and ancestors transitively', () => {
     assert.deepEqual(routeDependents(projectTypes.landing.stages, 'goal'), ['process', 'techplan', 'content', 'design', 'build']);

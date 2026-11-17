@@ -51,7 +51,7 @@ describe('Каталог товаров', () => {
 
   it('is part of the store route', () => {
     assert.deepEqual(projectTypes.store.stages, ['goal', 'process', 'products', 'techplan', 'content', 'design', 'build']);
-    assert.deepEqual(routeInputs(projectTypes.store.stages, 'content'), ['goal', 'products']);
+    assert.deepEqual(routeInputs(projectTypes.store.stages, 'content'), ['goal', 'products', 'process']);
     assert.ok(routeInputs(projectTypes.store.stages, 'build').includes('products'));
   });
 });

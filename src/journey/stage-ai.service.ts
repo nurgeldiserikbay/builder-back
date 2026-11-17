@@ -57,7 +57,7 @@ export class StageAiService {
       else if (stageKey === 'features') draft = inProject(ctx, () => templateFeatures((inputs.goal?.content as Brief | undefined) ?? null, (inputs.process?.content as BusinessProcess | undefined) ?? null));
       else if (stageKey === 'screens') draft = inProject(ctx, () => templateScreens((inputs.features?.content as AppFeatures | undefined) ?? null));
       else throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
-      const merged = normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, draft, stage.lockedKeys, null));
+      const merged = inProject(ctx, () => normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, draft, stage.lockedKeys, null)));
       const version = await this.prisma.$transaction(async (tx) => {
         const run = await tx.generationRun.create({ data: {
           projectId, stageId: stage.id, requestedByUserId: userId, provider: 'template', model: null, playbookVersion: definition.playbook.version,
@@ -113,9 +113,9 @@ export class StageAiService {
         const baseContent = base!.content as ContentArtifact;
         proposal = input.targetKey === 'seo' ? baseContent : normalizeContent({ sections: [{ ...(section as object), key: input.targetKey }], seo: baseContent.seo });
       } else {
-        proposal = normalizeArtifact(definition.artifactType, raw);
+        proposal = inProject(ctx, () => normalizeArtifact(definition.artifactType, raw));
       }
-      merged = normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, proposal, stage.lockedKeys, input.targetKey));
+      merged = inProject(ctx, () => normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, proposal, stage.lockedKeys, input.targetKey)));
     } catch (error) {
       const code = error instanceof StageAiError ? error.code : error instanceof ArtifactValidationError ? 'AI_OUTPUT_REJECTED' : 'AI_FAILED';
       await recordFailure(code);
@@ -129,7 +129,7 @@ export class StageAiService {
     if (fresh && fresh.currentVersionId !== baseId) {
       const latest = await this.core.versionContent(fresh.currentVersionId);
       try {
-        merged = normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, latest?.content ?? null, proposal, fresh.lockedKeys, input.targetKey));
+        merged = inProject(ctx, () => normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, latest?.content ?? null, proposal, fresh.lockedKeys, input.targetKey)));
         baseId = latest?.id ?? null;
       } catch { /* keep the answer merged on the version it was asked for */ }
     }

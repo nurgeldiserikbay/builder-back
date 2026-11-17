@@ -25,7 +25,7 @@ export class StageReviewService {
   async reviewOf(ctx: Ctx, key: StageKey, content: unknown): Promise<StageReview> {
     const definition = stageDefinitions[key];
     const context = await this.core.checkContext(ctx, key);
-    return reviewStage(definition.artifactType, content, context);
+    return reviewStage(definition.artifactType, content, { ...context, projectType: ctx.type.key });
   }
 
   static async overridden(prisma: PrismaService, stageId: string, versionId: string): Promise<string[]> {
@@ -151,8 +151,11 @@ export class StageReviewService {
     const review = await this.reviewOf(ctx, key as StageKey, version.content);
     const advice = (await this.latestAi(stage.id, version.id))?.findings ?? [];
     const wanted = new Set(input.findingIds);
-    const chosen: Array<Pick<ReviewFinding, 'where' | 'message' | 'fix'>> = [...review.findings, ...advice].filter((finding) => wanted.has(finding.id));
-    if (!chosen.length) throw new BadRequestException('FINDINGS_NOT_FOUND');
+    const picked: Array<Pick<ReviewFinding, 'where' | 'message' | 'fix' | 'ownerDecides'>> = [...review.findings, ...advice].filter((finding) => wanted.has(finding.id));
+    if (!picked.length) throw new BadRequestException('FINDINGS_NOT_FOUND');
+    // Decisions about the business are the owner's: the AI is never asked to answer them.
+    const chosen = picked.filter((finding) => !finding.ownerDecides);
+    if (!chosen.length) throw new BadRequestException('OWNER_DECIDES');
     return this.stageAi.generate(userId, projectId, key, { instruction: fixInstruction(chosen), saveAs: 'one_off', targetKey: null });
   }
 }
