@@ -11,7 +11,7 @@ export function transcribeConfig(env: NodeJS.ProcessEnv = process.env): Transcri
   const apiKey = env.BUILDER_AI_OPENAI_API_KEY;
   const model = env.BUILDER_AI_TRANSCRIBE_MODEL;
   if (!apiKey || !model) return null;
-  const baseUrl = (env.BUILDER_AI_OPENAI_BASE_URL ?? 'https://api.openai.com/v1').replace(/\/$/, '');
+  const baseUrl = (env.BUILDER_AI_OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
   if (!/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(`${baseUrl}/`)) return null;
   return { apiKey, model, baseUrl };
 }

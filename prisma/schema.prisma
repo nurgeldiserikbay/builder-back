@@ -352,6 +352,7 @@ model Project {
   choices          ProjectChoice[]
   repository       CodeRepository?
   sshDeployKey     SshDeployKey?
+  interviews       StageInterview[]
   visitCounts      SiteVisitCount[]
   invitations      ProjectInvitation[]
 
@@ -1315,6 +1316,28 @@ model ProjectChoice {
 /// Repository connected to a project. The access token is encrypted (AES-256-GCM) and never returned by the API.
 /// Deploy key BuildPath generates for one project so it can push to any git server over SSH. The private key is
 /// encrypted like access tokens; the owner adds the public key to their server with write access.
+/// «Разговор» on a form stage (STAGE_WORK_MODEL §70): the messages, what they told so far by field, and the question
+/// waiting for an answer when the form's questions are asked one by one without AI. One conversation per stage.
+model StageInterview {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String   @map("project_id") @db.Uuid
+  stageId         String   @unique @map("stage_id") @db.Uuid
+  mode            String   @db.VarChar(10)
+  messages        Json
+  extracted       Json
+  pendingField    String?  @map("pending_field") @db.VarChar(40)
+  asked           String[] @default([]) @db.VarChar(40)
+  done            Boolean  @default(false)
+  appliedVersionId String? @map("applied_version_id") @db.Uuid
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("stage_interviews")
+}
+
 model SshDeployKey {
   id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   projectId           String   @unique @map("project_id") @db.Uuid
