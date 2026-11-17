@@ -118,6 +118,10 @@ describe('own path: files for own infrastructure', () => {
       for (const secret of ['SSH_HOST', 'SSH_USER', 'SSH_PRIVATE_KEY', 'SSH_KNOWN_HOSTS']) assert.ok(file.content.includes(secret), `${provider} ${secret}`);
     }
     assert.ok(ciDeployFile('github', 'release').content.includes('branches: ["release"]'));
+    const booking = ciDeployFile('bitbucket', 'main', 'booking').content;
+    assert.ok(booking.includes('server/app/'), 'the booking program is copied');
+    assert.ok(booking.includes('docker compose restart app'), 'and restarted');
+    assert.ok(!booking.includes('data'), 'the bookings folder is never touched');
     assert.ok(ciDeployFile('gitlab', 'bad branch; rm -rf /').content.includes('== "main"'));
   });
   it('describes the site for Render and as a container image', () => {
@@ -128,7 +132,7 @@ describe('own path: files for own infrastructure', () => {
     assert.match(staticDockerfile(), /^FROM caddy:2-alpine$/m);
   });
   it('offers the new places and services with what each needs', () => {
-    assert.deepEqual(choiceCards.code_hosting.options.map((option) => option.key), ['archive', 'github', 'gitlab', 'gitea', 'bitbucket']);
+    assert.deepEqual(choiceCards.code_hosting.options.map((option) => option.key), ['archive', 'github', 'gitlab', 'gitea', 'bitbucket', 'ssh']);
     assert.deepEqual(choiceCards.deployment.options.map((option) => option.key), ['buildpath', 'github_pages', 'netlify', 'vercel', 'render', 'own_server']);
     assert.deepEqual(choiceCards.deployment.options.find((option) => option.key === 'render')!.requires!.option, ['github', 'gitlab', 'bitbucket']);
   });

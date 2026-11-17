@@ -54,7 +54,7 @@ describe('«Уже решено за вас» (database)', async () => {
     assert.ok(after.others.some((option) => option.key === 'buildpath'));
   });
 
-  it('a push can carry the auto-deploy pipeline and, for Render, the Blueprint; a booking site gets no pipeline', { skip }, async () => {
+  it('a push can carry the auto-deploy pipeline and, for Render, the Blueprint; a store gets no pipeline', { skip }, async () => {
     const email = `own-${randomUUID()}@test.local`;
     const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), name: 'Owner', locale: 'ru' } });
     users.push(owner.id);
@@ -91,7 +91,9 @@ describe('«Уже решено за вас» (database)', async () => {
 
     await accept({ booking: { services: [] } });
     const booking = (await choices.pushPreview(owner.id, projectId)).data;
-    assert.equal(booking.ci.available, false);
+    assert.deepEqual([booking.ci.available, booking.ci.kind], [true, 'booking']);
+    await accept({ store: { products: [] } });
+    assert.equal((await choices.pushPreview(owner.id, projectId)).data.ci.available, false);
     await assert.rejects(choices.pushPreview(owner.id, projectId, true), /CI_NOT_AVAILABLE/);
   });
 });

@@ -4,9 +4,10 @@ export type CardKey = 'code_hosting' | 'deployment' | 'domain' | 'technologies';
 /**
  * manual — the user does it and ticks it off; connect — form that checks a repository; download — files from the result package;
  * publish — publishing on BuildPath; push — send to the connected repository; package — files for an own server; verify — BuildPath opens the address and checks the site;
- * domain — form for the owner's domain with the DNS record to create and a check that it points at BuildPath.
+ * domain — form for the owner's domain with the DNS record to create and a check that it points at BuildPath;
+ * ssh_key — the project's deploy key for a git server over SSH, created on request and shown with its fingerprint.
  */
-export type StepKind = 'manual' | 'connect' | 'download' | 'publish' | 'push' | 'package' | 'verify' | 'domain' | 'hosting_connect' | 'hosting_deploy';
+export type StepKind = 'manual' | 'ssh_key' | 'connect' | 'download' | 'publish' | 'push' | 'package' | 'verify' | 'domain' | 'hosting_connect' | 'hosting_deploy';
 
 export interface ChoiceStep {
   key: string;
@@ -46,7 +47,7 @@ const tokenWarning = 'Ключ даёт доступ только к одном�
 export const choiceCards: Record<CardKey, ChoiceCard> = {
   code_hosting: {
     key: 'code_hosting',
-    version: '1.1.0',
+    version: '1.2.0',
     checkedAt: '2026-11-10',
     title: 'Где хранить код',
     question: 'Где будут лежать файлы вашего сайта, кроме BuildPath?',
@@ -125,6 +126,26 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
           { key: 'repository', kind: 'manual', title: 'Создайте репозиторий', text: ['В Bitbucket нажмите «Create» → «Repository». Отметьте «Private repository», в «Include a README?» выберите «No».', 'Скопируйте адрес страницы репозитория, например https://bitbucket.org/команда/my-site.'], link: { label: 'Открыть bitbucket.org', url: 'https://bitbucket.org/repo/create' } },
           { key: 'token', kind: 'manual', title: 'Создайте ключ репозитория', text: ['В репозитории откройте «Repository settings» → «Access tokens» → «Create Repository Access Token».', 'Отметьте «Repositories: Write». Остальное не нужно.', 'Нажмите «Create» и скопируйте ключ — его покажут один раз.', tokenWarning] },
           { key: 'connect', kind: 'connect', title: 'Подключите репозиторий', text: ['Вставьте адрес репозитория и ключ. BuildPath проверит, что видит репозиторий; право записи подтвердится первой отправкой.'] },
+        ],
+      },
+      {
+        key: 'ssh',
+        title: 'Любой git-сервер по SSH',
+        summary: 'Свой git-сервер, корпоративный GitLab или любой сервис с доступом по SSH. BuildPath создаёт ключ для выкладки, вы добавляете его на сервер.',
+        pros: ['Подходит для любого git-сервера, даже без веб-интерфейса', 'Ключ действует только для этого проекта, без срока', 'Не нужен ключ от вашего аккаунта'],
+        limits: ['Для тех, кто знает, что такое SSH и ключ развёртывания (deploy key)', 'Сервер должен быть доступен из интернета', 'Автоматическую выкладку настраиваете сами на своём сервере: файлов сборки для него BuildPath не пишет'],
+        cost: 'Бесплатно со стороны BuildPath; сервер — по его цене',
+        upkeep: 'Следить за сервером; при смене ключа сервера подключить репозиторий заново',
+        leaving: 'Легко: это обычный git-репозиторий',
+        steps: [
+          { key: 'ssh_key', kind: 'ssh_key', title: 'Создайте ключ и добавьте его на сервер', text: [
+            'Нажмите «Создать ключ» — BuildPath покажет открытую часть. Закрытая хранится в зашифрованном виде и никому не показывается.',
+            'Добавьте открытый ключ с правом записи: GitHub — «Settings» → «Deploy keys» → «Allow write access»; GitLab — «Settings» → «Repository» → «Deploy keys» → «Grant write permissions»; Gitea и Forgejo — «Settings» → «Deploy keys»; свой сервер — строкой в ~/.ssh/authorized_keys пользователя git.',
+          ] },
+          { key: 'connect', kind: 'connect', title: 'Подключите репозиторий', text: [
+            'Вставьте адрес вида git@сервер:путь/repo.git или ssh://git@сервер:порт/путь/repo.git и нажмите «Проверить сервер».',
+            'BuildPath покажет отпечаток ключа сервера. Сравните его с тем, что публикует ваш сервис или показывает команда ssh-keygen -lf на сервере, и подтвердите. Дальше BuildPath доверяет только этому ключу.',
+          ] },
         ],
       },
     ],
@@ -228,10 +249,10 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
           { key: 'package', kind: 'package', title: 'Скачайте файлы для сервера', text: ['В пакете: страница сайта, файл настроек веб-сервера Caddy (сам получит HTTPS-сертификат) и инструкция с командами. Для сайта с онлайн-записью — ещё программа записи с вашим расписанием и страница записей для вас.', 'Если у вас есть специалист, просто передайте ему пакет.'] },
           { key: 'install', kind: 'manual', title: 'Запустите на сервере', text: ['Подключитесь к серверу и выполните команды из файла README.md в пакете — их можно скопировать целиком.', 'Если что-то пошло не так, пришлите текст ошибки специалисту или в поддержку.'] },
           { key: 'auto', kind: 'manual', title: 'Обновлять автоматически (необязательно)', text: [
-            'Если код хранится в GitHub, GitLab, Gitea или Bitbucket, сайт может сам обновляться на сервере после каждой отправки из BuildPath. Подходит для сайтов без онлайн-записи и магазина.',
+            'Если код хранится в GitHub, GitLab, Gitea или Bitbucket, сайт может сам обновляться на сервере после каждой отправки из BuildPath. Для сайта с онлайн-записью обновляется программа записи, записи на сервере не трогаются. Для магазина пока недоступно.',
             'На своём компьютере создайте ключ для выкладки: ssh-keygen -t ed25519 -f buildpath_deploy -N "". Содержимое buildpath_deploy.pub добавьте на сервере в файл ~/.ssh/authorized_keys.',
             'Получите отпечаток сервера: ssh-keyscan IP-СЕРВЕРА.',
-            'В настройках репозитория добавьте секреты (GitHub и Gitea — «Settings» → «Secrets», GitLab — «Settings» → «CI/CD» → «Variables», Bitbucket — «Repository variables»): SSH_HOST — IP сервера, SSH_USER — пользователь, SSH_PRIVATE_KEY — содержимое файла buildpath_deploy, SSH_KNOWN_HOSTS — вывод ssh-keyscan. Папка на сервере по умолчанию — /opt/buildpath-site/site, другую задайте секретом DEPLOY_PATH; порт SSH, если не 22, — секретом SSH_PORT.',
+            'В настройках репозитория добавьте секреты (GitHub и Gitea — «Settings» → «Secrets», GitLab — «Settings» → «CI/CD» → «Variables», Bitbucket — «Repository variables»): SSH_HOST — IP сервера, SSH_USER — пользователь, SSH_PRIVATE_KEY — содержимое файла buildpath_deploy, SSH_KNOWN_HOSTS — вывод ssh-keyscan. Папка на сервере по умолчанию — /opt/buildpath-site/site (для сайта с онлайн-записью — /opt/buildpath-site), другую задайте секретом DEPLOY_PATH; порт SSH, если не 22, — секретом SSH_PORT.',
             'При отправке в репозиторий отметьте «Выкладывать на мой сервер автоматически». Ключ и адрес сервера остаются только в вашем репозитории — BuildPath их не видит.',
           ] },
           { key: 'verify', kind: 'verify', title: 'Проверьте адрес', text: ['Вставьте адрес сайта, например https://ваш-домен.kz. BuildPath откроет его и сравнит с последней принятой версией.'] },

@@ -18,8 +18,9 @@ FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # Prisma's engines look for libssl; the slim image has none, so Prisma guessed a version and warned on every start.
+# git and the OpenSSH client push to the owner's own git server over SSH (src/choices/ssh-git.ts); nothing from a repository runs.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && apt-get install -y --no-install-recommends openssl ca-certificates git openssh-client \
   && rm -rf /var/lib/apt/lists/*
 # The Prisma CLI and tsx stay in the image so migrations and the staff-account script can run inside it.
 COPY --from=build --chown=node:node /app/node_modules ./node_modules

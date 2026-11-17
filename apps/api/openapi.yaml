@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.22.0
+  version: 1.23.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -1691,7 +1691,11 @@ paths:
         The chosen code_hosting option must match the provider. The address is parsed from what the user copied (GitHub only on github.com,
         Bitbucket only on bitbucket.org; GitLab and Gitea/Forgejo/Codeberg on any server, which must resolve to public addresses). The token
         is checked against the provider; the connection is stored only when writing is allowed (422 REPO_WRITE_NOT_ALLOWED otherwise).
-        Bitbucket does not report a token's rights, so a token that reads the repository is accepted and the first push confirms writing. The token is encrypted with
+        Bitbucket does not report a token's rights, so a token that reads the repository is accepted and the first push confirms writing.
+        provider ssh (any git server): needs the project's deploy key (409 SSH_KEY_REQUIRED) and hostFingerprint. BuildPath resolves the
+        server name (public addresses only), scans its host keys again and trusts only the one with the confirmed fingerprint
+        (422 REPO_SSH_HOST_KEY_MISMATCH), then reads the repository with the deploy key (422 REPO_SSH_KEY_REJECTED, REPO_NOT_FOUND,
+        REPO_SSH_HOST_UNREACHABLE). Writing is confirmed by the first push. 503 SSH_GIT_NOT_AVAILABLE when git or OpenSSH is missing. The token is encrypted with
         CODE_HOSTING_TOKEN_ENCRYPTION_KEY (503 REPO_CONNECT_NOT_CONFIGURED without it) and never returned.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
@@ -1701,7 +1705,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, required: [provider, repoUrl, token], properties: { provider: { type: string, enum: [github, gitlab, gitea, bitbucket] }, repoUrl: { type: string, maxLength: 500 }, token: { type: string, maxLength: 400, writeOnly: true } } }
+            schema: { type: object, additionalProperties: false, required: [provider, repoUrl, token], properties: { provider: { type: string, enum: [github, gitlab, gitea, bitbucket, ssh] }, repoUrl: { type: string, maxLength: 500 }, token: { type: string, maxLength: 400, writeOnly: true, description: 'Not used for ssh' }, branch: { type: [string, 'null'], maxLength: 100, description: 'ssh only; default — the branch HEAD points at, or main' }, hostFingerprint: { type: [string, 'null'], maxLength: 100, description: 'ssh only: the SHA256 fingerprint the owner confirmed from POST .../repository/ssh/host-keys' } } }
       responses:
         '200': { description: Card with the connected repository }
         '400': { $ref: '#/components/responses/Problem' }
@@ -1719,6 +1723,59 @@ paths:
       responses:
         '200': { description: Card }
         '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/repository/ssh/key:
+    get:
+      tags: [Choices]
+      operationId: getSshDeployKey
+      summary: The project's deploy key for a git server over SSH
+      description: Public part and SHA256 fingerprint, or null before it is created; available is false when the server cannot use SSH. Owners and managers.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'data: key (publicKey, fingerprint, createdAt) or null, available' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Choices]
+      operationId: createSshDeployKey
+      summary: Create the deploy key (or a new one)
+      description: |
+        An ed25519 key pair; the private key is stored encrypted with CODE_HOSTING_TOKEN_ENCRYPTION_KEY and never returned. The same key is
+        returned until rotate=true; a new key disconnects an SSH repository at once. Recorded as ssh_key_created.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { rotate: { type: boolean } } }
+      responses:
+        '200': { description: 'data: key, available' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem', description: 'REPO_CONNECT_NOT_CONFIGURED, SSH_GIT_NOT_AVAILABLE' }
+  /projects/{projectId}/repository/ssh/host-keys:
+    post:
+      tags: [Choices]
+      operationId: scanSshHostKeys
+      summary: The git server's host keys, for the owner to compare before trusting
+      description: Accepts git@host:path and ssh://user@host:port/path. Public addresses only (400 REPO_HOST_NOT_ALLOWED); 422 REPO_SSH_HOST_UNREACHABLE.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [repoUrl], properties: { repoUrl: { type: string, maxLength: 500 } } }
+      responses:
+        '200': { description: 'data: host, port, url, keys (type, fingerprint)' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/repository/push:
     get:
       tags: [Choices]
@@ -1729,15 +1786,16 @@ paths:
         README.md. When Render is the chosen deployment, render.yaml goes too. With ci=true the push also carries the auto-deploy pipeline
         for the repository's service (.github/workflows/buildpath-deploy.yml, .gitlab-ci.yml, .gitea/workflows/buildpath-deploy.yml or
         bitbucket-pipelines.yml): after every push it copies the pages to the owner's server over SSH using secrets kept in the repository
-        (SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS, optional DEPLOY_PATH). Only for accepted sites without booking or a store
-        (409 CI_NOT_AVAILABLE). A pipeline file the owner wrote is never overwritten (422 REPO_CI_FILE_EXISTS on push).
+        (SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS, optional DEPLOY_PATH and SSH_PORT). For a site with online booking the push
+        also carries the booking program (server/app/) and the pipeline updates and restarts it, never touching the bookings. Not for a
+        store or a plain SSH server (409 CI_NOT_AVAILABLE). A pipeline file the owner wrote is never overwritten (422 REPO_CI_FILE_EXISTS on push).
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: ci, in: query, required: false, schema: { type: string, enum: ['1', 'true'] } }
       responses:
-        '200': { description: 'repository, branch, files (path, bytes), siteIncluded, complete, ci (available, included, secrets, optional)' }
+        '200': { description: 'repository, branch, files (path, bytes), siteIncluded, complete, ci (available, included, kind static|booking, secrets, optional)' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
     post:
