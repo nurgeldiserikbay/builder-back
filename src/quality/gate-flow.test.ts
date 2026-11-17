@@ -1,5 +1,6 @@
 import { StageReviewService } from '../journey/stage-review.service.js';
 import 'dotenv/config';
+import { templateFeatures } from '../journey/webapp.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, describe, it } from 'node:test';
@@ -60,6 +61,7 @@ describe('release gate (database)', async () => {
     };
     await step('goal', brief);
     await step('process', templateProcess('landing', brief));
+    await step('features', templateFeatures(brief, templateProcess('landing', brief), 'site'));
     await step('techplan', { ownerNotes: null });
     const content = templateContent(brief, null);
     await step('content', { ...content, sections: content.sections.filter((section) => section.type !== 'benefits') });
@@ -151,6 +153,7 @@ describe('release gate (database)', async () => {
       const step = async (stageKey: string, content: unknown) => { await journey.saveDraft(owner.id, projectId, stageKey, { content, baseVersionId: null }); await journey.accept(owner.id, projectId, stageKey, await stageVersion(stageKey)); };
       await step('goal', brief);
       await step('process', templateProcess('landing', brief));
+      await step('features', templateFeatures(brief, templateProcess('landing', brief), 'site'));
       await step('techplan', { ownerNotes: null });
       const content = templateContent(brief, null);
       await step('content', { ...content, sections: content.sections.filter((section) => section.type !== 'benefits') });

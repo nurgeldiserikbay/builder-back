@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.17.0
+  version: 1.18.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -7570,7 +7570,7 @@ components:
             ai: { type: object }
             options:
               type: object
-              description: 'Stage-specific choices. For a business process, process.situations = { version, items[] }: the questions of this project type — key, level (blocking | important | minor), question, why, options[] (value, label, rule, typical). Stage-specific choices. For the goal stage without a version yet, brief.intro is the owner''s story given when the project was created (project summary), to start the passport from.'
+              description: 'Stage-specific choices. For a business process, process.situations = { version, items[] }: the questions of this project type — key, level (blocking | important | minor), question, why, options[] (value, label, rule, typical). Stage-specific choices. For the goal stage without a version yet, brief.intro is the owner''s story given when the project was created (project summary), to start the passport from. For the ТЗ stage (key features, every project type since catalog 1.9.0) with a version, features = { kind: site | app, firstVersionSoftLimit, markdown } — markdown is the version on screen as a Markdown document to download (null before the first version). The ТЗ content is { summary, roles[], features[] (priority must | should | later), sensitivity, integrations[], requirements[], limits[], questions[] }; open questions are findings SPEC_OPEN_QUESTION (ownerDecides), more must features than the soft limit (8 for a site, 12 for an app) give the important finding SPEC_FIRST_VERSION_LARGE.'
     StageRule:
       type: object
       required: [id, kind, status, text, createdAt]

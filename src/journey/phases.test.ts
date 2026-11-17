@@ -18,7 +18,7 @@ describe('phases of the common path', () => {
 
   it('a website goes idea → … → build → launch → after launch, and the stages keep the route order', () => {
     const phases = phasesOf(route('booking'), { applies: true, live: false });
-    assert.deepEqual(phases.map((phase) => phase.key), ['idea', 'experience', 'tech', 'content', 'build', 'launch', 'after']);
+    assert.deepEqual(phases.map((phase) => phase.key), ['idea', 'spec', 'experience', 'tech', 'content', 'build', 'launch', 'after']);
     const order = phases.flatMap((phase) => phase.stageKeys);
     assert.deepEqual(order, projectTypes.booking.stages.filter((key) => order.includes(key)));
     assert.equal(phases[0]!.status, 'current');
@@ -32,7 +32,7 @@ describe('phases of the common path', () => {
     const live = phasesOf(route('landing', all), { applies: true, live: true });
     assert.equal(live.find((phase) => phase.key === 'launch')?.status, 'done');
     assert.equal(live.find((phase) => phase.key === 'after')?.status, 'current');
-    const half = phasesOf(route('landing', ['goal', 'process']), { applies: true, live: false });
+    const half = phasesOf(route('landing', ['goal', 'process', 'features']), { applies: true, live: false });
     assert.equal(half.find((phase) => phase.key === 'idea')?.status, 'done');
     assert.equal(half.find((phase) => phase.status === 'current')?.key, 'tech');
   });

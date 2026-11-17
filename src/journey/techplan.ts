@@ -2,6 +2,7 @@
 // parts of the system, the data it keeps, each scenario step by step, which steps of the business process the product
 // covers, and the API contract. Derived deterministically from the accepted inputs; the owner adds only notes.
 // It is a contract stage: the build relies on it.
+import type { AppFeatures } from './webapp.js';
 import { tr } from '../i18n/i18n.js';
 import type { Brief, MainAction } from './artifacts.js';
 import { ArtifactValidationError, stableStringify } from './artifacts.js';
@@ -250,7 +251,15 @@ export function coverageOf(kind: 'booking' | 'site' | 'store', mainAction: MainA
 
 const field = (name: string, type: string) => ({ name, type });
 
-export function buildTechPlan(input: { projectType: string; brief: Brief | null; schedule: Schedule | null; process: BusinessProcess | null; sitemap?: Sitemap | null; store?: Catalog | null }, ownerNotes: string | null): TechPlan {
+export function buildTechPlan(input: { projectType: string; brief: Brief | null; schedule: Schedule | null; process: BusinessProcess | null; sitemap?: Sitemap | null; store?: Catalog | null; spec?: AppFeatures | null }, ownerNotes: string | null): TechPlan {
+  const plan = buildSitePlan(input, ownerNotes);
+  // What the ТЗ puts off and its own limits are named among the limits of this version, so nobody expects them now.
+  if (!input.spec) return plan;
+  const later = input.spec.features.filter((feature) => feature.priority === 'later').map((feature) => tr('По ТЗ позже: {0}.', [feature.title]));
+  return { ...plan, limits: [...new Set([...plan.limits, ...(input.spec.limits ?? []), ...later])] };
+}
+
+function buildSitePlan(input: { projectType: string; brief: Brief | null; schedule: Schedule | null; process: BusinessProcess | null; sitemap?: Sitemap | null; store?: Catalog | null }, ownerNotes: string | null): TechPlan {
   const { schedule } = input;
   const name = input.brief?.businessName || tr("ваш бизнес");
   const mainAction = input.brief?.mainAction ?? null;
