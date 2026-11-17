@@ -4,6 +4,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { WorktimeService } from './worktime.service.js';
 import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, weekdayShort, type Schedule } from './schedule.js';
 import { CAPABILITIES, PROCESS_LIMITS } from './process.js';
+import { PHASES_VERSION, STAGE_GUIDES, STAGE_PHASE, phasesOf } from './phases.js';
 import { TYPE_QUESTIONS, TYPE_QUESTIONS_VERSION, hintAnswers, parseAnswers, suggestType, type TypeAnswers } from './type-suggest.js';
 import { SITUATIONS_VERSION, situationsFor } from './situations.js';
 import { bookingApiContract, sameTechPlan, techPlanMarkdown, techPlanNotes, type TechPlan } from './techplan.js';
@@ -148,12 +149,23 @@ export class JourneyService {
         // Change proposals waiting for a decision (owners and managers), or the specialist's own open ones.
         openProposals: await this.prisma.changeProposal.count({ where: { projectId, status: 'open', ...(canAccept ? {} : { authorUserId: userId }) } }),
         progress: { accepted: approved, total: ctx.route.length, percent: Math.round((approved / ctx.route.length) * 100) },
+        // The common path: phases with progress. Launch and the life after it follow the publication of a website and
+        // are shown to the project's own members only.
+        phases: {
+          version: PHASES_VERSION,
+          items: phasesOf(
+            visible.map((key) => ({ key, done: isSatisfied(ctx.statuses[key]) })),
+            ctx.viewer.kind === 'member' && ctx.type.key !== 'web_app'
+              ? { applies: true, live: Boolean(await this.prisma.sitePublication.findFirst({ where: { projectId, status: 'live' }, select: { id: true } })) }
+              : null,
+          ),
+        },
         nextAction: next ? { stageKey: next, title: stageDefinitions[next].title, text: nextText } : { stageKey: null, title: 'Готово', text: nextText },
         stages: visible.map((key) => {
           const stage = this.core.stageOf(ctx, key);
           const definition = stageDefinitions[key];
           return {
-            key, title: definition.title, purpose: definition.purpose, outcome: definition.outcome, aiLevel: definition.ai.level, contract: Boolean(definition.contract),
+            key, title: definition.title, purpose: definition.purpose, outcome: definition.outcome, phase: STAGE_PHASE[key], aiLevel: definition.ai.level, contract: Boolean(definition.contract),
             status: stage.status, statusLabel: statusExplanations[stage.status].label, statusExplanation: statusExplanations[stage.status].explanation,
             inputs: routeInputs(ctx.route, key).map((input) => ({ key: input, title: stageDefinitions[input].title, satisfied: isSatisfied(ctx.dep[input]) })),
             currentVersionNumber: numberOf(stage.currentVersionId), acceptedVersionNumber: numberOf(stage.approvedVersionId),
@@ -235,6 +247,7 @@ export class JourneyService {
         }),
         stage: {
           key: stageKey, title: definition.title, purpose: definition.purpose, outcome: definition.outcome, artifactType: definition.artifactType,
+          phase: STAGE_PHASE[stageKey], guide: STAGE_GUIDES[stageKey],
           status: stage.status, statusLabel: statusExplanations[stage.status].label, statusExplanation: statusExplanations[stage.status].explanation,
           acceptance: definition.acceptance, acceptExplanation: definition.acceptExplanation, importHint: definition.importHint,
           fields: definition.fields ?? null, lockedKeys: stage.lockedKeys, acceptedVersionId: stage.approvedVersionId,
