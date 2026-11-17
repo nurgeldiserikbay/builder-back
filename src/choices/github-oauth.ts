@@ -5,7 +5,8 @@ import { GitProviderError } from './git-providers.js';
 type Fetch = typeof fetch;
 const TIMEOUT_MS = 20_000;
 /** repo: write to public and private repositories the person chooses to connect. */
-export const GITHUB_SCOPES = 'repo';
+// workflow: lets BuildPath add the optional auto-deploy workflow (.github/workflows) when the owner asks for it.
+export const GITHUB_SCOPES = 'repo workflow';
 const repoName = /^[A-Za-z0-9_.-]{1,100}$/;
 
 export interface GithubOauthConfig { clientId: string; clientSecret: string; webUrl: string; apiUrl: string; redirectUrl: string }

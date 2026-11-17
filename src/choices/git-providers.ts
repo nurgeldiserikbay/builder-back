@@ -1,8 +1,14 @@
-// Minimal GitHub and GitLab clients: check write access to one repository and commit a set of files.
+// Minimal GitHub, GitLab, Gitea/Forgejo and Bitbucket clients: check write access to one repository and commit a set of files.
 // Errors carry safe codes; tokens never appear in messages.
 
-export type GitProviderKey = 'github' | 'gitlab';
-export type GitFile = { path: string; content: string };
+export type GitProviderKey = 'github' | 'gitlab' | 'gitea' | 'bitbucket';
+export const GIT_PROVIDERS: GitProviderKey[] = ['github', 'gitlab', 'gitea', 'bitbucket'];
+export const gitProviderName: Record<GitProviderKey, string> = { github: 'GitHub', gitlab: 'GitLab', gitea: 'Gitea', bitbucket: 'Bitbucket' };
+/**
+ * `marker`: the file is BuildPath's only when it already contains this text or does not exist. Used for files the owner may
+ * already have (.gitlab-ci.yml, bitbucket-pipelines.yml): BuildPath never overwrites someone else's pipeline.
+ */
+export type GitFile = { path: string; content: string; marker?: string };
 export type RepoInfo = { repoPath: string; webUrl: string; defaultBranch: string; isPrivate: boolean; canWrite: boolean };
 
 export class GitProviderError extends Error {
@@ -12,13 +18,13 @@ export class GitProviderError extends Error {
 type Fetch = typeof fetch;
 const TIMEOUT_MS = 20_000;
 
-async function call(fetchImpl: Fetch, url: string, token: string, init: { method?: string; body?: unknown; auth: 'bearer' | 'private' }) {
+async function call(fetchImpl: Fetch, url: string, token: string, init: { method?: string; body?: unknown; auth: 'bearer' | 'private' | 'token' }) {
   let response: Response;
   try {
     response = await fetchImpl(url, {
       method: init.method ?? 'GET',
       headers: {
-        ...(init.auth === 'bearer' ? { Authorization: `Bearer ${token}` } : { 'PRIVATE-TOKEN': token }),
+        ...(init.auth === 'bearer' ? { Authorization: `Bearer ${token}` } : init.auth === 'token' ? { Authorization: `token ${token}` } : { 'PRIVATE-TOKEN': token }),
         Accept: 'application/json', 'Content-Type': 'application/json', 'User-Agent': 'BuildPath',
       },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
@@ -54,6 +60,16 @@ export function parseRepoUrl(provider: GitProviderKey, raw: string, allowLocal: 
     if (parts.length < 2 || !segment.test(parts[0]) || !segment.test(parts[1])) throw new GitProviderError('REPO_URL_INVALID');
     return { baseUrl: `${url.protocol}//${url.host}`, repoPath: `${parts[0]}/${parts[1]}` };
   }
+  if (provider === 'bitbucket') {
+    if (!local && url.hostname !== 'bitbucket.org') throw new GitProviderError('REPO_URL_NOT_BITBUCKET');
+    if (parts.length < 2 || !segment.test(parts[0]) || !segment.test(parts[1])) throw new GitProviderError('REPO_URL_INVALID');
+    return { baseUrl: `${url.protocol}//${url.host}`, repoPath: `${parts[0]}/${parts[1]}` };
+  }
+  if (provider === 'gitea') {
+    // Gitea, Forgejo and Codeberg: owner/repo on any server; the rest of the path (/src/branch/main) is ignored.
+    if (parts.length < 2 || !segment.test(parts[0]) || !segment.test(parts[1])) throw new GitProviderError('REPO_URL_INVALID');
+    return { baseUrl: `${url.protocol}//${url.host}`, repoPath: `${parts[0]}/${parts[1]}` };
+  }
   const dash = parts.indexOf('-');
   const path = dash >= 0 ? parts.slice(0, dash) : parts;
   if (path.length < 2 || path.length > 10 || !path.every((item) => segment.test(item))) throw new GitProviderError('REPO_URL_INVALID');
@@ -75,7 +91,23 @@ export class GitHubClient {
 
   /** One commit with all files on the branch. An empty repository gets its first commit through the contents API. */
   async commit(repoPath: string, branch: string, files: GitFile[], message: string): Promise<{ commitUrl: string }> {
+    try {
+      return await this.commitFiles(repoPath, branch, files, message);
+    } catch (error) {
+      // GitHub refuses workflow files to keys without the «Workflows» permission (OAuth: the workflow scope), with 403 or 404.
+      if (error instanceof GitProviderError && files.some((file) => file.path.startsWith('.github/workflows/')) && ['REPO_ACCESS_DENIED', 'REPO_NOT_FOUND', 'REPO_PROVIDER_FAILED'].includes(error.code)) {
+        throw new GitProviderError('REPO_WORKFLOW_PERMISSION');
+      }
+      throw error;
+    }
+  }
+
+  private async commitFiles(repoPath: string, branch: string, files: GitFile[], message: string): Promise<{ commitUrl: string }> {
     const base = `${this.apiUrl}/repos/${repoPath}`;
+    for (const file of files.filter((item) => item.marker)) {
+      const existing = await call(this.fetchImpl, `${base}/contents/${file.path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`, this.token, { auth: 'bearer' });
+      if (existing.status === 200 && !Buffer.from(String(existing.payload?.content ?? ''), 'base64').toString('utf8').includes(file.marker!)) throw new GitProviderError('REPO_CI_FILE_EXISTS');
+    }
     let ref = await call(this.fetchImpl, `${base}/git/ref/heads/${encodeURIComponent(branch)}`, this.token, { auth: 'bearer' });
     if (ref.status === 404 || ref.status === 409) {
       const [first, ...rest] = files;
@@ -125,10 +157,99 @@ export class GitLabClient {
     for (const file of files) {
       const existing = await call(this.fetchImpl, `${project}/repository/files/${encodeURIComponent(file.path)}?ref=${encodeURIComponent(branch)}`, this.token, { auth: 'private' });
       if (existing.status !== 200 && existing.status !== 404) throw statusError(existing.status);
+      if (existing.status === 200 && file.marker && !Buffer.from(String(existing.payload?.content ?? ''), 'base64').toString('utf8').includes(file.marker)) throw new GitProviderError('REPO_CI_FILE_EXISTS');
       actions.push({ action: existing.status === 200 ? 'update' : 'create', file_path: file.path, content: file.content });
     }
     const commit = await call(this.fetchImpl, `${project}/repository/commits`, this.token, { auth: 'private', method: 'POST', body: { branch, commit_message: message, actions } });
     if (commit.status !== 201) throw statusError(commit.status);
     return { commitUrl: String(commit.payload?.web_url ?? '') };
+  }
+}
+
+const base64 = (text: string) => Buffer.from(text, 'utf8').toString('base64');
+const encodePath = (path: string) => path.split('/').map(encodeURIComponent).join('/');
+
+/** Gitea and Forgejo (Codeberg too): API v1 on the same server. Several files in one commit need Gitea 1.20+ or any Forgejo. */
+export class GiteaClient {
+  private readonly api: string;
+  constructor(private readonly token: string, baseUrl: string, private readonly fetchImpl: Fetch = fetch) { this.api = `${baseUrl}/api/v1`; }
+
+  async inspect(repoPath: string): Promise<RepoInfo> {
+    const { status, payload } = await call(this.fetchImpl, `${this.api}/repos/${repoPath}`, this.token, { auth: 'token' });
+    if (status !== 200 || !payload) throw statusError(status);
+    const permissions = (payload.permissions ?? {}) as { push?: boolean; admin?: boolean };
+    return {
+      repoPath: String(payload.full_name ?? repoPath), webUrl: String(payload.html_url ?? ''), defaultBranch: String(payload.default_branch || 'main'),
+      isPrivate: payload.private === true, canWrite: permissions.push === true || permissions.admin === true,
+    };
+  }
+
+  async commit(repoPath: string, branch: string, files: GitFile[], message: string): Promise<{ commitUrl: string }> {
+    const base = `${this.api}/repos/${repoPath}`;
+    const changes = [];
+    for (const file of files) {
+      const existing = await call(this.fetchImpl, `${base}/contents/${encodePath(file.path)}?ref=${encodeURIComponent(branch)}`, this.token, { auth: 'token' });
+      if (existing.status !== 200 && existing.status !== 404) throw statusError(existing.status);
+      const sha = existing.status === 200 ? String(existing.payload?.sha ?? '') : '';
+      if (sha && file.marker && !Buffer.from(String(existing.payload?.content ?? ''), 'base64').toString('utf8').includes(file.marker)) throw new GitProviderError('REPO_CI_FILE_EXISTS');
+      changes.push(sha ? { operation: 'update', path: file.path, content: base64(file.content), sha } : { operation: 'create', path: file.path, content: base64(file.content) });
+    }
+    const commit = await call(this.fetchImpl, `${base}/contents`, this.token, { auth: 'token', method: 'POST', body: { branch, message, files: changes } });
+    // Old Gitea (before 1.20) has no multi-file endpoint.
+    if (commit.status === 404 || commit.status === 405) throw new GitProviderError('REPO_SERVER_TOO_OLD');
+    if (commit.status !== 201 && commit.status !== 200) throw statusError(commit.status);
+    return { commitUrl: String((commit.payload?.commit as { html_url?: string } | undefined)?.html_url ?? '') };
+  }
+}
+
+/**
+ * Bitbucket Cloud with a repository access token (Bearer). Bitbucket does not say whether a token can write, so a token that
+ * reads the repository is accepted and writing is confirmed by the first push.
+ */
+export class BitbucketClient {
+  constructor(private readonly token: string, private readonly apiUrl: string, private readonly fetchImpl: Fetch = fetch) {}
+
+  async inspect(repoPath: string): Promise<RepoInfo> {
+    const { status, payload } = await call(this.fetchImpl, `${this.apiUrl}/repositories/${repoPath}`, this.token, { auth: 'bearer' });
+    if (status !== 200 || !payload) throw statusError(status);
+    const links = (payload.links ?? {}) as { html?: { href?: string } };
+    const main = payload.mainbranch as { name?: string } | null | undefined;
+    return {
+      repoPath: String(payload.full_name ?? repoPath), webUrl: String(links.html?.href ?? `https://bitbucket.org/${repoPath}`), defaultBranch: String(main?.name || 'main'),
+      isPrivate: payload.is_private !== false, canWrite: true,
+    };
+  }
+
+  private async raw(url: string): Promise<{ status: number; text: string }> {
+    try {
+      const response = await this.fetchImpl(url, { headers: { Authorization: `Bearer ${this.token}`, 'User-Agent': 'BuildPath' }, redirect: 'follow', signal: AbortSignal.timeout(TIMEOUT_MS) });
+      return { status: response.status, text: response.status === 200 ? await response.text() : '' };
+    } catch {
+      throw new GitProviderError('REPO_PROVIDER_UNAVAILABLE');
+    }
+  }
+
+  async commit(repoPath: string, branch: string, files: GitFile[], message: string): Promise<{ commitUrl: string }> {
+    const base = `${this.apiUrl}/repositories/${repoPath}`;
+    for (const file of files.filter((item) => item.marker)) {
+      const existing = await this.raw(`${base}/src/${encodeURIComponent(branch)}/${encodePath(file.path)}`);
+      if (existing.status === 200 && !existing.text.includes(file.marker!)) throw new GitProviderError('REPO_CI_FILE_EXISTS');
+      if (existing.status !== 200 && existing.status !== 404) throw statusError(existing.status);
+    }
+    const form = new FormData();
+    form.append('message', message);
+    form.append('branch', branch);
+    for (const file of files) form.append(file.path, new Blob([file.content], { type: 'text/plain' }), file.path.split('/').pop());
+    let response: Response;
+    try {
+      response = await this.fetchImpl(`${base}/src`, { method: 'POST', headers: { Authorization: `Bearer ${this.token}`, 'User-Agent': 'BuildPath' }, body: form, redirect: 'error', signal: AbortSignal.timeout(TIMEOUT_MS) });
+    } catch {
+      throw new GitProviderError('REPO_PROVIDER_UNAVAILABLE');
+    }
+    if (response.status === 403) throw new GitProviderError('REPO_WRITE_NOT_ALLOWED');
+    if (response.status !== 201) throw statusError(response.status);
+    const location = response.headers.get('location') ?? '';
+    const sha = /\/commit\/([0-9a-f]{7,40})/.exec(location)?.[1];
+    return { commitUrl: sha ? `https://bitbucket.org/${repoPath}/commits/${sha}` : `https://bitbucket.org/${repoPath}/commits/branch/${encodeURIComponent(branch)}` };
   }
 }

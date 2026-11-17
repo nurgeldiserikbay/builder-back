@@ -18,8 +18,8 @@ export interface ChoiceStep {
 
 export interface ChoiceOption {
   key: string;
-  /** Another choice this option needs, e.g. GitHub Pages needs code on GitHub. */
-  requires?: { card: CardKey; option: string; explanation: string };
+  /** Another choice this option needs, e.g. GitHub Pages needs code on GitHub; a list means any of these options. */
+  requires?: { card: CardKey; option: string | string[]; explanation: string };
   title: string;
   summary: string;
   pros: string[];
@@ -46,7 +46,7 @@ const tokenWarning = 'Ключ даёт доступ только к одном�
 export const choiceCards: Record<CardKey, ChoiceCard> = {
   code_hosting: {
     key: 'code_hosting',
-    version: '1.0.0',
+    version: '1.1.0',
     checkedAt: '2026-11-10',
     title: 'Где хранить код',
     question: 'Где будут лежать файлы вашего сайта, кроме BuildPath?',
@@ -77,7 +77,7 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
         steps: [
           { key: 'account', kind: 'manual', title: 'Создайте аккаунт', text: ['Откройте github.com и нажмите «Sign up». Подойдёт любая почта.', 'Если аккаунт уже есть — просто войдите.'], link: { label: 'Открыть github.com', url: 'https://github.com/signup' } },
           { key: 'repository', kind: 'manual', title: 'Создайте пустой репозиторий', text: ['Нажмите «+» вверху справа → «New repository».', 'Название — латиницей, например «my-site». Выберите «Private», чтобы код видели только вы.', 'Ничего больше не отмечайте и нажмите «Create repository». Скопируйте адрес страницы — он понадобится на последнем шаге.'], link: { label: 'Новый репозиторий', url: 'https://github.com/new' } },
-          { key: 'token', kind: 'manual', title: 'Создайте ключ доступа только к этому репозиторию', text: ['Откройте «Settings» → «Developer settings» → «Personal access tokens» → «Fine-grained tokens» → «Generate new token».', 'Срок — 90 дней или больше. В «Repository access» выберите «Only select repositories» и ваш репозиторий.', 'В «Permissions» → «Repository permissions» поставьте «Contents: Read and write». Остальное не трогайте.', 'Нажмите «Generate token» и скопируйте ключ — его покажут один раз.', tokenWarning], link: { label: 'Создать ключ', url: 'https://github.com/settings/personal-access-tokens/new' } },
+          { key: 'token', kind: 'manual', title: 'Создайте ключ доступа только к этому репозиторию', text: ['Откройте «Settings» → «Developer settings» → «Personal access tokens» → «Fine-grained tokens» → «Generate new token».', 'Срок — 90 дней или больше. В «Repository access» выберите «Only select repositories» и ваш репозиторий.', 'В «Permissions» → «Repository permissions» поставьте «Contents: Read and write». Если сайт должен сам выкладываться на ваш сервер, добавьте «Workflows: Read and write». Остальное не трогайте.', 'Нажмите «Generate token» и скопируйте ключ — его покажут один раз.', tokenWarning], link: { label: 'Создать ключ', url: 'https://github.com/settings/personal-access-tokens/new' } },
           { key: 'connect', kind: 'connect', title: 'Подключите репозиторий', text: ['Вставьте адрес репозитория и ключ. BuildPath проверит, что может записывать в репозиторий, и ничего не отправит без вашего подтверждения.'] },
         ],
       },
@@ -97,11 +97,41 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
           { key: 'connect', kind: 'connect', title: 'Подключите проект', text: ['Вставьте адрес проекта и ключ. BuildPath проверит доступ и ничего не отправит без вашего подтверждения.'] },
         ],
       },
+      {
+        key: 'gitea',
+        title: 'Gitea, Forgejo или Codeberg',
+        summary: 'Свой git-сервер компании на Gitea или Forgejo либо бесплатный Codeberg. BuildPath отправляет туда принятую версию по вашей кнопке.',
+        pros: ['Код на вашем сервере или в некоммерческом сервисе', 'История всех версий', 'Автоматическая выкладка на свой сервер через Actions'],
+        limits: ['Сервер должен быть доступен из интернета', 'Нужна Gitea 1.20 или новее либо любая версия Forgejo', 'Для автоматической выкладки на сервере должны быть включены Actions и запущен runner'],
+        cost: 'Codeberg — бесплатно; свой сервер — по цене сервера',
+        upkeep: 'Обновлять свой сервер Gitea или Forgejo; продлить ключ, если задан срок',
+        leaving: 'Легко: это обычный git-репозиторий',
+        steps: [
+          { key: 'repository', kind: 'manual', title: 'Создайте пустой репозиторий', text: ['Войдите на свой сервер или на codeberg.org, нажмите «+» → «New repository».', 'Название — латиницей, отметьте «Make repository private». Скопируйте адрес страницы репозитория.'], link: { label: 'Открыть codeberg.org', url: 'https://codeberg.org/repo/create' } },
+          { key: 'token', kind: 'manual', title: 'Создайте ключ доступа', text: ['Откройте «Settings» → «Applications» → «Generate new token».', 'В «Select permissions» для «repository» выберите «Read and write». Остальное не нужно.', 'Нажмите «Generate token» и скопируйте ключ.', 'Ключ даёт доступ к вашим репозиториям. BuildPath хранит его в зашифрованном виде и никому не показывает — ни специалистам, ни ИИ. Отозвать ключ можно в любой момент там же, где вы его создали.'] },
+          { key: 'connect', kind: 'connect', title: 'Подключите репозиторий', text: ['Вставьте адрес репозитория и ключ. BuildPath проверит, что может записывать в репозиторий, и ничего не отправит без вашего подтверждения.'] },
+        ],
+      },
+      {
+        key: 'bitbucket',
+        title: 'Bitbucket',
+        summary: 'Сервис для кода от Atlassian. Подходит, если команда уже работает в Bitbucket и Jira.',
+        pros: ['История всех версий', 'Связь с Jira', 'Автоматическая выкладка на свой сервер через Pipelines'],
+        limits: ['Нужен аккаунт Atlassian', 'Bitbucket не сообщает права ключа заранее: запись проверится при первой отправке', 'Бесплатный тариф — до 5 участников и ограниченные минуты Pipelines'],
+        cost: 'Бесплатно до 5 участников; дальше — платный тариф Atlassian',
+        upkeep: 'Продлить ключ, когда истечёт срок',
+        leaving: 'Легко: это обычный git-репозиторий',
+        steps: [
+          { key: 'repository', kind: 'manual', title: 'Создайте репозиторий', text: ['В Bitbucket нажмите «Create» → «Repository». Отметьте «Private repository», в «Include a README?» выберите «No».', 'Скопируйте адрес страницы репозитория, например https://bitbucket.org/команда/my-site.'], link: { label: 'Открыть bitbucket.org', url: 'https://bitbucket.org/repo/create' } },
+          { key: 'token', kind: 'manual', title: 'Создайте ключ репозитория', text: ['В репозитории откройте «Repository settings» → «Access tokens» → «Create Repository Access Token».', 'Отметьте «Repositories: Write». Остальное не нужно.', 'Нажмите «Create» и скопируйте ключ — его покажут один раз.', tokenWarning] },
+          { key: 'connect', kind: 'connect', title: 'Подключите репозиторий', text: ['Вставьте адрес репозитория и ключ. BuildPath проверит, что видит репозиторий; право записи подтвердится первой отправкой.'] },
+        ],
+      },
     ],
   },
   deployment: {
     key: 'deployment',
-    version: '1.4.0',
+    version: '1.5.0',
     checkedAt: '2026-11-10',
     title: 'Где будет работать сайт',
     question: 'Где разместить сайт, чтобы его видели клиенты?',
@@ -153,6 +183,37 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
         ],
       },
       {
+        key: 'vercel',
+        title: 'Vercel',
+        summary: 'Хостинг сайтов и веб-приложений. BuildPath сам отправляет туда принятую версию по вашей команде.',
+        pros: ['Бесплатного тарифа Hobby хватает для личного сайта', 'Адрес вида имя.vercel.app или свой домен в Vercel', 'Новая версия — одной кнопкой из BuildPath'],
+        limits: ['Тариф Hobby — только для некоммерческих сайтов; для бизнеса Vercel требует платный тариф Pro', 'Форма заявок и онлайн-запись BuildPath там не работают: на сайте останутся контакты и кнопки связи', 'Нужен аккаунт Vercel и ключ доступа'],
+        cost: 'Hobby — бесплатно для некоммерческих сайтов; Pro — платно у Vercel',
+        upkeep: 'Отправлять новую версию после изменений; следить за аккаунтом Vercel',
+        leaving: 'Легко: сайт — один файл, его можно перенести куда угодно',
+        steps: [
+          { key: 'connect', kind: 'hosting_connect', title: 'Подключите Vercel', text: ['В Vercel откройте «Account Settings» → «Tokens» и создайте ключ с доступом к своей команде.', 'Вставьте ключ сюда. BuildPath проверит его, создаст проект в вашем аккаунте или возьмёт существующий по его ID или имени и сохранит ключ в зашифрованном виде.'], link: { label: 'Создать ключ', url: 'https://vercel.com/account/settings/tokens' } },
+          { key: 'deploy', kind: 'hosting_deploy', title: 'Отправьте сайт', text: ['Нажмите «Отправить на Vercel» и подтвердите: уйдёт только принятая версия страницы сайта, без данных проекта.', 'После изменений отправьте снова — адрес останется тем же.'] },
+          { key: 'verify', kind: 'verify', title: 'Проверьте адрес', text: ['BuildPath откроет адрес сайта на Vercel и сравнит с последней принятой версией.'] },
+        ],
+      },
+      {
+        key: 'render',
+        title: 'Render',
+        requires: { card: 'code_hosting', option: ['github', 'gitlab', 'bitbucket'], explanation: 'Render берёт сайт из репозитория: сначала выберите GitHub, GitLab или Bitbucket в решении «Где хранить код» и подключите репозиторий.' },
+        summary: 'Облачный хостинг: Render сам берёт сайт из вашего репозитория и обновляет его после каждой отправки из BuildPath.',
+        pros: ['Статический сайт — бесплатно', 'Обновляется сам после отправки в репозиторий', 'Адрес вида имя.onrender.com или свой домен'],
+        limits: ['Нужны аккаунт Render и репозиторий на GitHub, GitLab или Bitbucket', 'Форма заявок и онлайн-запись BuildPath там не работают: на сайте останутся кнопки звонка и мессенджера', 'Условия бесплатного тарифа задаёт Render'],
+        cost: 'Статические сайты — бесплатно у Render',
+        upkeep: 'Отправлять новую версию в репозиторий после изменений',
+        leaving: 'Легко: файлы в вашем репозитории',
+        steps: [
+          { key: 'push', kind: 'push', title: 'Отправьте сайт в репозиторий', text: ['В решении «Где хранить код» нажмите «Отправить в репозиторий». Вместе с сайтом уйдёт файл render.yaml — описание сайта для Render.'] },
+          { key: 'blueprint', kind: 'manual', title: 'Создайте сайт в Render', text: ['В Render нажмите «New» → «Blueprint», подключите свой GitHub, GitLab или Bitbucket и выберите репозиторий.', 'Render прочитает render.yaml и предложит статический сайт — нажмите «Apply». Через 1–2 минуты появится адрес вида имя.onrender.com.'], link: { label: 'Открыть Render', url: 'https://dashboard.render.com/blueprints' } },
+          { key: 'verify', kind: 'verify', title: 'Проверьте адрес', text: ['Вставьте адрес сайта на Render. BuildPath откроет его и сравнит с последней принятой версией.'] },
+        ],
+      },
+      {
         key: 'own_server',
         title: 'Свой сервер',
         summary: 'Сайт работает на вашем сервере (VPS) с вашим доменом. Мы дадим готовые файлы и команды.',
@@ -166,6 +227,13 @@ export const choiceCards: Record<CardKey, ChoiceCard> = {
           { key: 'domain', kind: 'manual', title: 'Направьте домен на сервер', text: ['У регистратора домена откройте настройки DNS и добавьте запись типа A: имя «@» (или поддомен), значение — IP сервера.', 'Изменение начинает работать за 5–60 минут.'] },
           { key: 'package', kind: 'package', title: 'Скачайте файлы для сервера', text: ['В пакете: страница сайта, файл настроек веб-сервера Caddy (сам получит HTTPS-сертификат) и инструкция с командами. Для сайта с онлайн-записью — ещё программа записи с вашим расписанием и страница записей для вас.', 'Если у вас есть специалист, просто передайте ему пакет.'] },
           { key: 'install', kind: 'manual', title: 'Запустите на сервере', text: ['Подключитесь к серверу и выполните команды из файла README.md в пакете — их можно скопировать целиком.', 'Если что-то пошло не так, пришлите текст ошибки специалисту или в поддержку.'] },
+          { key: 'auto', kind: 'manual', title: 'Обновлять автоматически (необязательно)', text: [
+            'Если код хранится в GitHub, GitLab, Gitea или Bitbucket, сайт может сам обновляться на сервере после каждой отправки из BuildPath. Подходит для сайтов без онлайн-записи и магазина.',
+            'На своём компьютере создайте ключ для выкладки: ssh-keygen -t ed25519 -f buildpath_deploy -N "". Содержимое buildpath_deploy.pub добавьте на сервере в файл ~/.ssh/authorized_keys.',
+            'Получите отпечаток сервера: ssh-keyscan IP-СЕРВЕРА.',
+            'В настройках репозитория добавьте секреты (GitHub и Gitea — «Settings» → «Secrets», GitLab — «Settings» → «CI/CD» → «Variables», Bitbucket — «Repository variables»): SSH_HOST — IP сервера, SSH_USER — пользователь, SSH_PRIVATE_KEY — содержимое файла buildpath_deploy, SSH_KNOWN_HOSTS — вывод ssh-keyscan. Папка на сервере по умолчанию — /opt/buildpath-site/site, другую задайте секретом DEPLOY_PATH; порт SSH, если не 22, — секретом SSH_PORT.',
+            'При отправке в репозиторий отметьте «Выкладывать на мой сервер автоматически». Ключ и адрес сервера остаются только в вашем репозитории — BuildPath их не видит.',
+          ] },
           { key: 'verify', kind: 'verify', title: 'Проверьте адрес', text: ['Вставьте адрес сайта, например https://ваш-домен.kz. BuildPath откроет его и сравнит с последней принятой версией.'] },
         ],
       },

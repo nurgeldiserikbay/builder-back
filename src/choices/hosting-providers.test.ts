@@ -60,6 +60,6 @@ describe('external hosting: Netlify', () => {
     await assert.rejects(new NetlifyProvider('good', fetchImpl, 'https://api.test/api/v1').site('../etc', 'x'), (error: HostingError) => error.code === 'HOSTING_SITE_NOT_FOUND');
     const down = (async () => { throw new Error('offline'); }) as unknown as typeof fetch;
     await assert.rejects(new NetlifyProvider('good', down, 'https://api.test/api/v1').verify(), (error: HostingError) => error.code === 'HOSTING_UNAVAILABLE');
-    assert.throws(() => hostingProvider('vercel', 't'), (error: HostingError) => error.code === 'HOSTING_PROVIDER_UNKNOWN');
+    assert.throws(() => hostingProvider('cloudflare', 't'), (error: HostingError) => error.code === 'HOSTING_PROVIDER_UNKNOWN');
   });
 });
