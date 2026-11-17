@@ -1,7 +1,7 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.7.0';
+export const ROUTE_CATALOG_VERSION = '1.8.0';
 
 export type StageKey = 'goal' | 'process' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'build' | 'handoff';
 export type ArtifactType = 'brief' | 'process' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'site' | 'handoff';
@@ -127,7 +127,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     importHint: null,
     contract: { explanation: 'Бизнес-процесс — договорённость о том, как работает дело. Архитектура строится по нему; если процесс изменится, архитектура получит уведомление и покажет, что поменялось.' },
     playbook: {
-      version: '1.1.0',
+      version: '1.2.0',
       instructions: [
         'Describe the real process of this business from the brief, in plain words, in the project language.',
         'Actors: the client, the business (owner), staff if any, the site as «system», external services only if mentioned. At most 6.',
@@ -137,6 +137,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
         'Data: the information the business keeps (client, booking, request, service…) with 2–6 simple fields in plain words and links between them.',
         'When the data keeps people\'s contacts or other personal details, add a rule: they are kept with consent, only for the stated purpose, and deleted on request. With online payment, add a step that confirms the payment and a rule for refunds.',
         'Every actor takes part in at least one step; every scenario has a goal saying how it ends; every link points to an entity in the list.',
+        'The current result may hold «situations»: the owner\'s answers to platform questions. The platform adds their rules itself; keep the situations as they are and do not repeat or reword their rules in rules.',
       ],
     },
   },
@@ -330,13 +331,14 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     acceptExplanation: 'Принятые тексты пойдут в сборку сайта. Блоки, которые вы правили руками, ИИ без вашей просьбы не перепишет.',
     importHint: 'Если тексты уже готовы, вставьте их: каждый блок начните с заголовка на отдельной строке, между блоками — пустая строка. На многостраничном сайте блок с заголовком, как у страницы в меню («Услуги», «Контакты»), начинает эту страницу.',
     playbook: {
-      version: '1.0.0',
+      version: '1.1.0',
       instructions: [
         'Write for the audience from the brief, in the brief tone, in the project language.',
         'Single-page site: hero with the main action button first, contacts last; 4–7 sections in total.',
         'Do not invent testimonials, numbers of clients, years of experience, awards, prices or guarantees not present in the inputs.',
         'Hero text up to 2 sentences; section text up to 4 sentences; list items up to 2 sentences.',
         'Use square-bracket placeholders like [укажите ...] (Russian) or [add ...] (English) only when a needed fact is missing, so the owner sees what to add.',
+        'If the confirmed inputs contain a business process: tell visitors, in plain words, the rules from its rules list that matter to them before they book, order or write (cancellation, prepayment, returns, delivery, answer time), for example in a FAQ block or next to the main action. Use only those rules; never add other conditions.',
         'If the confirmed inputs contain a sitemap: write the blocks of every page in map order, with the block types the map lists for it, and set page to the page key (the home page is «home»); 4–7 blocks on the home page, 1–5 on the others; fill pageSeo for every page except home. Otherwise set page to null and return an empty pageSeo.',
       ],
     },
@@ -474,6 +476,8 @@ export function routeInputs(route: StageKey[], key: StageKey): StageKey[] {
   if (key === 'content' && route.includes('sitemap')) own.push('sitemap');
   // The storefront texts mention what the store sells.
   if (key === 'content' && route.includes('products')) own.push('products');
+  // Texts tell visitors the rules that matter to them (cancellation, returns, answer time) from the accepted process.
+  if (key === 'content' && route.includes('process')) own.push('process');
   return own;
 }
 

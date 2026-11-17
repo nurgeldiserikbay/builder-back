@@ -4,6 +4,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { WorktimeService } from './worktime.service.js';
 import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, weekdayShort, type Schedule } from './schedule.js';
 import { CAPABILITIES, PROCESS_LIMITS } from './process.js';
+import { SITUATIONS_VERSION, situationsFor } from './situations.js';
 import { bookingApiContract, sameTechPlan, techPlanMarkdown, techPlanNotes, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { ROUTE_CATALOG_VERSION, projectTypes, routeInputs, stageDefinitions, statusExplanations, type StageKey } from './catalog.js';
@@ -271,7 +272,7 @@ export class JourneyService {
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
           ...(definition.artifactType === 'techplan' ? { techplan: { preview: techPlanPreview, outdated: techPlanOutdated } } : {}),
-          ...(definition.artifactType === 'process' ? { process: { capabilities: CAPABILITIES, actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS } } : {}),
+          ...(definition.artifactType === 'process' ? { process: { capabilities: CAPABILITIES, actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS, situations: { version: SITUATIONS_VERSION, items: situationsFor(ctx.type.key) } } } : {}),
           ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.core.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
           ...(stageKey === 'content' && ctx.route.includes('sitemap') ? { pages: (await this.core.checkContext(ctx, stageKey)).sitemap?.pages ?? null } : {}),
@@ -297,7 +298,7 @@ export class JourneyService {
       if (!inputsSatisfied(ctx.route, ctx.dep, key as StageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
       content = await this.core.techPlanFor(ctx, key as StageKey, notes);
     } else {
-      try { content = normalizeArtifact(definition.artifactType, input.content); } catch (error) { validationError(error); }
+      try { content = inProject(ctx, () => normalizeArtifact(definition.artifactType, input.content)); } catch (error) { validationError(error); }
     }
     const base = await this.core.versionContent(stage.currentVersionId);
     const changed = changedKeys(definition.artifactType, base?.content ?? null, content);
