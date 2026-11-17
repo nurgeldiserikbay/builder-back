@@ -1,5 +1,6 @@
 import { StageReviewService } from '../journey/stage-review.service.js';
 import 'dotenv/config';
+import { situationsFor } from '../journey/situations.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, describe, it } from 'node:test';
@@ -80,7 +81,8 @@ describe('quick edit of prices and hours (database)', async () => {
     const version = async (stageKey: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey } })).currentVersionId!;
     const step = async (stageKey: string, content: unknown) => { await journey.saveDraft(owner.id, projectId, stageKey, { content, baseVersionId: null }); await journey.accept(owner.id, projectId, stageKey, await version(stageKey)); };
     await step('goal', brief);
-    await step('process', templateProcess(projectType, brief));
+    // The owner answers the questions the platform asks about the business (the typical answer each time).
+    await step('process', { ...templateProcess(projectType, brief), situations: situationsFor(projectType).map((item) => ({ key: item.key, answer: item.options.find((option) => option.typical)!.value })) });
     if (projectType === 'store') await step('products', templateCatalog(offer));
     else { await step('offer', offer); await step('schedule', templateSchedule(offer)); }
     await step('techplan', { ownerNotes: null });

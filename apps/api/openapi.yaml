@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.15.0
+  version: 1.16.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -3210,7 +3210,7 @@ paths:
       tags: [Journey]
       operationId: saveStageDraft
       summary: Save a manual edit as a new immutable version
-      description: Changed parts are locked so later AI runs keep them unless explicitly targeted. baseVersionId must equal the current version.
+      description: "Changed parts are locked so later AI runs keep them unless explicitly targeted. baseVersionId must equal the current version. A business process may carry situations[] — the owner's answers to the «Вы это учли?» questions of options.process.situations: { key, answer: an option value | custom (with custom, 1–200 characters) | later, rule (output only: the rule the answer added) }. The platform keeps the rules of the answers in rules itself, after the owner's own rules (at most 12); 400 FIELD_INVALID:situations for an unknown answer."
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -3760,7 +3760,7 @@ paths:
       tags: [Journey]
       operationId: fixStageReview
       summary: Let the AI fix the chosen review findings
-      description: Builds the AI instruction from the chosen findings' own texts only and asks for a new version that changes nothing else; answers like /generate. 503 AI_NOT_CONFIGURED without a provider; 400 FINDINGS_NOT_FOUND when none of the ids is a current finding.
+      description: Builds the AI instruction from the chosen findings' own texts only and asks for a new version that changes nothing else; answers like /generate. 503 AI_NOT_CONFIGURED without a provider; 400 FINDINGS_NOT_FOUND when none of the ids is a current finding; 400 OWNER_DECIDES when all chosen findings are decisions only the owner makes (they are skipped among others).
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -7272,6 +7272,7 @@ components:
               message: { type: string }
               fix: { type: string }
               overridden: { type: boolean }
+              ownerDecides: { type: boolean, description: 'A decision about the business only the owner can make (an open «Вы это учли?» question, code PROCESS_SITUATION_OPEN, target situation:<key>); the AI is never asked to fix it.' }
         ai:
           description: The newest advice of the AI reviewer on this version, or null. Advice never changes the score and never blocks acceptance.
           type: [object, 'null']
@@ -7540,7 +7541,7 @@ components:
             ai: { type: object }
             options:
               type: object
-              description: Stage-specific choices. For the goal stage without a version yet, brief.intro is the owner's story given when the project was created (project summary), to start the passport from.
+              description: 'Stage-specific choices. For a business process, process.situations = { version, items[] }: the questions of this project type — key, level (blocking | important | minor), question, why, options[] (value, label, rule, typical). Stage-specific choices. For the goal stage without a version yet, brief.intro is the owner''s story given when the project was created (project summary), to start the passport from.'
     StageRule:
       type: object
       required: [id, kind, status, text, createdAt]

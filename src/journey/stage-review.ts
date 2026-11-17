@@ -9,9 +9,10 @@ import type { Schedule } from './schedule.js';
 import type { Sitemap } from './sitemap.js';
 import type { TechPlan } from './techplan.js';
 import type { BusinessProcess } from './process.js';
+import { situationsFor } from './situations.js';
 import type { AppFeatures, AppScreens } from './webapp.js';
 
-export const REVIEW_RULES_VERSION = '1.3.0';
+export const REVIEW_RULES_VERSION = '1.4.0';
 export const REVIEW_LIMITS = { reason: 1000, findings: 60, instruction: 1000 };
 
 export type FindingSeverity = 'blocking' | 'important' | 'minor';
@@ -27,6 +28,8 @@ export interface ReviewFinding {
   where: string;
   message: string;
   fix: string;
+  /** Only the owner can settle it (a decision about the business): «let the AI fix it» does not apply. */
+  ownerDecides?: boolean;
 }
 export interface StageReview { rulesVersion: string; score: number; findings: ReviewFinding[]; blocking: number }
 
@@ -393,8 +396,27 @@ function techPlanReview(plan: TechPlan, push: Push) {
 const WEIGHT: Record<FindingSeverity, number> = { blocking: 25, important: 10, minor: 3 };
 const ORDER: Record<FindingSeverity, number> = { blocking: 0, important: 1, minor: 2 };
 
+/**
+ * «Вы это учли?»: every question of this kind of business without an answer is a finding of the question's level. «Decide
+ * later» softens an important or minor question to minor; a blocking one stays blocking until answered or explained.
+ */
+function situationsReview(process: BusinessProcess, projectType: string | null | undefined, push: Push) {
+  const answers = new Map((process.situations ?? []).map((item) => [item.key, item.answer]));
+  for (const situation of situationsFor(projectType)) {
+    const answer = answers.get(situation.key);
+    if (answer && answer !== 'later') continue;
+    const severity = answer === 'later' && situation.level !== 'blocking' ? 'minor' : situation.level;
+    push({
+      code: 'PROCESS_SITUATION_OPEN', severity, category: 'logic', target: `situation:${situation.key}`, where: tr('Вы это учли?'),
+      message: tr(situation.question),
+      fix: answer === 'later' ? tr('Вы отложили этот вопрос. Решите его, когда будете готовы: ответ станет правилом процесса.') : tr('Выберите ответ или напишите свой: он станет правилом процесса.'),
+      ownerDecides: true,
+    });
+  }
+}
+
 /** Review of one stage result. Types without rules yet get an empty review with the full score. */
-export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null; process?: BusinessProcess | null } = {}): StageReview {
+export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null; process?: BusinessProcess | null; projectType?: string | null } = {}): StageReview {
   const found: ReviewFinding[] = [];
   const counts = new Map<string, number>();
   const push: Push = (finding) => {
@@ -405,7 +427,7 @@ export function reviewStage(type: string, content: unknown, context: { features?
   };
   if (content && typeof content === 'object') {
     if (type === 'brief') briefReview(content as Brief, push);
-    if (type === 'process') processReview(content as BusinessProcess, push);
+    if (type === 'process') { processReview(content as BusinessProcess, push); situationsReview(content as BusinessProcess, context.projectType, push); }
     if (type === 'features') featuresReview(content as AppFeatures, context.process ?? null, push);
     if (type === 'screens') screensReview(content as AppScreens, context.features ?? null, push);
     if (type === 'offer') offerReview(content as Offer, push);
