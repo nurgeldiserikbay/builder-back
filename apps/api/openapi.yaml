@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.16.0
+  version: 1.17.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -7382,6 +7382,25 @@ components:
                 accepted: { type: integer }
                 total: { type: integer }
                 percent: { type: integer, description: 'Share of accepted, imported or skipped stages in the route.' }
+            phases:
+              type: object
+              description: 'The common path (UNIFIED_PATH.md): phases the route stages fall into, in order. For a website the project''s members also see launch and after-launch phases (kind publish), which follow the publication. The first unfinished phase is current.'
+              properties:
+                version: { type: string }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    required: [key, title, short, status, stageKeys, done, total, kind]
+                    properties:
+                      key: { type: string, enum: [idea, spec, experience, tech, content, build, launch, after] }
+                      title: { type: string }
+                      short: { type: string }
+                      status: { type: string, enum: [done, current, upcoming] }
+                      stageKeys: { type: array, items: { type: string } }
+                      done: { type: integer }
+                      total: { type: integer }
+                      kind: { type: string, enum: [stages, publish] }
             openProposals: { type: integer, description: "Change proposals waiting for a decision (owners and managers) or the specialist's own open ones." }
             nextAction:
               type: object
@@ -7400,6 +7419,7 @@ components:
                   title: { type: string }
                   purpose: { type: string }
                   outcome: { type: string }
+                  phase: { type: string, description: Phase of the common path the stage belongs to. }
                   aiLevel: { type: string, enum: [ai_full, ai_draft, ai_assist, none] }
                   status: { $ref: '#/components/schemas/StageStatus' }
                   statusLabel: { type: string }
@@ -7462,6 +7482,15 @@ components:
                 title: { type: string }
                 purpose: { type: string }
                 outcome: { type: string }
+                phase: { type: string }
+                guide:
+                  type: object
+                  description: The stage in plain words — why it matters for the business, what it feeds next, an example of a good result and the terms it uses.
+                  properties:
+                    why: { type: string }
+                    next: { type: string }
+                    example: { type: string }
+                    terms: { type: array, items: { type: object, properties: { term: { type: string }, meaning: { type: string } } } }
                 artifactType: { type: string, enum: [brief, offer, content, design, site] }
                 status: { $ref: '#/components/schemas/StageStatus' }
                 statusLabel: { type: string }
