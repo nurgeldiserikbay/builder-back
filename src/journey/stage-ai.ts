@@ -107,8 +107,9 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
     case 'features': {
       const strings = { type: 'array', items: { type: 'string' } };
       return {
-        type: 'object', additionalProperties: false, required: ['roles', 'features', 'sensitivity', 'integrations'],
+        type: 'object', additionalProperties: false, required: ['summary', 'roles', 'features', 'sensitivity', 'integrations', 'requirements', 'limits', 'questions'],
         properties: {
+          summary: { type: 'string' }, requirements: strings, limits: strings, questions: strings,
           roles: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'name', 'description'], properties: { key: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' } } } },
           features: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'title', 'description', 'roles', 'priority', 'acceptance', 'data'], properties: {
             key: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, roles: strings, priority: { type: 'string', enum: [...PRIORITIES] }, acceptance: strings, data: strings,

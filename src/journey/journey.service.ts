@@ -29,7 +29,7 @@ import { APPROVER_ROLES, approvalState, approveBlocker, checkPolicy, policyText,
 import { qualityReport } from '../quality/quality.js';
 import { BrowserChecksService } from '../quality/browser-checks.js';
 import { CommentsService } from './comments.service.js';
-import { buildHandoff as buildHandoffPackage, renderPrototype, type AppFeatures, type AppScreens, type HandoffArtifact } from './webapp.js';
+import { FIRST_VERSION_SOFT_LIMIT, buildHandoff as buildHandoffPackage, normalizeFeatures, renderPrototype, specMarkdown, type AppFeatures, type AppScreens, type HandoffArtifact } from './webapp.js';
 import type { BusinessProcess } from './process.js';
 import { inProject, acceptRoles, editableProject, notEditableCode, normalizedOrRaw, isUuid, validationError } from './journey-core.js';
 
@@ -311,6 +311,8 @@ export class JourneyService {
           ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.core.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
           ...(stageKey === 'content' && ctx.route.includes('sitemap') ? { pages: (await this.core.checkContext(ctx, stageKey)).sitemap?.pages ?? null } : {}),
+          // The ТЗ as a document to download, from the version on screen, in the project's language.
+          ...(definition.artifactType === 'features' ? { features: { kind: ctx.type.key === 'web_app' ? 'app' : 'site', firstVersionSoftLimit: FIRST_VERSION_SOFT_LIMIT[ctx.type.key === 'web_app' ? 'app' : 'site'], markdown: current ? await this.specDocument(ctx, stageKey, current.content) : null } } : {}),
           // The owner's story from «Расскажите о своём деле» starts the passport until the first version exists.
           ...(definition.artifactType === 'brief' && !stage.currentVersionId ? { brief: { intro: (await this.prisma.project.findUnique({ where: { id: projectId }, select: { summary: true } }))?.summary ?? null } } : {}),
           ...(definition.artifactType === 'schedule' ? { schedule: { template: scheduleTemplate, timezones: TIMEZONES, weekdays: WEEKDAYS, slotSteps: SLOT_STEPS } } : {}),
@@ -875,6 +877,12 @@ export class JourneyService {
     return { role: ctx.role, canDecide: acceptRoles.has(ctx.role), name: ctx.project.name, status: ctx.project.status, projectType: ctx.type.key as string | null, hasSpecialists: (await this.prisma.stageAssignment.count({ where: { projectId, status: { in: ['invited', 'active', 'completed'] } } })) > 0 };
   }
 
+  /** The ТЗ on screen as Markdown, with the accepted brief and process it was built on. */
+  private async specDocument(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: StageKey, content: unknown): Promise<string> {
+    const inputs = await this.core.acceptedInputs(ctx, key);
+    return specMarkdown({ brief: (inputs.goal?.content as Brief | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null, features: normalizeFeatures(content), locale: ctx.project.locale });
+  }
+
   async result(userId: string, projectId: string) {
     const ctx = await this.core.load(userId, projectId, 'members');
     const stages = await Promise.all(ctx.route.map(async (key) => {
@@ -948,6 +956,9 @@ export class JourneyService {
     for (const page of site?.pages ?? []) if (page.path !== '/') files.push({ name: `pages${page.path}/index.html`, mimeType: 'text/html', content: await this.core.inline(projectId, page.html) });
     const pack = get<HandoffArtifact>('handoff');
     for (const file of pack?.files ?? []) files.push({ name: `handoff/${file.name}`, mimeType: file.mimeType, content: file.content });
+    // The ТЗ as its own document for sites; an app's package already carries it as handoff/spec.md.
+    const spec = get<AppFeatures>('features');
+    if (spec && !pack) files.push({ name: 'spec.md', mimeType: 'text/markdown', content: specMarkdown({ brief: brief ?? null, process: get<BusinessProcess>('process') ?? null, features: normalizeFeatures(spec), locale: ctx.project.locale }) });
     const plan = get<TechPlan>('techplan');
     if (plan && !pack) {
       files.push({ name: 'architecture.md', mimeType: 'text/markdown', content: inProject(ctx, () => techPlanMarkdown(plan)) });

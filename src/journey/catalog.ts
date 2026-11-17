@@ -1,7 +1,7 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.8.0';
+export const ROUTE_CATALOG_VERSION = '1.9.0';
 
 export type StageKey = 'goal' | 'process' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'build' | 'handoff';
 export type ArtifactType = 'brief' | 'process' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'site' | 'handoff';
@@ -239,32 +239,37 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
   },
   features: {
     key: 'features',
-    version: '1.0.0',
-    title: 'Функции и роли',
-    purpose: 'Запишем, кто будет пользоваться приложением и что каждый должен уметь в нём делать. У каждой функции — критерии приёмки: по ним вы и разработчик поймёте, что она готова.',
-    outcome: 'Роли, функции с приоритетом и критериями приёмки, требования к данным и интеграции.',
+    version: '2.0.0',
+    title: 'ТЗ',
+    purpose: 'Запишем техническое задание: что должен уметь ваш продукт, кто им пользуется и что войдёт в первую версию. У каждой функции — понятное «готово»: по нему вы, ИИ и разработчик поймёте, что она сделана.',
+    outcome: 'Кратко о продукте, роли, функции с приоритетом и критериями «готово», общие требования, ограничения и открытые вопросы.',
     artifactType: 'features',
     inputs: ['goal', 'process'],
     ai: {
       level: 'ai_full',
-      whatItDoes: 'ИИ предложит роли и функции по бизнес-процессу и напишет критерии приёмки. Проверьте, что ничего лишнего, и отметьте, что нужно в первой версии.',
-      instructionExamples: ['Добавь роль бухгалтера, который видит только счета', 'Оплата — позже, не в первой версии', 'Клиент должен видеть историю своих заявок'],
+      whatItDoes: 'ИИ составит ТЗ по цели и бизнес-процессу: роли, функции с критериями «готово», требования и ограничения — и предложит, что сделать в первой версии, а что потом. Вы решаете, что войдёт в первую версию.',
+      instructionExamples: ['Онлайн-оплату — позже, не в первой версии', 'Добавь роль администратора, который видит все заявки', 'Клиент должен видеть историю своих записей'],
     },
-    acceptance: ['Роли такие, как на самом деле', 'Обязательные функции первой версии отмечены', 'У каждой функции есть понятный критерий приёмки'],
-    acceptExplanation: 'Функции станут основой экранов и архитектуры. Если позже их изменить, экраны и архитектура получат уведомление.',
-    importHint: null,
-    contract: { explanation: 'Функции и роли — договорённость о том, что делает приложение. Экраны и архитектура строятся по ним.' },
+    acceptance: ['Функции такие, как нужно вашему делу', 'Отмечено, что войдёт в первую версию', 'У каждой функции есть понятный критерий «готово»'],
+    acceptExplanation: 'ТЗ станет основой следующих этапов: страниц или экранов, архитектуры и текстов. Если позже его изменить, они получат уведомление.',
+    importHint: 'Есть своё ТЗ? Загрузите его — ИИ разложит его по разделам этапа и покажет, чего не хватает.',
+    contract: { explanation: 'ТЗ — договорённость о том, что делает продукт и что входит в первую версию. Следующие этапы строятся по нему.' },
     playbook: {
-      version: '1.2.0',
+      version: '2.0.0',
       instructions: [
-        'Describe the web application from the brief and the business process, in plain words, in the project language.',
-        'Roles: the people who sign in (clients, staff, the owner as administrator). 1–6. Keys: short latin snake_case.',
-        'Features: 3–20 concrete things a role does in the app; each with the roles that use it, priority must/should/later and 1–5 acceptance criteria a non-technical owner can check.',
-        'Mark as must only what the first version cannot work without. Payments, integrations and analytics are should or later unless the user asked for them.',
-        'sensitivity: personal when the app keeps people\'s contacts; payments or health only when stated. integrations: only services the user named.',
-        'With personal or health data, add a must feature for consent at sign-up and deleting the account with its data. With payments, a feature for payment confirmation, receipt and refund. With several roles, one acceptance criterion says each role sees only what it is allowed to.',
+        'Write the specification (ТЗ) of the product from the brief and the business process, in plain words a non-technical owner understands, in the project language.',
+        'summary: 1–3 sentences — what the product is, for whom and which task it solves.',
+        'Roles: the people who use the product. For a web application, those who sign in (clients, staff, the owner as administrator). For a website, its visitors (clients) and the people who take the requests, bookings or orders (the owner, staff); visitors do not sign in. 1–6. Keys: short latin snake_case.',
+        'Features: 3–20 concrete things a role does; each with the roles that use it, priority must/should/later and 1–5 acceptance criteria the owner can check («готово, когда…»).',
+        'First version: mark as must only what the product cannot work without; the rest is should or later. Payments, integrations, loyalty programs and analytics are should or later unless the owner asked for them in the first version.',
+        'A website does only what the capabilities of its kind allow (the process marks steps the site cannot do as offline or unsupported): put such wishes into later and name them in limits, never promise them in must.',
+        'sensitivity: personal when the product keeps people\'s contacts; payments or health only when stated. integrations: only services the owner named.',
+        'With personal or health data, add a must feature for consent (at sign-up in an app, in the form on a website) and deleting the data on request. With payments, a feature for payment confirmation, receipt and refund. With several roles in an app, one acceptance criterion says each role sees only what it is allowed to.',
         'Every role uses at least one feature; features name only roles from the list.',
-        'data: keys of the records from the business process data that the feature creates, changes or shows, plus «user» for accounts. Every record of the process is used by at least one feature.',
+        'data: keys of the records from the business process data that the feature creates, changes or shows, plus «user» for accounts in an app. Every record of the process is used by at least one feature.',
+        'requirements: up to 10 general requirements in plain words (works on a phone, languages, how fast a page opens, what data is kept and how long) — only those that follow from the inputs.',
+        'limits: up to 10 limits and assumptions: what this version does not do and what was decided later in the process (situations answered «later»).',
+        'questions: up to 10 open questions the owner still has to decide; do not invent answers to them.',
       ],
     },
   },
@@ -331,13 +336,14 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     acceptExplanation: 'Принятые тексты пойдут в сборку сайта. Блоки, которые вы правили руками, ИИ без вашей просьбы не перепишет.',
     importHint: 'Если тексты уже готовы, вставьте их: каждый блок начните с заголовка на отдельной строке, между блоками — пустая строка. На многостраничном сайте блок с заголовком, как у страницы в меню («Услуги», «Контакты»), начинает эту страницу.',
     playbook: {
-      version: '1.1.0',
+      version: '1.2.0',
       instructions: [
         'Write for the audience from the brief, in the brief tone, in the project language.',
         'Single-page site: hero with the main action button first, contacts last; 4–7 sections in total.',
         'Do not invent testimonials, numbers of clients, years of experience, awards, prices or guarantees not present in the inputs.',
         'Hero text up to 2 sentences; section text up to 4 sentences; list items up to 2 sentences.',
         'Use square-bracket placeholders like [укажите ...] (Russian) or [add ...] (English) only when a needed fact is missing, so the owner sees what to add.',
+        'If the confirmed inputs contain a specification (ТЗ, features): describe only what the features with priority must or should do; never promise features with priority later or what its limits exclude.',
         'If the confirmed inputs contain a business process: tell visitors, in plain words, the rules from its rules list that matter to them before they book, order or write (cancellation, prepayment, returns, delivery, answer time), for example in a FAQ block or next to the main action. Use only those rules; never add other conditions.',
         'If the confirmed inputs contain a sitemap: write the blocks of every page in map order, with the block types the map lists for it, and set page to the page key (the home page is «home»); 4–7 blocks on the home page, 1–5 on the others; fill pageSeo for every page except home. Otherwise set page to null and return an empty pageSeo.',
       ],
@@ -411,7 +417,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Одна страница, которая рассказывает о вас и ведёт к одному действию: позвонить, написать или прийти.',
     goodFor: 'Мастерам, небольшим услугам, мероприятиям, запуску продукта.',
     examples: ['Мастер маникюра', 'Торты на заказ', 'Репетитор', 'Мероприятие'],
-    stages: ['goal', 'process', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'process', 'features', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница сайта в виде файла и все тексты проекта.',
   },
   company_site: {
@@ -420,7 +426,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Подробная страница компании: услуги и цены, о вас, как работаете, контакты и часы работы.',
     goodFor: 'Небольшим компаниям, салонам, студиям, сервисам.',
     examples: ['Автосервис', 'Стоматология', 'Юридическая консультация', 'Студия йоги'],
-    stages: ['goal', 'process', 'offer', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'process', 'features', 'offer', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница компании в виде файла, список услуг и все тексты проекта.',
   },
   multipage: {
@@ -429,7 +435,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Несколько страниц с меню: главная, услуги, о вас, вопросы, контакты — у каждой свой адрес и своё описание для поисковиков.',
     goodFor: 'Компаниям с несколькими направлениями услуг, клиникам, школам, сервисам, которым тесно на одной странице.',
     examples: ['Стоматология', 'Языковая школа', 'Ремонт квартир', 'Юридическая фирма'],
-    stages: ['goal', 'process', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'process', 'features', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт из нескольких страниц с меню, файлы всех страниц, карта сайта и все тексты проекта.',
   },
   store: {
@@ -438,7 +444,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Витрина с товарами, корзина и заказ без регистрации: клиент выбирает товары и способ получения, а вы получаете заказ в Telegram и видите все заказы в проекте.',
     goodFor: 'Небольшим магазинам и мастерским: до 60 товаров, самовывоз или доставка, оплата при получении или переводом.',
     examples: ['Кондитерская', 'Цветы', 'Мыло ручной работы', 'Кофе в зёрнах'],
-    stages: ['goal', 'process', 'products', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'process', 'features', 'products', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный магазин с витриной, корзиной и формой заказа, каталог и все тексты проекта. Заказы принимаются, когда сайт опубликован на BuildPath. Онлайн-оплаты пока нет.',
   },
   booking: {
@@ -447,7 +453,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Сайт с записью: клиент выбирает услугу, мастера и свободное время, а вы получаете запись в Telegram и видите все записи в проекте.',
     goodFor: 'Салонам красоты, барбершопам, массажу, тренерам, репетиторам — всем, кто работает по времени.',
     examples: ['Барбершоп', 'Маникюр', 'Массаж', 'Автомойка'],
-    stages: ['goal', 'process', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'process', 'features', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт с онлайн-записью, список услуг, расписание и все тексты проекта. Запись работает, когда сайт опубликован на BuildPath.',
   },
   web_app: {
@@ -478,6 +484,8 @@ export function routeInputs(route: StageKey[], key: StageKey): StageKey[] {
   if (key === 'content' && route.includes('products')) own.push('products');
   // Texts tell visitors the rules that matter to them (cancellation, returns, answer time) from the accepted process.
   if (key === 'content' && route.includes('process')) own.push('process');
+  // Texts describe what the first version does: functions the ТЗ puts off are not promised to visitors.
+  if (key === 'content' && route.includes('features')) own.push('features');
   return own;
 }
 

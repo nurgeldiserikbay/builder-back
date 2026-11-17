@@ -10,9 +10,10 @@ import type { Sitemap } from './sitemap.js';
 import type { TechPlan } from './techplan.js';
 import type { BusinessProcess } from './process.js';
 import { situationsFor } from './situations.js';
+import { FIRST_VERSION_SOFT_LIMIT } from './webapp.js';
 import type { AppFeatures, AppScreens } from './webapp.js';
 
-export const REVIEW_RULES_VERSION = '1.4.0';
+export const REVIEW_RULES_VERSION = '1.5.0';
 export const REVIEW_LIMITS = { reason: 1000, findings: 60, instruction: 1000 };
 
 export type FindingSeverity = 'blocking' | 'important' | 'minor';
@@ -129,7 +130,7 @@ function processReview(process: BusinessProcess, push: Push) {
   });
 }
 
-function featuresReview(value: AppFeatures, process: BusinessProcess | null, push: Push) {
+function featuresReview(value: AppFeatures, process: BusinessProcess | null, push: Push, kind: 'app' | 'site' = 'app') {
   const roleKeys = new Set(value.roles.map((role) => role.key));
   if (process) {
     const known = new Set(['user', ...process.data.map((entity) => entity.key)]);
@@ -166,20 +167,34 @@ function featuresReview(value: AppFeatures, process: BusinessProcess | null, pus
   for (const role of value.roles) {
     if (!value.features.some((feature) => feature.roles.includes(role.key))) push({
       code: 'FEATURES_ROLE_IDLE', severity: 'important', category: 'logic', target: role.key, where: tr('Роль «{0}»', [role.name]),
-      message: tr('У роли нет ни одной функции — ей нечего делать в приложении.'),
+      message: tr('У роли нет ни одной функции — ей нечего делать в продукте.'),
       fix: tr('Добавьте функции для этой роли или уберите её.'),
     });
   }
   const allText = value.features.map((feature) => [feature.title, feature.description, ...feature.acceptance].join(' ')).join(' ');
   if ((value.sensitivity === 'personal' || value.sensitivity === 'health') && !overlaps(allText, CONSENT_RULE)) push({
     code: 'FEATURES_PERSONAL_NO_PRIVACY', severity: 'blocking', category: 'security', target: 'sensitivity', where: tr('Чувствительность данных'),
-    message: tr('Приложение хранит личные данные, но нет функции согласия на обработку и удаления данных по просьбе.'),
-    fix: tr('Добавьте обязательную функцию: согласие при регистрации и удаление аккаунта с данными.'),
+    message: kind === 'app' ? tr('Приложение хранит личные данные, но нет функции согласия на обработку и удаления данных по просьбе.') : tr('Сайт собирает контакты, но нет функции согласия на обработку данных и удаления по просьбе.'),
+    fix: kind === 'app' ? tr('Добавьте обязательную функцию: согласие при регистрации и удаление аккаунта с данными.') : tr('Добавьте обязательную функцию: согласие на обработку данных в форме и удаление данных по просьбе.'),
   });
   if (value.sensitivity === 'payments' && !overlaps(allText, PAYMENT_CONFIRM)) push({
     code: 'FEATURES_PAYMENT_NO_CONFIRM', severity: 'blocking', category: 'security', target: 'sensitivity', where: tr('Чувствительность данных'),
     message: tr('Есть платежи, но нет функции подтверждения оплаты, чека и возврата.'),
     fix: tr('Добавьте функцию: подтверждение оплаты, чек и возврат денег.'),
+  });
+  // The first version: a soft limit — the owner decides, the review only says what a big first version costs.
+  const must = value.features.filter((feature) => feature.priority === 'must').length;
+  const limit = FIRST_VERSION_SOFT_LIMIT[kind];
+  if (must > limit) push({
+    code: 'SPEC_FIRST_VERSION_LARGE', severity: 'important', category: 'logic', target: 'features', where: tr('Первая версия'),
+    message: tr('В первую версию отмечено функций: {0}. Такая версия выйдет дольше и дороже, а клиенты увидят её позже.', [must]),
+    fix: tr('Обычно запускаются с {0} главными функциями, без которых продукт не работает, а остальное делают следующими версиями. Переведите часть функций в «Желательно» или «Позже» — или оставьте, если все они действительно нужны сразу.', [limit]),
+  });
+  for (const [index, question] of (value.questions ?? []).entries()) push({
+    code: 'SPEC_OPEN_QUESTION', severity: 'minor', category: 'clarity', target: `question:${index}`, where: tr('Открытые вопросы'),
+    message: question,
+    fix: tr('Решите вопрос и уберите его из списка или перенесите решение в функции и ограничения.'),
+    ownerDecides: true,
   });
   if (value.roles.length > 1 && !value.features.some((feature) => feature.acceptance.some((line) => overlaps(line, keywords('роли роль права разрешено доступ role access permission'))))) push({
     code: 'FEATURES_NO_ACCESS_RULE', severity: 'important', category: 'security', target: 'features', where: tr('Функции'),
@@ -428,7 +443,7 @@ export function reviewStage(type: string, content: unknown, context: { features?
   if (content && typeof content === 'object') {
     if (type === 'brief') briefReview(content as Brief, push);
     if (type === 'process') { processReview(content as BusinessProcess, push); situationsReview(content as BusinessProcess, context.projectType, push); }
-    if (type === 'features') featuresReview(content as AppFeatures, context.process ?? null, push);
+    if (type === 'features') featuresReview(content as AppFeatures, context.process ?? null, push, context.projectType && context.projectType !== 'web_app' ? 'site' : 'app');
     if (type === 'screens') screensReview(content as AppScreens, context.features ?? null, push);
     if (type === 'offer') offerReview(content as Offer, push);
     if (type === 'sitemap') sitemapReview(content as Sitemap, push);

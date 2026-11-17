@@ -18,21 +18,22 @@ const brief: Brief = {
 };
 
 describe('routes', () => {
-  it('company site content depends on goal, offer and the business process', () => {
-    assert.deepEqual(routeInputs(projectTypes.company_site.stages, 'content'), ['goal', 'offer', 'process']);
-    assert.deepEqual(routeInputs(projectTypes.landing.stages, 'content'), ['goal', 'process']);
+  it('company site content depends on goal, offer, the business process and the ТЗ', () => {
+    assert.deepEqual(routeInputs(projectTypes.company_site.stages, 'content'), ['goal', 'offer', 'process', 'features']);
+    assert.deepEqual(routeInputs(projectTypes.landing.stages, 'content'), ['goal', 'process', 'features']);
   });
   it('computes dependents and ancestors transitively', () => {
-    assert.deepEqual(routeDependents(projectTypes.landing.stages, 'goal'), ['process', 'techplan', 'content', 'design', 'build']);
-    assert.deepEqual(routeAncestors(projectTypes.company_site.stages, 'build'), ['goal', 'process', 'offer', 'techplan', 'content', 'design']);
+    assert.deepEqual(routeDependents(projectTypes.landing.stages, 'goal'), ['process', 'features', 'techplan', 'content', 'design', 'build']);
+    assert.deepEqual(routeAncestors(projectTypes.company_site.stages, 'build'), ['goal', 'process', 'features', 'offer', 'techplan', 'content', 'design']);
   });
-  it('the business process comes right after the goal, and the architecture builds on it', () => {
+  it('the business process comes right after the goal, then the ТЗ, and the architecture builds on them', () => {
     for (const type of Object.values(projectTypes)) {
-      assert.deepEqual(type.stages.slice(0, 2), ['goal', 'process'], type.key);
+      assert.deepEqual(type.stages.slice(0, 3), ['goal', 'process', 'features'], type.key);
+      assert.ok(routeInputs(type.stages, 'techplan').includes('features'), type.key);
       assert.ok(routeInputs(type.stages, 'techplan').includes('process'), type.key);
       assert.ok(routeInputs(type.stages, 'build').includes('techplan'), type.key);
     }
-    assert.deepEqual(routeInputs(projectTypes.booking.stages, 'techplan'), ['goal', 'process', 'schedule']);
+    assert.deepEqual(routeInputs(projectTypes.booking.stages, 'techplan'), ['goal', 'process', 'schedule', 'features']);
   });
 });
 

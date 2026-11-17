@@ -292,7 +292,7 @@ export class JourneyCore {
     return inProject(ctx, () => buildTechPlan({
       projectType: ctx.type.key, brief: (inputs.goal?.content as Brief | undefined) ?? null, schedule: schedule ?? null,
       process: (inputs.process?.content as BusinessProcess | undefined) ?? null, sitemap: (inputs.sitemap?.content as Sitemap | undefined) ?? null,
-      store: (inputs.products?.content as Catalog | undefined) ?? null,
+      store: (inputs.products?.content as Catalog | undefined) ?? null, spec: (inputs.features?.content as AppFeatures | undefined) ?? null,
     }, notes));
   }
 

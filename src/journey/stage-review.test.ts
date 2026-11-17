@@ -103,7 +103,7 @@ describe('stage review', () => {
   });
 
   it('gives types without rules the full score', () => {
-    assert.deepEqual(reviewStage('design', { palette: 'forest' }), { rulesVersion: '1.4.0', score: 100, findings: [], blocking: 0 });
+    assert.deepEqual(reviewStage('design', { palette: 'forest' }), { rulesVersion: '1.5.0', score: 100, findings: [], blocking: 0 });
   });
 
   it('checks the site map, texts, schedule, catalog and architecture', () => {

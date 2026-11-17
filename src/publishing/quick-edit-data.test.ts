@@ -1,5 +1,6 @@
 import { StageReviewService } from '../journey/stage-review.service.js';
 import 'dotenv/config';
+import { templateFeatures } from '../journey/webapp.js';
 import { situationsFor } from '../journey/situations.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -83,6 +84,7 @@ describe('quick edit of prices and hours (database)', async () => {
     await step('goal', brief);
     // The owner answers the questions the platform asks about the business (the typical answer each time).
     await step('process', { ...templateProcess(projectType, brief), situations: situationsFor(projectType).map((item) => ({ key: item.key, answer: item.options.find((option) => option.typical)!.value })) });
+    await step('features', templateFeatures(brief, templateProcess(projectType, brief), 'site'));
     if (projectType === 'store') await step('products', templateCatalog(offer));
     else { await step('offer', offer); await step('schedule', templateSchedule(offer)); }
     await step('techplan', { ownerNotes: null });
