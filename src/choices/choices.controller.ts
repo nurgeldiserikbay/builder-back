@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Delete, Get, Header, HttpCode, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { GIT_PROVIDERS, type GitProviderKey } from './git-providers.js';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { ChoicesService } from './choices.service.js';
@@ -52,8 +53,8 @@ export class ChoicesController {
   @HttpCode(200)
   connect(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
     const input = body(raw, ['provider', 'repoUrl', 'token']);
-    if (input.provider !== 'github' && input.provider !== 'gitlab') throw new BadRequestException('REPO_PROVIDER_INVALID');
-    return this.choices.connect(request.user.id, projectId, { provider: input.provider, repoUrl: str(input.repoUrl, 'REPO_URL_INVALID', 500), token: str(input.token, 'REPO_TOKEN_INVALID', 400) });
+    if (!GIT_PROVIDERS.includes(input.provider as GitProviderKey)) throw new BadRequestException('REPO_PROVIDER_INVALID');
+    return this.choices.connect(request.user.id, projectId, { provider: input.provider as GitProviderKey, repoUrl: str(input.repoUrl, 'REPO_URL_INVALID', 500), token: str(input.token, 'REPO_TOKEN_INVALID', 400) });
   }
 
   @Post('repository/github/start')
@@ -91,15 +92,15 @@ export class ChoicesController {
 
   @Get('repository/push')
   @Header('Cache-Control', 'no-store')
-  preview(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
-    return this.choices.pushPreview(request.user.id, projectId);
+  preview(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Query('ci') ci?: string) {
+    return this.choices.pushPreview(request.user.id, projectId, ci === '1' || ci === 'true');
   }
 
   @Post('repository/push')
   @HttpCode(200)
   push(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
-    const input = body(raw, ['confirm']);
-    return this.choices.push(request.user.id, projectId, input.confirm === true);
+    const input = body(raw, ['confirm', 'ci']);
+    return this.choices.push(request.user.id, projectId, input.confirm === true, input.ci === true);
   }
 
   @Post('deployment/verify')

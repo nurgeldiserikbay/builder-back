@@ -2,7 +2,7 @@ import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import { decryptToken, encryptToken, tokenKey } from '../security/token-crypto.js';
-import { HOSTING_PROVIDERS, HostingError, hostingProvider, type HostingProviderKey } from './hosting-providers.js';
+import { HOSTING_PROVIDERS, HostingError, hostingProvider, hostingProviderName, type HostingProviderKey } from './hosting-providers.js';
 
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
 import { PrismaService } from '../database/prisma.service.js';
@@ -16,7 +16,8 @@ import { checkSite } from './site-check.js';
 import { GITHUB_SCOPES, authorizeUrl, createRepo, exchangeCode, githubOauthConfig, githubUser, writableRepos, type GithubOauthConfig } from './github-oauth.js';
 import { bookingBundle, bookingPackageFiles } from '../export/booking-package.js';
 import type { SiteArtifact } from '../journey/artifacts.js';
-import { GitHubClient, GitLabClient, GitProviderError, parseRepoUrl, type GitFile, type GitProviderKey } from './git-providers.js';
+import { BitbucketClient, GitHubClient, GiteaClient, GitLabClient, GitProviderError, gitProviderName, parseRepoUrl, type GitFile, type GitProviderKey } from './git-providers.js';
+import { ciDeployFile, renderBlueprint, staticDockerfile } from './infra-files.js';
 
 const isCard = (key: string): key is CardKey => key in choiceCards;
 
@@ -53,6 +54,11 @@ export class ChoicesService {
     if (provider === 'github') {
       const api = baseUrl === 'https://github.com' ? (process.env.GITHUB_API_URL ?? 'https://api.github.com') : `${baseUrl}/api/v3`;
       return new GitHubClient(token, api.replace(/\/$/, ''));
+    }
+    if (provider === 'gitea') return new GiteaClient(token, baseUrl);
+    if (provider === 'bitbucket') {
+      const api = baseUrl === 'https://bitbucket.org' ? (process.env.BITBUCKET_API_URL ?? 'https://api.bitbucket.org/2.0') : `${baseUrl}/2.0`;
+      return new BitbucketClient(token, api.replace(/\/$/, ''));
     }
     return new GitLabClient(token, baseUrl);
   }
@@ -102,7 +108,7 @@ export class ChoicesService {
     if (card === 'technologies') return option === 'buildpath' ? tr('Сайт собирает и проверяет BuildPath; файлы ваши, их можно скачать в любой момент.') : option === 'developer' ? tr('Сайт делает разработчик на своём стеке; BuildPath готовит для него тексты, схемы и ТЗ.') : tr('Сайт собираете в конструкторе сами, перенося тексты; BuildPath готовит материалы.');
     if (card === 'deployment') {
       if (option === 'buildpath') return state.live ? tr('Сайт работает на BuildPath.') : tr('После публикации сайт будет работать на BuildPath — одной кнопкой на вкладке «Публикация».');
-      if (state.hosting?.siteUrl) return tr('Сайт выкладывается на {0}: {1}.', [state.hosting.provider, state.hosting.siteUrl]);
+      if (state.hosting?.siteUrl) return tr('Сайт выкладывается на {0}: {1}.', [hostingProviderName[state.hosting.provider] ?? state.hosting.provider, state.hosting.siteUrl]);
       return tr('Сайт будет работать у вас — пошаговая инструкция в «Изменить».');
     }
     if (card === 'domain') {
@@ -110,7 +116,7 @@ export class ChoicesService {
       if (option === 'own_domain') return tr('Свой домен ещё не подключён — шаги в «Изменить».');
       return state.live && state.slug ? tr('Адрес сайта: {0}.', [sitesConfig().urlFor(state.slug)]) : tr('Бесплатный адрес BuildPath выберете при публикации; свой домен можно подключить позже.');
     }
-    if (state.repo) return tr('Код в репозитории {0}: {1}.', [state.repo.provider === 'github' ? 'GitHub' : 'GitLab', state.repo.webUrl]);
+    if (state.repo) return tr('Код в репозитории {0}: {1}.', [gitProviderName[state.repo.provider as GitProviderKey] ?? state.repo.provider, state.repo.webUrl]);
     if (option === 'archive') return tr('Копию всех файлов можно скачать архивом на вкладке «Результат» — на случай переезда или для разработчика.');
     return tr('Репозиторий ещё не подключён — шаги в «Изменить».');
   }
@@ -184,7 +190,7 @@ export class ChoicesService {
     try {
       parsed = parseRepoUrl(input.provider, input.repoUrl, this.allowLocal());
       // Own GitLab servers: refuse private and internal addresses.
-      if (!this.allowLocal() && parsed.baseUrl !== 'https://github.com' && parsed.baseUrl !== 'https://gitlab.com') await resolveAndValidateReviewTarget(`${parsed.baseUrl}/`);
+      if (!this.allowLocal() && !['https://github.com', 'https://gitlab.com', 'https://bitbucket.org', 'https://codeberg.org'].includes(parsed.baseUrl)) await resolveAndValidateReviewTarget(`${parsed.baseUrl}/`);
     } catch (error) {
       if (error instanceof GitProviderError) throw new BadRequestException(error.code);
       if (error instanceof ReviewTargetPolicyError) throw new BadRequestException('REPO_HOST_NOT_ALLOWED');
@@ -338,8 +344,28 @@ export class ChoicesService {
   }
 
   /** Files that a push would send: only accepted results, the same as the downloadable package. */
-  private async files(userId: string, projectId: string): Promise<{ files: GitFile[]; siteIncluded: boolean; complete: boolean }> {
-    return runWithLocale(await this.projectLocale(projectId), () => this.repositoryFiles(userId, projectId));
+  private async files(userId: string, projectId: string, options: { ci?: boolean; provider?: GitProviderKey; branch?: string } = {}) {
+    return runWithLocale(await this.projectLocale(projectId), async () => {
+      const base = await this.repositoryFiles(userId, projectId);
+      const infra = await this.infraState(projectId);
+      const files = [...base.files];
+      // Render builds from the repository: the Blueprint goes with the site when Render is the chosen place.
+      if (infra.deployment === 'render' && base.siteIncluded) files.push(renderBlueprint((await this.prisma.project.findUnique({ where: { id: projectId }, select: { name: true } }))?.name ?? 'site'));
+      const ciAvailable = base.siteIncluded && infra.staticSite;
+      if (options.ci && !ciAvailable) throw new ConflictException('CI_NOT_AVAILABLE');
+      if (options.ci && options.provider) files.push(ciDeployFile(options.provider, options.branch ?? 'main'));
+      return { ...base, files, ciAvailable };
+    });
+  }
+
+  /** What the infrastructure files depend on: the chosen place and whether the site is plain pages (no booking app or store). */
+  private async infraState(projectId: string): Promise<{ deployment: string | null; staticSite: boolean }> {
+    const [choice, build] = await Promise.all([
+      this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'deployment' } }, select: { optionKey: true } }),
+      this.prisma.projectStage.findFirst({ where: { projectId, stageKey: 'build' }, select: { approvedVersionId: true } }),
+    ]);
+    const artifact = build?.approvedVersionId ? (await this.prisma.stageArtifactVersion.findUnique({ where: { id: build.approvedVersionId }, select: { content: true } }))?.content as unknown as SiteArtifact | undefined : undefined;
+    return { deployment: choice?.optionKey ?? null, staticSite: Boolean(artifact) && !artifact?.meta?.booking && !artifact?.meta?.store };
   }
 
   /** README and instructions are project files: in the project's language. */
@@ -365,29 +391,32 @@ export class ChoicesService {
     return { files, siteIncluded: Boolean(site), complete: result.complete };
   }
 
-  async pushPreview(userId: string, projectId: string) {
+  async pushPreview(userId: string, projectId: string, ci = false) {
     await this.access(userId, projectId, true);
     const repo = await this.prisma.codeRepository.findUnique({ where: { projectId } });
     if (!repo) throw new NotFoundException('REPO_NOT_CONNECTED');
-    const { files, siteIncluded, complete } = await this.files(userId, projectId);
-    return { data: { repository: this.repositoryView(repo), branch: repo.defaultBranch, files: files.map((file) => ({ path: file.path, bytes: Buffer.byteLength(file.content) })), siteIncluded, complete } };
+    const { files, siteIncluded, complete, ciAvailable } = await this.files(userId, projectId, { ci, provider: repo.provider as GitProviderKey, branch: repo.defaultBranch });
+    return { data: {
+      repository: this.repositoryView(repo), branch: repo.defaultBranch, files: files.map((file) => ({ path: file.path, bytes: Buffer.byteLength(file.content) })), siteIncluded, complete,
+      ci: { available: ciAvailable, included: ci, secrets: ['SSH_HOST', 'SSH_USER', 'SSH_PRIVATE_KEY', 'SSH_KNOWN_HOSTS'], optional: ['DEPLOY_PATH', 'SSH_PORT'] },
+    } };
   }
 
   /** Sends accepted results to the connected repository. Requires explicit confirmation every time. */
-  async push(userId: string, projectId: string, confirm: boolean) {
+  async push(userId: string, projectId: string, confirm: boolean, ci = false) {
     if (!confirm) throw new BadRequestException('CONFIRMATION_REQUIRED');
     const access = await this.access(userId, projectId, true);
     const key = this.key();
     if (!key) throw new ServiceUnavailableException('REPO_CONNECT_NOT_CONFIGURED');
     const repo = await this.prisma.codeRepository.findUnique({ where: { projectId } });
     if (!repo) throw new NotFoundException('REPO_NOT_CONNECTED');
-    const { files } = await this.files(userId, projectId);
+    const { files } = await this.files(userId, projectId, { ci, provider: repo.provider as GitProviderKey, branch: repo.defaultBranch });
     const token = this.decrypt(repo.tokenEncrypted, key);
     try {
       const { commitUrl } = await this.client(repo.provider as GitProviderKey, token, repo.baseUrl).commit(repo.repoPath, repo.defaultBranch, files, tr("BuildPath: {0} — принятая версия", [access.name]));
       await this.prisma.$transaction([
         this.prisma.codeRepository.update({ where: { projectId }, data: { lastPushAt: new Date(), lastCommitUrl: commitUrl || null, lastError: null } }),
-        this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'repository_pushed', details: { repoPath: repo.repoPath, files: files.map((file) => file.path), commitUrl } } }),
+        this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'repository_pushed', details: { repoPath: repo.repoPath, files: files.map((file) => file.path), commitUrl, ci } } }),
       ]);
     } catch (error) {
       const code = error instanceof GitProviderError ? error.code : 'REPO_PROVIDER_FAILED';
@@ -404,7 +433,8 @@ export class ChoicesService {
       if (!option.requires) continue;
       const other = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: option.requires.card } }, select: { optionKey: true } });
       const repo = option.requires.card === 'code_hosting' ? await this.prisma.codeRepository.findUnique({ where: { projectId }, select: { provider: true } }) : null;
-      result[option.key] = other?.optionKey === option.requires.option && (option.requires.card !== 'code_hosting' || repo?.provider === option.requires.option);
+      const allowed = Array.isArray(option.requires.option) ? option.requires.option : [option.requires.option];
+      result[option.key] = Boolean(other && allowed.includes(other.optionKey)) && (option.requires.card !== 'code_hosting' || Boolean(repo && allowed.includes(repo.provider)));
     }
     return result;
   }
@@ -589,6 +619,10 @@ export class ChoicesService {
       tr("4. Через минуту откройте свой домен в браузере. Вернитесь в BuildPath и нажмите «Проверить адрес»."), '',
       tr("Обновить сайт: замените файлы в папке `site` новыми из BuildPath — перезапускать ничего не нужно."), '',
       tr("Форма заявок BuildPath на своём сервере не работает: на сайте останутся кнопки звонка и мессенджера."), '',
+      tr("## Обновлять автоматически"), '',
+      tr("Если код хранится в репозитории (GitHub, GitLab, Gitea или Bitbucket), при отправке из BuildPath отметьте «Выкладывать на мой сервер автоматически». После каждой отправки сайт сам обновится на сервере. В настройках репозитория нужны секреты SSH_HOST, SSH_USER, SSH_PRIVATE_KEY и SSH_KNOWN_HOSTS — как их получить, написано в BuildPath."), '',
+      tr("## Запустить как контейнер"), '',
+      tr("`Dockerfile` собирает образ сайта для любого сервиса, который запускает Docker-контейнеры: `docker build -t my-site . && docker run -p 8080:80 my-site`. HTTPS в этом случае даёт сам сервис."), '',
     ].join('\n');
     return {
       data: {
@@ -598,6 +632,7 @@ export class ChoicesService {
           ...result.files.filter((file) => file.name.startsWith('pages/')).map((file) => ({ name: `site/${file.name.slice('pages/'.length)}`, mimeType: 'text/html', content: file.content })),
           { name: 'Caddyfile', mimeType: 'text/plain', content: caddy },
           { name: 'compose.yaml', mimeType: 'text/yaml', content: compose },
+          { name: 'Dockerfile', mimeType: 'text/plain', content: staticDockerfile() },
           { name: 'README.md', mimeType: 'text/markdown', content: readme },
         ],
       },

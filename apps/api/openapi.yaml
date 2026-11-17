@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.21.0
+  version: 1.22.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -1686,11 +1686,12 @@ paths:
     post:
       tags: [Choices]
       operationId: connectRepository
-      summary: Connect a GitHub or GitLab repository with an access token
+      summary: Connect a GitHub, GitLab, Gitea/Forgejo or Bitbucket repository with an access token
       description: |
-        The chosen code_hosting option must match the provider. The address is parsed from what the user copied (GitHub only on github.com;
-        GitLab on gitlab.com or an own server, which must resolve to public addresses). The token is checked against the provider; the
-        connection is stored only when writing is allowed (422 REPO_WRITE_NOT_ALLOWED otherwise). The token is encrypted with
+        The chosen code_hosting option must match the provider. The address is parsed from what the user copied (GitHub only on github.com,
+        Bitbucket only on bitbucket.org; GitLab and Gitea/Forgejo/Codeberg on any server, which must resolve to public addresses). The token
+        is checked against the provider; the connection is stored only when writing is allowed (422 REPO_WRITE_NOT_ALLOWED otherwise).
+        Bitbucket does not report a token's rights, so a token that reads the repository is accepted and the first push confirms writing. The token is encrypted with
         CODE_HOSTING_TOKEN_ENCRYPTION_KEY (503 REPO_CONNECT_NOT_CONFIGURED without it) and never returned.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
@@ -1700,7 +1701,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, required: [provider, repoUrl, token], properties: { provider: { type: string, enum: [github, gitlab] }, repoUrl: { type: string, maxLength: 500 }, token: { type: string, maxLength: 400, writeOnly: true } } }
+            schema: { type: object, additionalProperties: false, required: [provider, repoUrl, token], properties: { provider: { type: string, enum: [github, gitlab, gitea, bitbucket] }, repoUrl: { type: string, maxLength: 500 }, token: { type: string, maxLength: 400, writeOnly: true } } }
       responses:
         '200': { description: Card with the connected repository }
         '400': { $ref: '#/components/responses/Problem' }
@@ -1723,19 +1724,30 @@ paths:
       tags: [Choices]
       operationId: previewRepositoryPush
       summary: Files and branch that a push would send
-      description: Only accepted results — the same as the downloadable package — as index.html, project.md, project.json and README.md.
+      description: |
+        Only accepted results — the same as the downloadable package — as index.html, the other pages, project.md, project.json and
+        README.md. When Render is the chosen deployment, render.yaml goes too. With ci=true the push also carries the auto-deploy pipeline
+        for the repository's service (.github/workflows/buildpath-deploy.yml, .gitlab-ci.yml, .gitea/workflows/buildpath-deploy.yml or
+        bitbucket-pipelines.yml): after every push it copies the pages to the owner's server over SSH using secrets kept in the repository
+        (SSH_HOST, SSH_USER, SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS, optional DEPLOY_PATH). Only for accepted sites without booking or a store
+        (409 CI_NOT_AVAILABLE). A pipeline file the owner wrote is never overwritten (422 REPO_CI_FILE_EXISTS on push).
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: ci, in: query, required: false, schema: { type: string, enum: ['1', 'true'] } }
       responses:
-        '200': { description: 'repository, branch, files (path, bytes), siteIncluded, complete' }
+        '200': { description: 'repository, branch, files (path, bytes), siteIncluded, complete, ci (available, included, secrets, optional)' }
         '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
     post:
       tags: [Choices]
       operationId: pushRepository
       summary: Send accepted results to the repository as one commit
-      description: Requires confirm=true every time (owners and managers). Recorded as repository_pushed with the commit address.
+      description: |
+        Requires confirm=true every time (owners and managers). ci=true adds the auto-deploy pipeline, as in the preview. Recorded as
+        repository_pushed with the commit address. 422 REPO_WORKFLOW_PERMISSION when a GitHub key may not write workflow files,
+        REPO_CI_FILE_EXISTS when the repository already has the owner's own pipeline file, REPO_SERVER_TOO_OLD for Gitea before 1.20.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -1744,10 +1756,11 @@ paths:
         required: true
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, required: [confirm], properties: { confirm: { type: boolean, enum: [true] } } }
+            schema: { type: object, additionalProperties: false, required: [confirm], properties: { confirm: { type: boolean, enum: [true] }, ci: { type: boolean } } }
       responses:
         '200': { description: Card with lastPushAt and lastCommitUrl }
         '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/deployment/verify:
     post:
@@ -1772,10 +1785,10 @@ paths:
     post:
       tags: [Choices]
       operationId: connectHosting
-      summary: Connect an external static hosting (Netlify)
+      summary: Connect an external static hosting (Netlify or Vercel)
       description: |
         Owner or manager, after choosing that hosting in the deployment card (409 HOSTING_NOT_CHOSEN). Checks the access token, creates
-        a site in the owner's account (or takes an existing one by siteId) and keeps the token encrypted with
+        a site in the owner's account (or takes an existing one by siteId; for Vercel a project ID or name, in the token's default team) and keeps the token encrypted with
         CODE_HOSTING_TOKEN_ENCRYPTION_KEY (503 REPO_CONNECT_NOT_CONFIGURED without it). Creating a site there is an action in the owner's
         account, so confirm must be true. 422 HOSTING_TOKEN_INVALID, HOSTING_SITE_NOT_FOUND, HOSTING_SITE_NAME_TAKEN, HOSTING_RATE_LIMITED,
         HOSTING_UNAVAILABLE, HOSTING_FAILED.
@@ -1792,7 +1805,7 @@ paths:
               additionalProperties: false
               required: [provider, token, confirm]
               properties:
-                provider: { type: string, enum: [netlify] }
+                provider: { type: string, enum: [netlify, vercel] }
                 token: { type: string, maxLength: 300, writeOnly: true }
                 siteId: { type: [string, 'null'], maxLength: 80 }
                 confirm: { type: boolean, enum: [true] }

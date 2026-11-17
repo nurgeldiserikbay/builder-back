@@ -15,7 +15,7 @@ describe('GitHub OAuth', () => {
   it('asks only for repository access, with the state', () => {
     const url = new URL(authorizeUrl(config, 'state123'));
     assert.equal(url.origin + url.pathname, 'https://github.com/login/oauth/authorize');
-    assert.equal(url.searchParams.get('scope'), 'repo');
+    assert.equal(url.searchParams.get('scope'), 'repo workflow');
     assert.equal(url.searchParams.get('state'), 'state123');
     assert.equal(url.searchParams.get('redirect_uri'), config.redirectUrl);
   });
