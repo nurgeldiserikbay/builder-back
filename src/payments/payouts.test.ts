@@ -22,7 +22,10 @@ describe('Specialist payouts', () => {
     const sealed = sealSecret('KZ86125KZT5004100100', key);
     assert.ok(!sealed.includes('KZ86'));
     assert.equal(openSecret(sealed, key), 'KZ86125KZT5004100100');
-    assert.equal(openSecret(sealed.slice(0, -2) + 'AA', key), null);
+    // Flip one real byte of the ciphertext (editing base64 text can leave the bytes unchanged and made this test flaky).
+    const [iv, tag, data] = sealed.split('.');
+    const bytes = Buffer.from(data!, 'base64url'); bytes[0] = bytes[0]! ^ 0xff;
+    assert.equal(openSecret([iv, tag, bytes.toString('base64url')].join('.'), key), null);
     assert.equal(openSecret(sealed, Buffer.alloc(32, 8)), null);
   });
 });
