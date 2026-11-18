@@ -25,29 +25,43 @@ type Fetch = typeof fetch;
 
 export class ChatCompletionsAgentModel implements AgentModel {
   readonly name = 'openai-chat-tools';
-  constructor(private readonly apiKey: string, readonly model: string, private readonly baseUrl: string, private readonly fetchImpl: Fetch = fetch) {}
+  /** Retries after a timeout, a lost connection or a busy provider (429/5xx): a slow thinking model often answers on the next try. */
+  constructor(private readonly apiKey: string, readonly model: string, private readonly baseUrl: string, private readonly fetchImpl: Fetch = fetch, private readonly options: { reasoningEffort?: string; retryDelaysMs?: number[]; timeoutMs?: number } = {}) {}
 
   async next(messages: AgentMessage[], tools: AgentTool[]): Promise<AgentReply> {
-    let response: Response;
-    try {
-      response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: this.model, messages, tool_choice: 'auto', parallel_tool_calls: false, max_tokens: 16_000,
-          tools: tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })),
-        }),
-        signal: AbortSignal.timeout(240_000),
-      });
-    } catch {
-      throw new AgentModelError('AGENT_MODEL_UNAVAILABLE');
+    const delays = this.options.retryDelaysMs ?? [10_000, 30_000];
+    const body = JSON.stringify({
+      model: this.model, messages, tool_choice: 'auto', parallel_tool_calls: false, max_tokens: 16_000,
+      ...(this.options.reasoningEffort ? { reasoning_effort: this.options.reasoningEffort } : {}),
+      tools: tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })),
+    });
+    let response: Response | null = null;
+    for (let attempt = 0; ; attempt += 1) {
+      let failure: string;
+      try {
+        response = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${this.apiKey}`, 'content-type': 'application/json' },
+          body,
+          signal: AbortSignal.timeout(this.options.timeoutMs ?? 240_000),
+        });
+        if (response.ok || ![408, 429, 500, 502, 503, 504].includes(response.status)) break;
+        failure = `answered ${response.status}: ${(await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300)}`;
+        response = null;
+      } catch (error) {
+        failure = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError') ? 'did not answer in time' : 'could not be reached';
+      }
+      // The reason goes to the server log, never to people; the request and the key are not logged.
+      console.warn(`Agent model ${this.model} ${failure} (attempt ${attempt + 1} of ${delays.length + 1})`);
+      if (attempt >= delays.length) throw new AgentModelError('AGENT_MODEL_UNAVAILABLE');
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
     }
     if (!response.ok) {
       // The status and the start of the provider's answer go to the server log, never to people: enough to see a wrong model
       // name or a request the provider does not accept. The request and the key are not logged.
       const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
       console.warn(`Agent model ${this.model} answered ${response.status}: ${detail}`);
-      throw new AgentModelError(response.status === 400 || response.status === 401 || response.status === 403 || response.status === 404 ? 'AGENT_MODEL_REJECTED' : 'AGENT_MODEL_UNAVAILABLE');
+      throw new AgentModelError('AGENT_MODEL_REJECTED');
     }
     let payload: { choices?: Array<{ message?: { content?: unknown; tool_calls?: Array<{ id?: unknown; function?: { name?: unknown; arguments?: unknown }; extra_content?: unknown }> } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
     try { payload = await response.json(); } catch { throw new AgentModelError('AGENT_MODEL_INVALID'); }
@@ -78,5 +92,6 @@ export function configuredAgentModel(env: NodeJS.ProcessEnv = process.env): Agen
   if (!apiKey || !model) return null;
   const baseUrl = (env.BUILDER_AGENT_BASE_URL || env.BUILDER_AI_OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
   if (!/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(`${baseUrl}/`)) return null;
-  return new ChatCompletionsAgentModel(apiKey, model, baseUrl);
+  const effort = env.BUILDER_AGENT_REASONING_EFFORT;
+  return new ChatCompletionsAgentModel(apiKey, model, baseUrl, fetch, effort && ['none', 'minimal', 'low', 'medium', 'high'].includes(effort) ? { reasoningEffort: effort } : {});
 }
