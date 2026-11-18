@@ -2777,4 +2777,13 @@ export const en: Record<string, string> = {
   "Тесты проходят": "Tests pass",
   "Сборка интерфейса проходит": "The interface builds",
   "Задача не получилась.": "The task did not work out.",
+  "Что сделал ИИ-агент": "What the AI agent did",
+  "Агент не оставил отчёта.": "The agent left no report.",
+  "Сделано": "Done",
+  "Не сделано или сделано частично": "Not done or done partly",
+  "Пожелание владельца": "Owner's wish",
+  "Код написан ИИ-агентом BuildPath (стек {0}, модель {1}). Проверьте изменения перед слиянием: агент мог ошибиться. Переменные окружения перечислены в .env.example.": "The code was written by the BuildPath AI agent (stack {0}, model {1}). Review the changes before merging: the agent may have made mistakes. Environment variables are listed in .env.example.",
+  "BuildPath: приложение «{0}» от ИИ-агента": "BuildPath: the «{0}» application by the AI agent",
+  "BuildPath: приложение от ИИ-агента (задача {0})": "BuildPath: application by the AI agent (task {0})",
+  "Проверка BuildPath": "BuildPath check",
 };

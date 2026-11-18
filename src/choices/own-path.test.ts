@@ -162,3 +162,43 @@ describe('own path: Vercel', () => {
     await assert.rejects(new VercelProvider('t', impl, 'https://api.test').verify(), isCode('HOSTING_TOKEN_INVALID'));
   });
 });
+
+describe('agent work on a branch with a pull request', () => {
+  it('GitHub: branches from the main branch, opens a request, finds the open one on a repeat, and reports an empty repository', async () => {
+    const { impl, calls } = fakeFetch([
+      ['GET', /\/git\/ref\/heads\/main$/, 200, { object: { sha: 'm1' } }],
+      ['POST', /\/git\/refs$/, 201, {}],
+      ['POST', /\/pulls$/, 201, { html_url: 'https://github.com/a/b/pull/3' }],
+    ]);
+    const github = new GitHubClient('t', 'https://api.test', impl);
+    assert.deepEqual(await github.ensureBranch('a/b', 'buildpath/agent-1', 'main'), { created: true, empty: false });
+    assert.deepEqual(calls[1].body, { ref: 'refs/heads/buildpath/agent-1', sha: 'm1' });
+    assert.deepEqual(await github.openPullRequest('a/b', { head: 'buildpath/agent-1', base: 'main', title: 'T', body: 'B' }), { url: 'https://github.com/a/b/pull/3' });
+    const again = fakeFetch([['POST', /\/pulls$/, 422, {}], ['GET', /\/pulls\?state=open&head=a%3Abuildpath/, 200, [{ html_url: 'https://github.com/a/b/pull/3' }]]]);
+    assert.equal((await new GitHubClient('t', 'https://api.test', again.impl).openPullRequest('a/b', { head: 'buildpath/agent-1', base: 'main', title: 'T', body: 'B' })).url, 'https://github.com/a/b/pull/3');
+    const empty = fakeFetch([['GET', /\/git\/ref\/heads\/main$/, 409, {}]]);
+    assert.deepEqual(await new GitHubClient('t', 'https://api.test', empty.impl).ensureBranch('a/b', 'x', 'main'), { created: false, empty: true });
+  });
+  it('GitLab, Gitea and Bitbucket: the same with their own requests', async () => {
+    const gitlab = fakeFetch([['POST', /\/repository\/branches\?branch=buildpath%2Fagent-1&ref=main$/, 201, {}], ['POST', /\/merge_requests$/, 201, { web_url: 'https://gitlab.com/a/b/-/merge_requests/1' }]]);
+    const gl = new GitLabClient('t', 'https://gitlab.com', gitlab.impl);
+    assert.deepEqual(await gl.ensureBranch('a/b', 'buildpath/agent-1', 'main'), { created: true, empty: false });
+    assert.equal((await gl.openPullRequest('a/b', { head: 'buildpath/agent-1', base: 'main', title: 'T', body: 'B' })).url, 'https://gitlab.com/a/b/-/merge_requests/1');
+    assert.deepEqual(gitlab.calls[1].body, { source_branch: 'buildpath/agent-1', target_branch: 'main', title: 'T', description: 'B' });
+
+    const gitea = fakeFetch([['POST', /\/repos\/a\/b\/branches$/, 409, {}], ['POST', /\/repos\/a\/b\/pulls$/, 201, { html_url: 'https://codeberg.org/a/b/pulls/2' }]]);
+    const gt = new GiteaClient('t', 'https://codeberg.org', gitea.impl);
+    assert.deepEqual(await gt.ensureBranch('a/b', 'buildpath/agent-1', 'main'), { created: false, empty: false }, 'an existing branch is reused');
+    assert.equal((await gt.openPullRequest('a/b', { head: 'buildpath/agent-1', base: 'main', title: 'T', body: 'B' })).url, 'https://codeberg.org/a/b/pulls/2');
+
+    const bitbucket = fakeFetch([
+      ['GET', /\/refs\/branches\/main$/, 200, { target: { hash: 'h1' } }],
+      ['POST', /\/refs\/branches$/, 201, {}],
+      ['POST', /\/pullrequests$/, 201, { links: { html: { href: 'https://bitbucket.org/a/b/pull-requests/4' } } }],
+    ]);
+    const bb = new BitbucketClient('t', 'https://api.test', bitbucket.impl);
+    assert.deepEqual(await bb.ensureBranch('a/b', 'buildpath/agent-1', 'main'), { created: true, empty: false });
+    assert.deepEqual(bitbucket.calls[1].body, { name: 'buildpath/agent-1', target: { hash: 'h1' } });
+    assert.equal((await bb.openPullRequest('a/b', { head: 'buildpath/agent-1', base: 'main', title: 'T', body: 'B' })).url, 'https://bitbucket.org/a/b/pull-requests/4');
+  });
+});

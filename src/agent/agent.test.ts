@@ -179,13 +179,33 @@ describe('AI agent: tasks (database)', async () => {
 
     // The owner's view: the latest task with its report and checks; a queued task stops at once.
     const billing = new BillingService(prisma!);
-    const service = new AgentTasksService(prisma!, new JourneyCore(prisma!, billing), billing, runner);
+    const pushes: Array<{ branch: string; files: number; title: string; body: string }> = [];
+    const choices = {
+      repositoryFor: async () => ({ provider: 'github', repoPath: 'owner/app', defaultBranch: 'main' }),
+      pushBranch: async (_user: string, _project: string, input: { branch: string; files: unknown[]; title: string; body: string }) => {
+        pushes.push({ branch: input.branch, files: input.files.length, title: input.title, body: input.body });
+        return { branch: input.branch, commitUrl: 'https://github.com/owner/app/commit/1', pullRequestUrl: 'https://github.com/owner/app/pull/7', mainBranch: false, repository: null };
+      },
+    };
+    const service = new AgentTasksService(prisma!, new JourneyCore(prisma!, billing), billing, runner, choices as never);
     const view = (await service.get(owner.id, projectId)).data;
     assert.equal(view.configured, true);
     assert.equal(view.canStart, false, 'the package is not built yet');
     await assert.rejects(service.start(owner.id, projectId, { instruction: null }), /HANDOFF_NOT_BUILT/);
     const succeeded = (await service.files(owner.id, projectId, task.id)).data;
     assert.equal(succeeded.files.length, 5);
+    assert.equal(view.repository!.repoPath, 'owner/app');
+
+    // Step 2: the files go to a branch of their own with a pull request; confirmation every time.
+    await assert.rejects(service.push(owner.id, projectId, task.id, false), /CONFIRMATION_REQUIRED/);
+    const pushed = (await service.push(owner.id, projectId, task.id, true)).data;
+    assert.equal(pushes[0].branch, `buildpath/agent-${task.id.slice(0, 8)}`);
+    assert.equal(pushes[0].files, 5);
+    assert.match(pushes[0].body, /Удалять может только администратор/);
+    assert.match(pushes[0].body, /✅ Тесты проходят — `npm test`/);
+    assert.match(pushes[0].body, /ИИ-агентом BuildPath/);
+    assert.equal(pushed.pushed!.pullRequestUrl, 'https://github.com/owner/app/pull/7');
+    assert.equal((await service.get(owner.id, projectId)).data.latest!.pushed?.branch ?? (await prisma!.agentTask.findUniqueOrThrow({ where: { id: task.id } })).pushedBranch, `buildpath/agent-${task.id.slice(0, 8)}`);
     const queued = await prisma!.agentTask.create({ data: { projectId, kind: 'build_app', profile: 'x', locale: 'ru', sourceVersionId: randomUUID(), inputVersionIds: [], prompt, promptDigest: promptDigestOf(prompt), limits: { turns: 2, wallMs: 1000, costTiyn: null }, requestedByUserId: owner.id } });
     assert.equal((await service.stop(owner.id, projectId, queued.id)).data.status, 'stopped');
     const stranger = await prisma!.user.create({ data: { email: `x-${randomUUID()}@test.local`, emailNormalized: `x-${randomUUID()}@test.local`, passwordHash: 'x', name: 'X', locale: 'ru' } });

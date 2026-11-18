@@ -1349,6 +1349,11 @@ model AgentTask {
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   startedAt         DateTime? @map("started_at") @db.Timestamptz(3)
   finishedAt        DateTime? @map("finished_at") @db.Timestamptz(3)
+  /// Sent to the owner's repository: the branch, its pull request and when (step 2).
+  pushedBranch      String?   @map("pushed_branch") @db.VarChar(120)
+  pullRequestUrl    String?   @map("pull_request_url") @db.VarChar(500)
+  commitUrl         String?   @map("commit_url") @db.VarChar(500)
+  pushedAt          DateTime? @map("pushed_at") @db.Timestamptz(3)
   project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt])

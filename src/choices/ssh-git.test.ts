@@ -80,6 +80,12 @@ describe('any git over SSH: a real server', async () => {
     assert.deepEqual(await client.inspect(), { branches: ['main'], defaultBranch: 'main' });
 
     await assert.rejects(client.commit('main', [{ path: '.gitlab-ci.yml', content: 'mine', marker: 'other-marker' }], 'm'), isCode('REPO_CI_FILE_EXISTS'));
+    // The agent's work goes on its own branch made from main; main stays as it was.
+    await client.commit('buildpath/agent-1', [{ path: 'server/index.js', content: 'export {};\n' }], 'agent', 'main');
+    assert.equal(await show('index.html'), '<html>2</html>');
+    assert.equal((await run('git', ['--git-dir', path.join(dir, 'bare.git'), 'show', 'buildpath/agent-1:index.html'])).stdout, '<html>2</html>', 'the branch starts from main');
+    assert.equal((await run('git', ['--git-dir', path.join(dir, 'bare.git'), 'show', 'buildpath/agent-1:server/index.js'])).stdout, 'export {};\n');
+    await assert.rejects(run('git', ['--git-dir', path.join(dir, 'bare.git'), 'show', 'main:server/index.js']));
     const foreignHost = 'localhost ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl';
     await assert.rejects(new SshGitClient(remote, '127.0.0.1', key.privateKey, foreignHost).inspect(), isCode('REPO_SSH_HOST_KEY_CHANGED'));
     const stranger = await generateDeployKey('stranger');

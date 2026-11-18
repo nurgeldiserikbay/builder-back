@@ -560,6 +560,47 @@ export class ChoicesService {
     return this.card(userId, projectId, 'code_hosting');
   }
 
+  /**
+   * Work that is not the accepted version (the AI agent's code) goes to its own branch made from the main one, with a pull
+   * request for people to review; the main branch is never written. An empty repository has nothing to branch from, so the
+   * work becomes its first commit on the main branch. A plain git server over SSH gets the branch without a request.
+   */
+  async pushBranch(userId: string, projectId: string, input: { branch: string; files: GitFile[]; message: string; title: string; body: string }) {
+    await this.access(userId, projectId, true);
+    const key = this.key();
+    if (!key) throw new ServiceUnavailableException('REPO_CONNECT_NOT_CONFIGURED');
+    const repo = await this.prisma.codeRepository.findUnique({ where: { projectId } });
+    if (!repo) throw new NotFoundException('REPO_NOT_CONNECTED');
+    try {
+      if (repo.provider === 'ssh') {
+        if (!repo.sshKnownHosts) throw new GitProviderError('REPO_SSH_HOST_KEY_CHANGED');
+        if (!(await sshToolsAvailable())) throw new ServiceUnavailableException('SSH_GIT_NOT_AVAILABLE');
+        const remote = parseSshUrl(repo.webUrl);
+        const { commit } = await new SshGitClient(remote, await this.sshAddress(remote), this.decrypt(repo.tokenEncrypted, key), repo.sshKnownHosts).commit(input.branch, input.files, input.message, repo.defaultBranch);
+        await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'repository_branch_pushed', details: { branch: input.branch, commit, files: input.files.length } } });
+        return { branch: input.branch, commitUrl: null, pullRequestUrl: null, mainBranch: false, repository: this.repositoryView(repo) };
+      }
+      const client = this.client(repo.provider as ApiGitProviderKey, this.decrypt(repo.tokenEncrypted, key), repo.baseUrl);
+      const branch = await client.ensureBranch(repo.repoPath, input.branch, repo.defaultBranch);
+      const target = branch.empty ? repo.defaultBranch : input.branch;
+      const { commitUrl } = await client.commit(repo.repoPath, target, input.files, input.message);
+      const pullRequestUrl = branch.empty ? null : (await client.openPullRequest(repo.repoPath, { head: input.branch, base: repo.defaultBranch, title: input.title, body: input.body })).url || null;
+      await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'repository_branch_pushed', details: { branch: target, commitUrl, pullRequestUrl, files: input.files.length } } });
+      return { branch: target, commitUrl: commitUrl || null, pullRequestUrl, mainBranch: branch.empty, repository: this.repositoryView(repo) };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      const code = error instanceof GitProviderError ? error.code : 'REPO_PROVIDER_FAILED';
+      await this.prisma.codeRepository.update({ where: { projectId }, data: { lastError: code } });
+      throw new UnprocessableEntityException(code);
+    }
+  }
+
+  /** Which repository the agent's work would go to, for the confirmation; null when none is connected. */
+  async repositoryFor(projectId: string) {
+    const repo = await this.prisma.codeRepository.findUnique({ where: { projectId } });
+    return repo ? this.repositoryView(repo) : null;
+  }
+
   /** Options that depend on another decision: available only when that decision is made (and, for GitHub, connected). */
   private async requirementsMet(projectId: string, cardKey: CardKey): Promise<Record<string, boolean>> {
     const result: Record<string, boolean> = {};

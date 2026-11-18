@@ -11,6 +11,11 @@ export const gitProviderName: Record<GitProviderKey, string> = { github: 'GitHub
  * already have (.gitlab-ci.yml, bitbucket-pipelines.yml): BuildPath never overwrites someone else's pipeline.
  */
 export type GitFile = { path: string; content: string; marker?: string };
+/** A branch made from another one; empty: the repository has no commits yet, so there is nothing to branch from. */
+export interface BranchResult { created: boolean; empty: boolean }
+export interface PullRequestInput { head: string; base: string; title: string; body: string }
+
+const encodedPath = (path: string) => path.split('/').map(encodeURIComponent).join('/');
 export type RepoInfo = { repoPath: string; webUrl: string; defaultBranch: string; isPrivate: boolean; canWrite: boolean };
 
 export class GitProviderError extends Error {
@@ -136,6 +141,32 @@ export class GitHubClient {
     if (update.status !== 200) throw statusError(update.status);
     return { commitUrl: String(commit.payload?.html_url ?? '') };
   }
+
+  async ensureBranch(repoPath: string, branch: string, from: string): Promise<BranchResult> {
+    const base = `${this.apiUrl}/repos/${repoPath}`;
+    const source = await call(this.fetchImpl, `${base}/git/ref/heads/${encodedPath(from)}`, this.token, { auth: 'bearer' });
+    if (source.status === 404 || source.status === 409) return { created: false, empty: true };
+    if (source.status !== 200) throw statusError(source.status);
+    const sha = String((source.payload?.object as { sha?: string } | undefined)?.sha ?? '');
+    const created = await call(this.fetchImpl, `${base}/git/refs`, this.token, { auth: 'bearer', method: 'POST', body: { ref: `refs/heads/${branch}`, sha } });
+    if (created.status === 201) return { created: true, empty: false };
+    if (created.status === 422) return { created: false, empty: false };
+    throw statusError(created.status);
+  }
+
+  async openPullRequest(repoPath: string, input: PullRequestInput): Promise<{ url: string }> {
+    const base = `${this.apiUrl}/repos/${repoPath}`;
+    const created = await call(this.fetchImpl, `${base}/pulls`, this.token, { auth: 'bearer', method: 'POST', body: { title: input.title, head: input.head, base: input.base, body: input.body } });
+    if (created.status === 201) return { url: String(created.payload?.html_url ?? '') };
+    if (created.status === 422) {
+      // Already open for this branch: the new commit is in it.
+      const owner = repoPath.split('/')[0];
+      const list = await call(this.fetchImpl, `${base}/pulls?state=open&head=${encodeURIComponent(`${owner}:${input.head}`)}`, this.token, { auth: 'bearer' });
+      const first = Array.isArray(list.payload) ? (list.payload as Array<{ html_url?: string }>)[0] : undefined;
+      if (first?.html_url) return { url: first.html_url };
+    }
+    throw statusError(created.status);
+  }
 }
 
 export class GitLabClient {
@@ -165,6 +196,27 @@ export class GitLabClient {
     const commit = await call(this.fetchImpl, `${project}/repository/commits`, this.token, { auth: 'private', method: 'POST', body: { branch, commit_message: message, actions } });
     if (commit.status !== 201) throw statusError(commit.status);
     return { commitUrl: String(commit.payload?.web_url ?? '') };
+  }
+
+  async ensureBranch(repoPath: string, branch: string, from: string): Promise<BranchResult> {
+    const project = `${this.api}/projects/${encodeURIComponent(repoPath)}`;
+    const created = await call(this.fetchImpl, `${project}/repository/branches?branch=${encodeURIComponent(branch)}&ref=${encodeURIComponent(from)}`, this.token, { auth: 'private', method: 'POST' });
+    if (created.status === 201) return { created: true, empty: false };
+    if (created.status === 400 && /already exists/i.test(String(created.payload?.message ?? ''))) return { created: false, empty: false };
+    if (created.status === 400 || created.status === 404) return { created: false, empty: true };
+    throw statusError(created.status);
+  }
+
+  async openPullRequest(repoPath: string, input: PullRequestInput): Promise<{ url: string }> {
+    const project = `${this.api}/projects/${encodeURIComponent(repoPath)}`;
+    const created = await call(this.fetchImpl, `${project}/merge_requests`, this.token, { auth: 'private', method: 'POST', body: { source_branch: input.head, target_branch: input.base, title: input.title, description: input.body } });
+    if (created.status === 201) return { url: String(created.payload?.web_url ?? '') };
+    if (created.status === 409) {
+      const list = await call(this.fetchImpl, `${project}/merge_requests?state=opened&source_branch=${encodeURIComponent(input.head)}`, this.token, { auth: 'private' });
+      const first = Array.isArray(list.payload) ? (list.payload as Array<{ web_url?: string }>)[0] : undefined;
+      if (first?.web_url) return { url: first.web_url };
+    }
+    throw statusError(created.status);
   }
 }
 
@@ -201,6 +253,25 @@ export class GiteaClient {
     if (commit.status === 404 || commit.status === 405) throw new GitProviderError('REPO_SERVER_TOO_OLD');
     if (commit.status !== 201 && commit.status !== 200) throw statusError(commit.status);
     return { commitUrl: String((commit.payload?.commit as { html_url?: string } | undefined)?.html_url ?? '') };
+  }
+
+  async ensureBranch(repoPath: string, branch: string, from: string): Promise<BranchResult> {
+    const created = await call(this.fetchImpl, `${this.api}/repos/${repoPath}/branches`, this.token, { auth: 'token', method: 'POST', body: { new_branch_name: branch, old_branch_name: from } });
+    if (created.status === 201) return { created: true, empty: false };
+    if (created.status === 409) return { created: false, empty: false };
+    if (created.status === 404) return { created: false, empty: true };
+    throw statusError(created.status);
+  }
+
+  async openPullRequest(repoPath: string, input: PullRequestInput): Promise<{ url: string }> {
+    const created = await call(this.fetchImpl, `${this.api}/repos/${repoPath}/pulls`, this.token, { auth: 'token', method: 'POST', body: { head: input.head, base: input.base, title: input.title, body: input.body } });
+    if (created.status === 201) return { url: String(created.payload?.html_url ?? '') };
+    if (created.status === 409) {
+      const list = await call(this.fetchImpl, `${this.api}/repos/${repoPath}/pulls?state=open`, this.token, { auth: 'token' });
+      const match = Array.isArray(list.payload) ? (list.payload as Array<{ html_url?: string; head?: { ref?: string } }>).find((item) => item.head?.ref === input.head) : undefined;
+      if (match?.html_url) return { url: match.html_url };
+    }
+    throw statusError(created.status);
   }
 }
 
@@ -253,5 +324,31 @@ export class BitbucketClient {
     const location = response.headers.get('location') ?? '';
     const sha = /\/commit\/([0-9a-f]{7,40})/.exec(location)?.[1];
     return { commitUrl: sha ? `https://bitbucket.org/${repoPath}/commits/${sha}` : `https://bitbucket.org/${repoPath}/commits/branch/${encodeURIComponent(branch)}` };
+  }
+
+  async ensureBranch(repoPath: string, branch: string, from: string): Promise<BranchResult> {
+    const base = `${this.apiUrl}/repositories/${repoPath}`;
+    const source = await call(this.fetchImpl, `${base}/refs/branches/${encodedPath(from)}`, this.token, { auth: 'bearer' });
+    if (source.status === 404) return { created: false, empty: true };
+    if (source.status !== 200) throw statusError(source.status);
+    const hash = String((source.payload?.target as { hash?: string } | undefined)?.hash ?? '');
+    const created = await call(this.fetchImpl, `${base}/refs/branches`, this.token, { auth: 'bearer', method: 'POST', body: { name: branch, target: { hash } } });
+    if (created.status === 201) return { created: true, empty: false };
+    if (created.status === 400 || created.status === 409) return { created: false, empty: false };
+    throw statusError(created.status);
+  }
+
+  async openPullRequest(repoPath: string, input: PullRequestInput): Promise<{ url: string }> {
+    const base = `${this.apiUrl}/repositories/${repoPath}`;
+    const created = await call(this.fetchImpl, `${base}/pullrequests`, this.token, { auth: 'bearer', method: 'POST', body: {
+      title: input.title, description: input.body, source: { branch: { name: input.head } }, destination: { branch: { name: input.base } },
+    } });
+    if (created.status === 201) return { url: String((created.payload?.links as { html?: { href?: string } } | undefined)?.html?.href ?? '') };
+    if (created.status === 400) {
+      const list = await call(this.fetchImpl, `${base}/pullrequests?state=OPEN&q=${encodeURIComponent(`source.branch.name="${input.head}"`)}`, this.token, { auth: 'bearer' });
+      const first = ((list.payload?.values ?? []) as Array<{ links?: { html?: { href?: string } } }>)[0];
+      if (first?.links?.html?.href) return { url: first.links.html.href };
+    }
+    throw statusError(created.status);
   }
 }

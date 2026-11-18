@@ -33,6 +33,14 @@ export class AgentController {
     return this.tasks.stop(request.user.id, projectId, taskId(id));
   }
 
+  @Post(':taskId/push')
+  @HttpCode(200)
+  push(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('taskId') id: string, @Body() body: unknown) {
+    const record = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+    if (Object.keys(record).some((key) => key !== 'confirm')) throw new BadRequestException('INVALID_BODY');
+    return this.tasks.push(request.user.id, projectId, taskId(id), record.confirm === true);
+  }
+
   @Get(':taskId/files')
   @Header('Cache-Control', 'no-store')
   files(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('taskId') id: string) {

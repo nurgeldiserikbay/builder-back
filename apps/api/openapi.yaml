@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.25.0
+  version: 1.26.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -4055,7 +4055,7 @@ paths:
       operationId: getAgentTasks
       summary: The AI agent's tasks for a web application
       description: |
-        configured (an agent model and a sandbox), profile (the stack, node-react-pg@1.0.0), limits (turns, wallMs, costTiyn), canStart,
+        configured (an agent model and a sandbox), profile (the stack, node-react-pg@1.0.0), limits (turns, wallMs, costTiyn), canStart, repository (the connected one or null),
         latest (status, live steps, stop reason, the agent's report, the platform's own checks install/test/build, file list) and up to
         nine earlier tasks. Readable by everyone who can read the handoff stage.
       x-implementation-status: implemented
@@ -4063,7 +4063,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       responses:
-        '200': { description: 'data: configured, profile, limits, canStart, latest, history' }
+        '200': { description: 'data: configured, profile, limits, canStart, repository, latest (with pushed: branch, pullRequestUrl, commitUrl, at), history' }
         '404': { $ref: '#/components/responses/Problem' }
     post:
       tags: [Journey]
@@ -4105,6 +4105,35 @@ paths:
       responses:
         '200': { description: 'data: the task' }
         '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/agent/tasks/{taskId}/push:
+    post:
+      tags: [Journey]
+      operationId: pushAgentTask
+      summary: Send the agent's code to the owner's repository on its own branch with a pull request
+      description: |
+        Branch buildpath/agent-<first 8 characters of the task id>, made from the repository's main branch, and a pull request (GitHub,
+        Gitea/Forgejo), merge request (GitLab) or pull request (Bitbucket) whose text is the agent's report, the platform's checks and a
+        note that AI wrote the code. A repeat adds a commit to the same branch and finds the open request. An empty repository has
+        nothing to branch from: the code becomes its first commit on the main branch (mainBranch true). A git server over SSH gets the
+        branch without a request. confirm=true every time; owners and managers (403 otherwise). 404 REPO_NOT_CONNECTED, 409
+        AGENT_TASK_RUNNING, AGENT_TASK_NO_FILES, 422 with the repository's error code.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [confirm], properties: { confirm: { type: boolean, enum: [true] } } }
+      responses:
+        '200': { description: 'data: the task with pushed, and mainBranch' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/agent/tasks/{taskId}/files:
     get:
       tags: [Journey]
