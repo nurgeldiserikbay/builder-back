@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.24.0
+  version: 1.25.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -4049,6 +4049,77 @@ paths:
       responses:
         '200': { description: 'status of its run; files[] (path, content)' }
         '404': { description: 'PROJECT_NOT_FOUND, STAGE_NOT_FOUND, STARTER_NOT_BUILT' }
+  /projects/{projectId}/agent/tasks:
+    get:
+      tags: [Journey]
+      operationId: getAgentTasks
+      summary: The AI agent's tasks for a web application
+      description: |
+        configured (an agent model and a sandbox), profile (the stack, node-react-pg@1.0.0), limits (turns, wallMs, costTiyn), canStart,
+        latest (status, live steps, stop reason, the agent's report, the platform's own checks install/test/build, file list) and up to
+        nine earlier tasks. Readable by everyone who can read the handoff stage.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'data: configured, profile, limits, canStart, latest, history' }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      tags: [Journey]
+      operationId: startAgentTask
+      summary: Ask the agent to build the application from the package
+      description: |
+        kind build_app (the only kind for now). Needs the package built and its inputs accepted (409 HANDOFF_NOT_BUILT,
+        STAGE_INPUTS_NOT_ACCEPTED), one task at a time (409 AGENT_TASK_RUNNING). Plan, spend limit and balance are checked as for any
+        AI request; the task then spends within its own cap. The agent works in a throwaway E2B sandbox with internet for packages
+        and no platform keys; the platform runs install, test and build itself afterwards. Counted as one AI request. Nothing is
+        pushed, published or deployed. 503 AGENT_NOT_CONFIGURED.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { kind: { type: string, enum: [build_app] }, instruction: { type: [string, 'null'], maxLength: 2000 } } }
+      responses:
+        '202': { description: 'data: the queued task' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '402': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/agent/tasks/{taskId}/stop:
+    post:
+      tags: [Journey]
+      operationId: stopAgentTask
+      summary: Stop a task
+      description: A queued task stops at once; a running one stops before its next turn, then the platform checks still run and the files are kept.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'data: the task' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/agent/tasks/{taskId}/files:
+    get:
+      tags: [Journey]
+      operationId: getAgentTaskFiles
+      summary: The files the agent left
+      description: Project files without installed packages, build output, version control and .env files; up to 400 files and 3 MB. 409 AGENT_TASK_RUNNING while it works.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'data: status, digest, files (path, content)' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/handoff/app-code:
     get:
       tags: [Journey]

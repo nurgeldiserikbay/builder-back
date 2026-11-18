@@ -4,10 +4,11 @@ import { ReviewWorker } from './review-worker.js';
 import { AnalysisRunner } from '../analysis/analysis-runner.js';
 import { BrowserCheckRunner } from '../quality/browser-checks.js';
 import { SandboxRunner } from '../sandbox/starter-checks.js';
+import { AgentRunner } from '../agent/agent-tasks.js';
 
 @Module({
   imports: [DatabaseModule],
-  providers: [ReviewWorker, AnalysisRunner, BrowserCheckRunner, SandboxRunner],
-  exports: [ReviewWorker, AnalysisRunner, BrowserCheckRunner, SandboxRunner],
+  providers: [ReviewWorker, AnalysisRunner, BrowserCheckRunner, SandboxRunner, AgentRunner],
+  exports: [ReviewWorker, AnalysisRunner, BrowserCheckRunner, SandboxRunner, AgentRunner],
 })
 export class ReviewWorkerModule {}
