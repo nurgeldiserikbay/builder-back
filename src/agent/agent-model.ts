@@ -25,11 +25,12 @@ type Fetch = typeof fetch;
 
 export class ChatCompletionsAgentModel implements AgentModel {
   readonly name = 'openai-chat-tools';
-  /** Retries after a timeout, a lost connection or a busy provider (429/5xx): a slow thinking model often answers on the next try. */
+  /** Retries after a timeout, a lost connection or a busy provider (429/5xx) for about four minutes: overload spikes of free models
+   * usually pass by then. */
   constructor(private readonly apiKey: string, readonly model: string, private readonly baseUrl: string, private readonly fetchImpl: Fetch = fetch, private readonly options: { reasoningEffort?: string; retryDelaysMs?: number[]; timeoutMs?: number } = {}) {}
 
   async next(messages: AgentMessage[], tools: AgentTool[]): Promise<AgentReply> {
-    const delays = this.options.retryDelaysMs ?? [10_000, 30_000];
+    const delays = this.options.retryDelaysMs ?? [15_000, 30_000, 60_000, 120_000];
     const body = JSON.stringify({
       model: this.model, messages, tool_choice: 'auto', parallel_tool_calls: false, max_tokens: 16_000,
       ...(this.options.reasoningEffort ? { reasoning_effort: this.options.reasoningEffort } : {}),
@@ -83,11 +84,12 @@ export class ChatCompletionsAgentModel implements AgentModel {
 }
 
 /**
- * BUILDER_AGENT_MODEL (falls back to BUILDER_AI_OPENAI_MODEL) at the same endpoint and key as the stage AI. The agent needs a
+ * BUILDER_AGENT_MODEL (falls back to BUILDER_AI_OPENAI_MODEL). The endpoint and key are the stage AI's unless
+ * BUILDER_AGENT_BASE_URL / BUILDER_AGENT_API_KEY name another provider (for example Groq when free Gemini is overloaded). The agent needs a
  * model that calls tools well; a small model writes worse code, so the setting is separate.
  */
 export function configuredAgentModel(env: NodeJS.ProcessEnv = process.env): AgentModel | null {
-  const apiKey = env.BUILDER_AI_OPENAI_API_KEY;
+  const apiKey = env.BUILDER_AGENT_API_KEY || env.BUILDER_AI_OPENAI_API_KEY;
   const model = env.BUILDER_AGENT_MODEL || env.BUILDER_AI_OPENAI_MODEL;
   if (!apiKey || !model) return null;
   const baseUrl = (env.BUILDER_AGENT_BASE_URL || env.BUILDER_AI_OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
