@@ -1372,6 +1372,10 @@ model AgentTask {
   /// A change task (step 5) starts from the files of an earlier task; their digest is fixed when the task is queued.
   baseTaskId        String?   @map("base_task_id") @db.Uuid
   baseFilesDigest   String?   @map("base_files_digest") @db.VarChar(64)
+  /// Where a change starts: «task» (an earlier task's files) or «repository» (the main branch, files kept in baseFiles).
+  baseSource        String?   @map("base_source") @db.VarChar(20)
+  baseFiles         Json?     @map("base_files")
+  baseCommit        String?   @map("base_commit") @db.VarChar(64)
   baseTask          AgentTask?  @relation("AgentTaskBase", fields: [baseTaskId], references: [id], onDelete: SetNull)
   changes           AgentTask[] @relation("AgentTaskBase")
   project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)

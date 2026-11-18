@@ -92,6 +92,13 @@ describe('any git over SSH: a real server', async () => {
     await assert.rejects(new SshGitClient(remote, '127.0.0.1', stranger.privateKey, knownHosts).inspect(), isCode('REPO_SSH_KEY_REJECTED'));
     await assert.rejects(new SshGitClient(parseSshUrl(`ssh://root@localhost:${port}${path.join(dir, 'none.git')}`), '127.0.0.1', key.privateKey, knownHosts).inspect(), isCode('REPO_NOT_FOUND'));
     assert.ok((await readFile(path.join(dir, 'authorized_keys'), 'utf8')).includes(key.publicKey));
+    // Reading the code back: the files of main from a shallow fetch, without the pipeline's secrets or binaries.
+    await client.commit('main', [{ path: '.env', content: 'SECRET=1' }, { path: 'logo.png', content: 'png' }], 'more');
+    const snapshot = await client.readBranch('main');
+    assert.deepEqual(snapshot!.files.map((file) => file.path), ['.gitlab-ci.yml', 'index.html', 'uslugi/index.html']);
+    assert.equal(snapshot!.files.find((file) => file.path === 'index.html')!.content, '<html>2</html>');
+    assert.match(snapshot!.commit!, /^[0-9a-f]{40}$/);
+    assert.equal(await client.readBranch('nothing-here'), null);
   });
 
   it('as the owner sees it: create the key, confirm the server, connect, push; a booking site gets its program for auto-deploy', { skip }, async () => {

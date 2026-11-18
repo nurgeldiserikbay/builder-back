@@ -3,6 +3,7 @@
 // only the ssh transport is allowed, configs from the system and the home folder are ignored, and every call has a timeout.
 // The address the owner typed is resolved and checked to be public; git connects to that checked IP, and the host key is
 // looked up under the typed name (HostKeyAlias), so a DNS change between the check and the push cannot redirect it.
+import { acceptContent, chooseEntries, REPO_READ_LIMITS, type RepoSnapshot } from './repo-read.js';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -198,6 +199,34 @@ export class SshGitClient {
       }
       await this.git(dir, ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`], true);
       return { commit: (await this.git(dir, ['rev-parse', 'HEAD'])).trim() };
+    });
+  }
+
+  /** The code on a branch: a shallow fetch, the file list with sizes, then the chosen files from the checkout. */
+  async readBranch(branch: string): Promise<RepoSnapshot | null> {
+    if (!/^[A-Za-z0-9._/-]{1,100}$/.test(branch) || branch.startsWith('-') || branch.includes('..')) throw new GitProviderError('REPO_BRANCH_INVALID');
+    return this.prepare(async (dir) => {
+      const repo = path.join(dir, 'repo');
+      await this.git(dir, ['init', '-q']);
+      await this.git(dir, ['remote', 'add', 'origin', this.url()]);
+      if (!(await this.git(dir, ['ls-remote', 'origin', `refs/heads/${branch}`])).trim()) return null;
+      await this.git(dir, ['fetch', '-q', '--depth=1', 'origin', `refs/heads/${branch}`]);
+      await this.git(dir, ['checkout', '-q', 'FETCH_HEAD']);
+      const commit = (await this.git(dir, ['rev-parse', 'HEAD'])).trim();
+      const listed = (await this.git(dir, ['ls-tree', '-r', '-l', '-z', 'HEAD'])).split('\0').filter(Boolean).flatMap((line) => {
+        const match = /^\d+ blob [0-9a-f]+\s+(\d+)\t(.+)$/s.exec(line);
+        return match ? [{ path: match[2]!, size: Number(match[1]) }] : [];
+      });
+      const { chosen, truncated: cut } = chooseEntries(listed.slice(0, REPO_READ_LIMITS.listed));
+      let truncated = cut || listed.length > REPO_READ_LIMITS.listed; let total = 0;
+      const files: Array<{ path: string; content: string }> = [];
+      for (const entry of chosen) {
+        const content = await readFile(path.join(repo, entry.path), 'utf8').catch(() => null);
+        if (content === null || !acceptContent(content, total)) { truncated = true; continue; }
+        total += content.length;
+        files.push({ path: entry.path, content });
+      }
+      return { files, truncated, commit, branch };
     });
   }
 }

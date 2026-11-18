@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.32.0
+  version: 1.33.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -4103,16 +4103,19 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       responses:
-        '200': { description: 'data: configured, profile, limits, canStart, changeBase (the task a change would start from, or null), repository, deployment (url, ok, status, database, error, checkedAt) or null, latest (with pushed: branch, pullRequestUrl, commitUrl, at; hasDemo), history' }
+        '200': { description: 'data: configured, profile, limits, canStart, changeBase (the task a change would start from, or null), changeFromRepository (a change can start from the repository), repository, deployment (url, ok, status, database, error, checkedAt) or null, latest (with pushed: branch, pullRequestUrl, commitUrl, at; hasDemo), history' }
         '404': { $ref: '#/components/responses/Problem' }
     post:
       tags: [Journey]
       operationId: startAgentTask
       summary: Ask the agent to build the application, or to change it in words
       description: |
-        kind build_app builds from the package. kind change_app (with baseTaskId and a required instruction, 400
-        CHANGE_INSTRUCTION_REQUIRED) starts from the files of an earlier finished task of the project (409 AGENT_BASE_HAS_NO_CODE),
-        whose digest is fixed at queueing: if they change before the run, the task ends AGENT_BASE_CHANGED. The agent changes the
+        kind build_app builds from the package. kind change_app (a required instruction, 400 CHANGE_INSTRUCTION_REQUIRED) starts
+        either from the files of an earlier finished task of the project (baseTaskId; 409 AGENT_BASE_HAS_NO_CODE) or from the code
+        on the connected repository's main branch (base: "repository"), the owner's own edits included: text files only (no
+        secrets, build output, packages or binaries; at most 400 files, 300 KB each, 3 MB in all), read at queueing and kept with
+        the task with their commit (409 REPO_BRANCH_EMPTY, 404 REPO_NOT_CONNECTED, 422 REPO_* from the provider). Files left out
+        stay in the repository untouched. The base digest is fixed at queueing: if it no longer matches, the task ends AGENT_BASE_CHANGED. The agent changes the
         code and keeps it working; the same platform checks run; the pull request lists files the agent removed. Needs the package built and its inputs accepted (409 HANDOFF_NOT_BUILT,
         STAGE_INPUTS_NOT_ACCEPTED), one task at a time (409 AGENT_TASK_RUNNING). Plan, spend limit and balance are checked as for any
         AI request; the task then spends within its own cap. The agent works in a throwaway E2B sandbox with internet for packages
@@ -4126,7 +4129,7 @@ paths:
         required: false
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, properties: { kind: { type: string, enum: [build_app, change_app] }, baseTaskId: { type: string, format: uuid, description: 'Required with change_app' }, instruction: { type: [string, 'null'], maxLength: 2000 } } }
+            schema: { type: object, additionalProperties: false, properties: { kind: { type: string, enum: [build_app, change_app] }, baseTaskId: { type: string, format: uuid, description: 'With change_app: start from this task' }, base: { type: string, enum: [repository], description: 'With change_app: start from the main branch of the connected repository' }, instruction: { type: [string, 'null'], maxLength: 2000 } } }
       responses:
         '202': { description: 'data: the queued task' }
         '400': { $ref: '#/components/responses/Problem' }

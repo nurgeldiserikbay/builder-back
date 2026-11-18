@@ -1,3 +1,4 @@
+import { acceptContent, chooseEntries, REPO_READ_LIMITS, type RepoEntry, type RepoSnapshot } from './repo-read.js';
 // Minimal GitHub, GitLab, Gitea/Forgejo and Bitbucket clients: check write access to one repository and commit a set of files.
 // Errors carry safe codes; tokens never appear in messages.
 
@@ -17,6 +18,21 @@ export interface PullRequestInput { head: string; base: string; title: string; b
 
 const encodedPath = (path: string) => path.split('/').map(encodeURIComponent).join('/');
 export type RepoInfo = { repoPath: string; webUrl: string; defaultBranch: string; isPrivate: boolean; canWrite: boolean };
+
+/** Reads the chosen entries one by one, keeping text files within the limits; a file that cannot be read is left out. */
+async function readEntries(entries: RepoEntry[], read: (entry: RepoEntry) => Promise<string | null>): Promise<{ files: Array<{ path: string; content: string }>; truncated: boolean }> {
+  const { chosen, truncated: cut } = chooseEntries(entries);
+  let truncated = cut; let total = 0;
+  const files: Array<{ path: string; content: string }> = [];
+  for (const entry of chosen) {
+    const content = await read(entry);
+    if (content === null || !acceptContent(content, total)) { truncated = true; continue; }
+    total += content.length;
+    files.push({ path: entry.path, content });
+  }
+  return { files, truncated };
+}
+const fromBase64 = (value: unknown) => Buffer.from(String(value ?? '').replace(/\s+/g, ''), 'base64').toString('utf8');
 
 export class GitProviderError extends Error {
   constructor(readonly code: string) { super(code); }
@@ -154,6 +170,24 @@ export class GitHubClient {
     throw statusError(created.status);
   }
 
+  /** The code on a branch: the tree of its last commit, then each chosen file. Null for an empty repository. */
+  async readBranch(repoPath: string, branch: string): Promise<RepoSnapshot | null> {
+    const base = `${this.apiUrl}/repos/${repoPath}`;
+    const ref = await call(this.fetchImpl, `${base}/git/ref/heads/${encodedPath(branch)}`, this.token, { auth: 'bearer' });
+    if (ref.status === 404 || ref.status === 409) return null;
+    if (ref.status !== 200) throw statusError(ref.status);
+    const commit = String((ref.payload?.object as { sha?: string } | undefined)?.sha ?? '');
+    const tree = await call(this.fetchImpl, `${base}/git/trees/${commit}?recursive=1`, this.token, { auth: 'bearer' });
+    if (tree.status !== 200) throw statusError(tree.status);
+    const items = ((tree.payload?.tree ?? []) as Array<{ path?: string; type?: string; size?: number; sha?: string }>).filter((item) => item.type === 'blob' && item.path && item.sha).slice(0, REPO_READ_LIMITS.listed);
+    const shas = new Map(items.map((item) => [item.path!, item.sha!]));
+    const read = await readEntries(items.map((item) => ({ path: item.path!, size: item.size ?? null })), async (entry) => {
+      const blob = await call(this.fetchImpl, `${base}/git/blobs/${shas.get(entry.path)}`, this.token, { auth: 'bearer' });
+      return blob.status === 200 ? fromBase64(blob.payload?.content) : null;
+    });
+    return { ...read, truncated: read.truncated || tree.payload?.truncated === true, commit, branch };
+  }
+
   async openPullRequest(repoPath: string, input: PullRequestInput): Promise<{ url: string }> {
     const base = `${this.apiUrl}/repos/${repoPath}`;
     const created = await call(this.fetchImpl, `${base}/pulls`, this.token, { auth: 'bearer', method: 'POST', body: { title: input.title, head: input.head, base: input.base, body: input.body } });
@@ -196,6 +230,31 @@ export class GitLabClient {
     const commit = await call(this.fetchImpl, `${project}/repository/commits`, this.token, { auth: 'private', method: 'POST', body: { branch, commit_message: message, actions } });
     if (commit.status !== 201) throw statusError(commit.status);
     return { commitUrl: String(commit.payload?.web_url ?? '') };
+  }
+
+  async readBranch(repoPath: string, branch: string): Promise<RepoSnapshot | null> {
+    const project = `${this.api}/projects/${encodeURIComponent(repoPath)}`;
+    const ref = await call(this.fetchImpl, `${project}/repository/branches/${encodeURIComponent(branch)}`, this.token, { auth: 'private' });
+    if (ref.status === 404) return null;
+    if (ref.status !== 200) throw statusError(ref.status);
+    const commit = String((ref.payload?.commit as { id?: string } | undefined)?.id ?? '');
+    // The tree comes in pages of 100 without sizes; the size is checked when the file is read.
+    const items: Array<{ path: string; id: string }> = [];
+    let more = false;
+    for (let page = 1; page <= 50; page += 1) {
+      const list = await call(this.fetchImpl, `${project}/repository/tree?ref=${encodeURIComponent(commit)}&recursive=true&per_page=100&page=${page}`, this.token, { auth: 'private' });
+      if (list.status !== 200) throw statusError(list.status);
+      const rows = (Array.isArray(list.payload) ? list.payload : []) as Array<{ path?: string; type?: string; id?: string }>;
+      for (const row of rows) if (row.type === 'blob' && row.path && row.id) items.push({ path: row.path, id: row.id });
+      more = rows.length === 100;
+      if (!more) break;
+    }
+    const ids = new Map(items.map((item) => [item.path, item.id]));
+    const read = await readEntries(items.map((item) => ({ path: item.path, size: null })), async (entry) => {
+      const blob = await call(this.fetchImpl, `${project}/repository/blobs/${ids.get(entry.path)}`, this.token, { auth: 'private' });
+      return blob.status === 200 ? fromBase64(blob.payload?.content) : null;
+    });
+    return { ...read, truncated: read.truncated || more, commit, branch };
   }
 
   async ensureBranch(repoPath: string, branch: string, from: string): Promise<BranchResult> {
@@ -253,6 +312,23 @@ export class GiteaClient {
     if (commit.status === 404 || commit.status === 405) throw new GitProviderError('REPO_SERVER_TOO_OLD');
     if (commit.status !== 201 && commit.status !== 200) throw statusError(commit.status);
     return { commitUrl: String((commit.payload?.commit as { html_url?: string } | undefined)?.html_url ?? '') };
+  }
+
+  async readBranch(repoPath: string, branch: string): Promise<RepoSnapshot | null> {
+    const base = `${this.api}/repos/${repoPath}`;
+    const ref = await call(this.fetchImpl, `${base}/branches/${encodedPath(branch)}`, this.token, { auth: 'token' });
+    if (ref.status === 404) return null;
+    if (ref.status !== 200) throw statusError(ref.status);
+    const commit = String((ref.payload?.commit as { id?: string } | undefined)?.id ?? '');
+    const tree = await call(this.fetchImpl, `${base}/git/trees/${commit}?recursive=true&per_page=10000`, this.token, { auth: 'token' });
+    if (tree.status !== 200) throw statusError(tree.status);
+    const items = ((tree.payload?.tree ?? []) as Array<{ path?: string; type?: string; size?: number; sha?: string }>).filter((item) => item.type === 'blob' && item.path && item.sha).slice(0, REPO_READ_LIMITS.listed);
+    const shas = new Map(items.map((item) => [item.path!, item.sha!]));
+    const read = await readEntries(items.map((item) => ({ path: item.path!, size: item.size ?? null })), async (entry) => {
+      const blob = await call(this.fetchImpl, `${base}/git/blobs/${shas.get(entry.path)}`, this.token, { auth: 'token' });
+      return blob.status === 200 ? fromBase64(blob.payload?.content) : null;
+    });
+    return { ...read, truncated: read.truncated || tree.payload?.truncated === true, commit, branch };
   }
 
   async ensureBranch(repoPath: string, branch: string, from: string): Promise<BranchResult> {
@@ -324,6 +400,30 @@ export class BitbucketClient {
     const location = response.headers.get('location') ?? '';
     const sha = /\/commit\/([0-9a-f]{7,40})/.exec(location)?.[1];
     return { commitUrl: sha ? `https://bitbucket.org/${repoPath}/commits/${sha}` : `https://bitbucket.org/${repoPath}/commits/branch/${encodeURIComponent(branch)}` };
+  }
+
+  async readBranch(repoPath: string, branch: string): Promise<RepoSnapshot | null> {
+    const base = `${this.apiUrl}/repositories/${repoPath}`;
+    const ref = await call(this.fetchImpl, `${base}/refs/branches/${encodedPath(branch)}`, this.token, { auth: 'bearer' });
+    if (ref.status === 404) return null;
+    if (ref.status !== 200) throw statusError(ref.status);
+    const commit = String((ref.payload?.target as { hash?: string } | undefined)?.hash ?? '');
+    const entries: RepoEntry[] = [];
+    let next: string | null = `${base}/src/${commit}/?max_depth=30&pagelen=100`;
+    let pages = 0;
+    // «next» links are followed only on the same API, so a crafted answer cannot send the token elsewhere.
+    while (next && pages < 100 && next.startsWith(`${this.apiUrl}/`)) {
+      const page = await call(this.fetchImpl, next, this.token, { auth: 'bearer' });
+      if (page.status !== 200) throw statusError(page.status);
+      for (const value of (page.payload?.values ?? []) as Array<{ type?: string; path?: string; size?: number }>) if (value.type === 'commit_file' && value.path) entries.push({ path: value.path, size: value.size ?? null });
+      next = typeof page.payload?.next === 'string' ? page.payload.next : null;
+      pages += 1;
+    }
+    const read = await readEntries(entries.slice(0, REPO_READ_LIMITS.listed), async (entry) => {
+      const file = await this.raw(`${base}/src/${commit}/${encodedPath(entry.path)}`);
+      return file.status === 200 ? file.text : null;
+    });
+    return { ...read, truncated: read.truncated || Boolean(next), commit, branch };
   }
 
   async ensureBranch(repoPath: string, branch: string, from: string): Promise<BranchResult> {

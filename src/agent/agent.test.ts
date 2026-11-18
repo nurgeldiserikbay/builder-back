@@ -306,7 +306,10 @@ describe('AI agent: tasks (database)', async () => {
     await assert.rejects(service.start(owner.id, projectId, { instruction: 'x', baseTaskId: randomUUID() }), /AGENT_TASK_NOT_FOUND/);
     assert.equal((await service.get(owner.id, projectId)).data.changeBase, task.id);
     const baseFiles = (await prisma!.agentTask.findUniqueOrThrow({ where: { id: task.id } })).files as Array<{ path: string; content: string }>;
-    const changePrompt = buildChangePrompt({ locale: 'ru', projectName: 'Учёт', inputs: { goal: { g: 1 } }, instruction: 'Добавь поле телефона', baseTaskId: task.id, baseFiles });
+    const changePrompt = buildChangePrompt({ locale: 'ru', projectName: 'Учёт', inputs: { goal: { g: 1 } }, instruction: 'Добавь поле телефона', base: { source: 'task', taskId: task.id }, baseFiles });
+    const fromRepo = buildChangePrompt({ locale: 'ru', projectName: 'Учёт', inputs: {}, instruction: 'x', base: { source: 'repository', branch: 'main', commit: 'abcdef1234567890', truncated: true }, baseFiles });
+    assert.match(fromRepo.task, /repository, branch main at commit abcdef123456 — it may hold the owner's own edits/);
+    assert.match(fromRepo.task, /were not copied: do not recreate or delete them/);
     assert.match(changePrompt.system, /CHANGE to an existing application/);
     assert.match(changePrompt.task, /- src\/rules\.js/);
     assert.match(changePrompt.task, /OWNER REQUEST[^\n]*\n\nДобавь поле телефона/);
@@ -329,6 +332,23 @@ describe('AI agent: tasks (database)', async () => {
     assert.match(pushes.at(-1)!.title, /изменения в «Учёт»/);
     assert.match(pushes.at(-1)!.body, /Что попросил изменить владелец:\*\* Убери правила/);
     assert.match(pushes.at(-1)!.body, /`src\/rules\.js`/);
+    // From the repository: the files read at queueing are kept with the task and written into the sandbox.
+    const repoFiles = [{ path: 'package.json', content: JSON.stringify({ name: 'app', type: 'module', scripts: { test: 'node --test' } }) }, { path: 'OWNER_EDIT.md', content: 'правка владельца' }, { path: 'old.js', content: 'x' }];
+    const seen2: string[] = [];
+    runner.setAgent(scripted([
+      [{ name: 'read_file', args: { path: 'OWNER_EDIT.md' } }, { name: 'run', args: { command: 'rm old.js', timeoutSeconds: 10 } }],
+      [{ name: 'finish', args: { summary: 'ok', done: [], notDone: [] } }],
+    ]), { name: 'local', open: async () => { const ws = await localWorkspace(); const read = ws.read; ws.read = async (file) => { const content = await read(file); if (content !== null) seen2.push(`${file}:${content}`); return content; }; return ws; } });
+    const fromRepository = await prisma!.agentTask.create({ data: {
+      projectId, kind: 'change_app', instruction: 'Из репозитория', profile: 'x', locale: 'ru', sourceVersionId: randomUUID(), inputVersionIds: [], prompt, promptDigest: promptDigestOf(prompt),
+      limits: { turns: 10, wallMs: 120_000, costTiyn: null }, requestedByUserId: owner.id, baseSource: 'repository', baseFiles: repoFiles, baseFilesDigest: filesDigestOf(repoFiles), baseCommit: 'c0ffee',
+    } });
+    await runner.processNext();
+    assert.equal(seen2[0], 'OWNER_EDIT.md:правка владельца', 'the owner\'s own edit from git was in the folder');
+    await service.push(owner.id, projectId, fromRepository.id, true);
+    assert.match(pushes.at(-1)!.body, /`old\.js`/);
+    assert.equal((await service.get(owner.id, projectId)).data.changeFromRepository, true);
+
     // A base whose files changed after queueing is not used.
     const stale = await prisma!.agentTask.create({ data: {
       projectId, kind: 'change_app', instruction: 'x', profile: 'x', locale: 'ru', sourceVersionId: randomUUID(), inputVersionIds: [], prompt, promptDigest: promptDigestOf(prompt),
