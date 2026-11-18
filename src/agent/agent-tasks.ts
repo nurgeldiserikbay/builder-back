@@ -229,7 +229,9 @@ export class AgentRunner {
     const task = await this.prisma.agentTask.findUnique({ where: { id } });
     if (!task || task.status !== 'running') return;
     const finish = (data: Record<string, unknown>) => this.prisma.agentTask.updateMany({ where: { id, status: 'running' }, data: { ...data, finishedAt: new Date() } as never });
-    const model = this.agentModel();
+    const configured = this.agentModel();
+    // Each task gets its own copy: a switch to the reserve model lasts for that task only.
+    const model = configured?.forTask ? configured.forTask() : configured;
     const provider = this.agentWorkspace();
     if (!model || !provider) { await finish({ status: 'unavailable', errorCode: 'AGENT_NOT_CONFIGURED' }); return; }
     const prompt = task.prompt as unknown as { system: string; task: string };

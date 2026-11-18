@@ -15,6 +15,8 @@ export interface AgentModel {
   readonly name: string;
   readonly model: string;
   next(messages: AgentMessage[], tools: AgentTool[]): Promise<AgentReply>;
+  /** A fresh copy for one task, when the model keeps state during a task (the reserve switch). */
+  forTask?(): AgentModel;
 }
 
 export class AgentModelError extends Error {
@@ -84,6 +86,37 @@ export class ChatCompletionsAgentModel implements AgentModel {
 }
 
 /**
+ * The main model with a reserve at another provider (BUILDER_AGENT_FALLBACK_*). When the main model stays unavailable after its
+ * retries, the task moves to the reserve and stays there: Gemini 3 needs its own thought signatures on every earlier turn, and
+ * turns made by another model have none. Provider-only fields (extra_content) are removed before the reserve sees the history.
+ */
+export class FallbackAgentModel implements AgentModel {
+  private switched = false;
+  constructor(private readonly main: AgentModel, private readonly reserve: AgentModel) {}
+  get name(): string { return this.switched ? this.reserve.name : this.main.name; }
+  get model(): string { return this.switched ? this.reserve.model : this.main.model; }
+  forTask(): AgentModel { return new FallbackAgentModel(this.main, this.reserve); }
+
+  async next(messages: AgentMessage[], tools: AgentTool[]): Promise<AgentReply> {
+    if (!this.switched) {
+      try {
+        return await this.main.next(messages, tools);
+      } catch (error) {
+        if (!(error instanceof AgentModelError) || error.code !== 'AGENT_MODEL_UNAVAILABLE') throw error;
+        this.switched = true;
+        console.warn(`Agent model ${this.main.model} unavailable; the task continues on ${this.reserve.model}`);
+      }
+    }
+    return this.reserve.next(messages.map(withoutProviderFields), tools);
+  }
+}
+
+function withoutProviderFields(message: AgentMessage): AgentMessage {
+  if (message.role !== 'assistant' || !message.tool_calls) return message;
+  return { ...message, tool_calls: message.tool_calls.map(({ extra_content: _extra, ...call }) => call) };
+}
+
+/**
  * BUILDER_AGENT_MODEL (falls back to BUILDER_AI_OPENAI_MODEL). The endpoint and key are the stage AI's unless
  * BUILDER_AGENT_BASE_URL / BUILDER_AGENT_API_KEY name another provider (for example Groq when free Gemini is overloaded). The agent needs a
  * model that calls tools well; a small model writes worse code, so the setting is separate.
@@ -95,5 +128,12 @@ export function configuredAgentModel(env: NodeJS.ProcessEnv = process.env): Agen
   const baseUrl = (env.BUILDER_AGENT_BASE_URL || env.BUILDER_AI_OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
   if (!/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(`${baseUrl}/`)) return null;
   const effort = env.BUILDER_AGENT_REASONING_EFFORT;
-  return new ChatCompletionsAgentModel(apiKey, model, baseUrl, fetch, effort && ['none', 'minimal', 'low', 'medium', 'high'].includes(effort) ? { reasoningEffort: effort } : {});
+  const main = new ChatCompletionsAgentModel(apiKey, model, baseUrl, fetch, effort && ['none', 'minimal', 'low', 'medium', 'high'].includes(effort) ? { reasoningEffort: effort } : {});
+  const reserveModel = env.BUILDER_AGENT_FALLBACK_MODEL;
+  const reserveKey = env.BUILDER_AGENT_FALLBACK_API_KEY || apiKey;
+  const reserveUrl = (env.BUILDER_AGENT_FALLBACK_BASE_URL || baseUrl).replace(/\/$/, '');
+  if (!reserveModel || !/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(`${reserveUrl}/`)) return main;
+  // The reserve gets the same thinking level only when it is a level every provider knows.
+  const reserveEffort = env.BUILDER_AGENT_FALLBACK_REASONING_EFFORT;
+  return new FallbackAgentModel(main, new ChatCompletionsAgentModel(reserveKey, reserveModel, reserveUrl, fetch, reserveEffort && ['low', 'medium', 'high'].includes(reserveEffort) ? { reasoningEffort: reserveEffort } : {}));
 }
