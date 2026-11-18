@@ -176,6 +176,29 @@ describe('AI agent: the model and the prompt', () => {
     assert.equal(configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_OPENAI_MODEL: 'small', BUILDER_AGENT_MODEL: 'big' })?.model, 'big');
     assert.equal(configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_OPENAI_BASE_URL: 'http://evil.example/v1', BUILDER_AGENT_MODEL: 'big' }), null);
   });
+  it('gives back what the provider attaches to a tool call (Gemini 3 thought signatures) on the next turn', async () => {
+    const bodies: Array<{ messages: Array<{ role: string; tool_calls?: Array<{ extra_content?: unknown }> }> }> = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)));
+      const call = bodies.length === 1
+        ? { id: 'g1', type: 'function', function: { name: 'list_files', arguments: '{}' }, extra_content: { google: { thought_signature: 'sig-1' } } }
+        : { id: 'g2', type: 'function', function: { name: 'finish', arguments: '{"summary":"ok","done":[],"notDone":[]}' } };
+      return new Response(JSON.stringify({ choices: [{ message: { content: null, tool_calls: [call] } }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const model = new ChatCompletionsAgentModel('k', 'gemini-3', 'https://api.test/v1', fetchImpl);
+    const workspace = await localWorkspace();
+    try {
+      await runAgent({ model, workspace, system: 's', task: 't', limits: { turns: 5, wallMs: 60_000, costTiyn: null }, costOf: () => 0, shouldStop: async () => false, onStep: async () => undefined });
+    } finally { await workspace.close(); }
+    const assistant = bodies[1]!.messages.find((message) => message.role === 'assistant');
+    assert.deepEqual(assistant!.tool_calls![0]!.extra_content, { google: { thought_signature: 'sig-1' } });
+    // A refused request leaves its reason in the server log.
+    const warn = console.warn; const logged: string[] = []; console.warn = (message: string) => { logged.push(message); };
+    try {
+      await assert.rejects(new ChatCompletionsAgentModel('k', 'm', 'https://api.test/v1', (async () => new Response('{"error":{"message":"Function call is missing a thought_signature"}}', { status: 400 })) as unknown as typeof fetch).next([{ role: 'user', content: 'x' }], []), /AGENT_MODEL_REJECTED/);
+    } finally { console.warn = warn; }
+    assert.match(logged[0]!, /answered 400: .*thought_signature/);
+  });
   it('fixes the stack and marks the package as untrusted data', () => {
     const prompt = buildAgentPrompt({ locale: 'ru', projectName: 'Учёт заявок', inputs: { features: { roles: [{ key: 'admin' }] } }, instruction: 'Сделай тёмную тему' });
     assert.match(prompt.system, /node-react-pg@1\.3\.0/);
@@ -245,6 +268,11 @@ describe('AI agent: tasks (database)', async () => {
     assert.equal(((done.files as Array<{ path: string }>) ?? []).length, 10);
     assert.equal(await prisma!.generationRun.count({ where: { projectId, targetKey: 'agent_task' } }), 1);
     assert.equal(opened.length, 1);
+
+    // After a restart, a task left running by the stopped process ends as interrupted at once.
+    const orphan = await prisma!.agentTask.create({ data: { projectId, kind: 'build_app', status: 'running', startedAt: new Date(), profile: 'x', locale: 'ru', sourceVersionId: randomUUID(), inputVersionIds: [], prompt, promptDigest: promptDigestOf(prompt), limits: { turns: 2, wallMs: 1000, costTiyn: null }, requestedByUserId: owner.id } });
+    assert.ok(await runner.recoverInterrupted() >= 1);
+    assert.equal((await prisma!.agentTask.findUniqueOrThrow({ where: { id: orphan.id } })).errorCode, 'AGENT_INTERRUPTED');
 
     // A changed task is never run: the prompt digest must match.
     const tampered = await prisma!.agentTask.create({ data: { projectId, kind: 'build_app', profile: 'x', locale: 'ru', sourceVersionId: randomUUID(), inputVersionIds: [], prompt: { system: 'other', task: 't' }, promptDigest: 'f'.repeat(64), limits: { turns: 2, wallMs: 1000, costTiyn: null }, requestedByUserId: owner.id } });

@@ -2849,4 +2849,7 @@ export const en: Record<string, string> = {
   "✅ Заполнить форму": "✅ Fill in the form",
   "🔄 Начать заново": "🔄 Start over",
   "💬 Разговор": "💬 Conversation",
+  "Делает приложение: его пишет ИИ-агент по пакету (или разработчик).": "The app does it: the AI agent (or a developer) writes it from the package.",
+  "Веб-приложение «{0}» для ролей: {1}. BuildPath готовит пакет — функции с критериями приёмки, экраны с прототипом, схему данных и контракт API; по нему ИИ-агент пишет приложение (или разработчик).": "Web app “{0}” for the roles: {1}. BuildPath prepares the package — features with acceptance criteria, screens with a prototype, the data model and the API contract; the AI agent (or a developer) writes the app from it.",
+  "Приложение работает на вашем хостинге (Render или свой сервер): BuildPath его не размещает. Код пишет ИИ-агент по пакету или разработчик; в репозиторий он попадает только по вашей кнопке.": "The app runs on your hosting (Render or your own server): BuildPath does not host it. The code is written by the AI agent from the package or by a developer; it gets into the repository only when you press the button.",
 };

@@ -97,7 +97,7 @@ export async function runAgent(input: AgentRunInput): Promise<AgentOutcome> {
     totals.inputTokens += reply.usage.inputTokens ?? 0;
     totals.outputTokens += reply.usage.outputTokens ?? 0;
     totals.costTiyn += input.costOf(reply.usage);
-    messages.push({ role: 'assistant', content: reply.text, ...(reply.toolCalls.length ? { tool_calls: reply.toolCalls.map((call) => ({ id: call.id, type: 'function' as const, function: { name: call.name, arguments: call.arguments } })) } : {}) });
+    messages.push({ role: 'assistant', content: reply.text, ...(reply.toolCalls.length ? { tool_calls: reply.toolCalls.map((call) => ({ id: call.id, type: 'function' as const, function: { name: call.name, arguments: call.arguments }, ...(call.extra ? { extra_content: call.extra } : {}) })) } : {}) });
     if (reply.text) await step({ kind: 'note', summary: reply.text.slice(0, 600) });
     if (!reply.toolCalls.length) {
       // A turn without tools: remind it once per turn that the work ends with finish.

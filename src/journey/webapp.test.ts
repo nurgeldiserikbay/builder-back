@@ -70,10 +70,11 @@ describe('web application route', () => {
     const screens = templateScreens(features);
     const plan = buildAppPlan({ brief, process, features, screens }, 'Нужен вход через телефон');
     assert.equal(plan.kind, 'app');
-    assert.ok(plan.limits[0]!.includes('не пишет и не запускает код'));
+    assert.ok(plan.limits[0]!.includes('Код пишет ИИ-агент по пакету'));
     assert.match(plan.api, /^openapi: 3\.1\.0/);
     assert.match(plan.api, /\/api\/auth\/login:/);
-    assert.ok(plan.coverage!.every((step) => step.status !== 'built'));
+    // The app does every step that is not done by hand: the agent writes it from the package.
+    assert.ok(plan.coverage!.every((step) => step.status === (step.capability === 'offline' ? 'manual' : 'built')));
     const pack = buildHandoff({ brief, process, features, screens, plan, locale: 'ru', sourceVersionIds: { features: 'v1' } });
     assert.deepEqual(pack.checks.filter((check) => check.status === 'failed'), []);
     const names = pack.files.map((file) => file.name);
