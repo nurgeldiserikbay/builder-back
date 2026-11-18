@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.30.0
+  version: 1.31.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -3322,17 +3322,19 @@ paths:
     get:
       tags: [Journey]
       operationId: getStageInterview
-      summary: The «Разговор» that fills a form stage (goal, offer)
+      summary: The «Разговор» on a stage (goal, offer, process, features)
       description: |
         Messages, what was found so far by field (extracted), filled and missingRequired field keys, done, applied, turnsLeft and mode
-        (ai, or template — the form's questions one by one when no AI is connected). 404 INTERVIEW_NOT_AVAILABLE on other stages.
+        (ai, or template — the form's questions one by one when no AI is connected). On goal and offer the answers fill the form; on
+        process and features (composed: true) they are kept by topic and the AI composes the stage from them, so these need AI
+        (available: false without it). 404 INTERVIEW_NOT_AVAILABLE on other stages.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
         - $ref: '#/components/parameters/ProjectId'
         - $ref: '#/components/parameters/StageKey'
       responses:
-        '200': { description: 'data: version, mode, messages (role assistant|owner, text, at), extracted, filled, missingRequired, done, applied, turnsLeft' }
+        '200': { description: 'data: version, composed, available, topics (key, label, required), mode, messages (role assistant|owner, text, at), extracted, filled, missingRequired, done, applied, turnsLeft' }
         '404': { $ref: '#/components/responses/Problem' }
     post:
       tags: [Journey]
@@ -3342,7 +3344,8 @@ paths:
         message null starts it (a greeting, and without AI the first question; free). With AI each answer is one AI request: it holds
         the project's AI money, counts toward the daily limit and is recorded as a generation run with targetKey interview. The answer
         is schema-checked: only the stage's fields, choices from the form's options, lengths cut; done only when every required field is
-        known. restart=true starts over. 429 INTERVIEW_TOO_LONG after 40 messages, AI_DAILY_LIMIT_REACHED; 502/503 as for generate.
+        known. restart=true starts over. 429 INTERVIEW_TOO_LONG after 40 messages, AI_DAILY_LIMIT_REACHED; 502/503 as for generate;
+        503 AI_NOT_CONFIGURED on process and features without AI.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -3366,8 +3369,12 @@ paths:
     post:
       tags: [Journey]
       operationId: applyStageInterview
-      summary: Fill the stage form from the conversation
-      description: A new version on top of the current one, noted «Из разговора». Fields a person filled in and locked stay as they are. The owner checks the form and accepts the stage as usual. 400 INTERVIEW_NOTHING_TO_APPLY, 404 INTERVIEW_NOT_STARTED.
+      summary: Fill the stage form, or compose the stage, from the conversation
+      description: |
+        goal, offer: a new version on top of the current one, noted «Из разговора»; fields a person filled in and locked stay as they are.
+        process, features: an AI draft of the stage like POST …/generate (same inputs, rules, locks, limits and costs), with the owner's
+        answers by topic passed as ownerConversation — untrusted data that the stage is built on first. The owner checks the result and
+        accepts the stage as usual. 400 INTERVIEW_NOTHING_TO_APPLY, 404 INTERVIEW_NOT_STARTED; 409/429/502/503 as for generate.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -3382,6 +3389,9 @@ paths:
         '400': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
+        '502': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/stages/{stageKey}/generate:
     post:
       tags: [Journey]
