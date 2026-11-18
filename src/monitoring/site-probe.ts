@@ -7,7 +7,7 @@ import { probeOk, type Probe } from './monitor-rules.js';
 
 const TIMEOUT_MS = 10_000;
 
-function pinnedLookup(address: string): LookupFunction {
+export function pinnedLookup(address: string): LookupFunction {
   const family = address.includes(':') ? 6 : 4;
   return ((_hostname: string, options: number | { all?: boolean }, callback: (...args: unknown[]) => void) => {
     if (typeof options === 'object' && options.all) callback(null, [{ address, family }]);

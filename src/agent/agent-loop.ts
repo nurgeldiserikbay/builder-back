@@ -18,7 +18,7 @@ const DEMO_LIMIT = 6_000_000;
 
 export interface AgentLimits { turns: number; wallMs: number; costTiyn: number | null }
 export interface AgentStep { at: string; kind: 'note' | 'tool'; tool?: string; summary: string; status?: 'ok' | 'failed'; output?: string }
-export interface AgentCheck { id: 'install' | 'test' | 'build' | 'demo'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number }
+export interface AgentCheck { id: 'install' | 'test' | 'build' | 'start' | 'deploy_files' | 'demo'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number }
 export interface AgentFile { path: string; content: string }
 export interface AgentOutcome {
   stopReason: 'finished' | 'turns' | 'time' | 'budget' | 'stopped' | 'model_error';
@@ -176,6 +176,7 @@ export async function platformChecks(workspace: Workspace): Promise<AgentCheck[]
     { id: 'install', command: 'npm install --no-audit --no-fund', present: pkgText !== null, timeoutMs: 600_000 },
     { id: 'test', command: 'npm test', present: typeof scripts.test === 'string' && !/no test specified/.test(String(scripts.test)), timeoutMs: 600_000 },
     { id: 'build', command: 'npm run build', present: typeof scripts.build === 'string', timeoutMs: 600_000 },
+    { id: 'start', command: START_CHECK, present: typeof scripts.start === 'string', timeoutMs: 120_000 },
     { id: 'demo', command: 'npm run build:demo', present: typeof scripts['build:demo'] === 'string', timeoutMs: 600_000 },
   ];
   const results: AgentCheck[] = [];
@@ -187,8 +188,39 @@ export async function platformChecks(workspace: Workspace): Promise<AgentCheck[]
     const status = result.timedOut ? 'timed_out' : result.exitCode === 0 ? 'passed' : 'failed';
     results.push({ id: item.id, command: item.command, status, exitCode: result.exitCode, output: cut(`${result.stdout}\n${result.stderr}`.trim(), 3000), durationMs: result.durationMs });
     if (status !== 'passed' && item.id !== 'demo') failed = true;
+    // The launch files are read, not run: right after the start check, in the order people read the report.
+    if (item.id === 'start') results.push(await deployFilesCheck(workspace));
   }
+  if (!results.some((check) => check.id === 'deploy_files')) results.splice(results.length - 1, 0, await deployFilesCheck(workspace));
   return results;
+}
+
+/**
+ * Starts the application the way a host would — without a database (the profile requires the in-memory store then) — and
+ * asks /api/health. The whole process group is stopped afterwards, whatever npm started.
+ */
+export const START_CHECK = [
+  'PORT=4123 SESSION_SECRET=buildpath-start-check NODE_ENV=production setsid npm start > .buildpath-start.log 2>&1 & pid=$!',
+  'ok=1; for i in $(seq 1 60); do if node -e "fetch(\'http://127.0.0.1:4123/api/health\').then(r=>r.json().then(b=>process.exit(r.ok&&b&&b.status===\'ok\'?0:1))).catch(()=>process.exit(1))"; then ok=0; break; fi; sleep 1; done',
+  'kill -- -$pid 2>/dev/null; kill $pid 2>/dev/null; tail -40 .buildpath-start.log; rm -f .buildpath-start.log; exit $ok',
+].join('; ');
+
+/** What a host needs, checked by reading the files: a Render Blueprint, a Docker image, a compose file with a database. */
+export async function deployFilesCheck(workspace: Workspace): Promise<AgentCheck> {
+  const [blueprint, dockerfile, compose, envExample] = await Promise.all(['render.yaml', 'Dockerfile', 'docker-compose.yml', '.env.example'].map((path) => workspace.read(path)));
+  const missing: string[] = [];
+  if (!blueprint) missing.push('render.yaml');
+  else {
+    for (const [need, test] of [['type: web', /type:\s*web/], ['healthCheckPath: /api/health', /healthCheckPath:\s*\/api\/health/], ['startCommand', /startCommand:/], ['DATABASE_URL', /DATABASE_URL/], ['SESSION_SECRET', /SESSION_SECRET/]] as const) {
+      if (!test.test(blueprint)) missing.push(`render.yaml: ${need}`);
+    }
+    // Secrets are entered by the owner in Render, never written into the repository.
+    if (/(DATABASE_URL|SESSION_SECRET|ADMIN_PASSWORD)[\s\S]{0,40}value:\s*["']?[^\s"']{6,}/.test(blueprint)) missing.push('render.yaml: a secret value is written in the file');
+  }
+  if (!dockerfile || !/^FROM\s+node:/im.test(dockerfile)) missing.push('Dockerfile (FROM node:…)');
+  if (!compose || !/postgres/i.test(compose)) missing.push('docker-compose.yml with PostgreSQL');
+  if (!envExample || !/DATABASE_URL/.test(envExample)) missing.push('.env.example with DATABASE_URL');
+  return { id: 'deploy_files', command: 'render.yaml, Dockerfile, docker-compose.yml, .env.example', status: missing.length ? 'failed' : 'passed', exitCode: null, output: missing.length ? `Missing or wrong: ${missing.join('; ')}` : '', durationMs: 0 };
 }
 
 /** One HTML file with everything inline: external scripts or styles would not load in the preview frame anyway. */

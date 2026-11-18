@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.27.0
+  version: 1.28.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -4055,7 +4055,7 @@ paths:
       operationId: getAgentTasks
       summary: The AI agent's tasks for a web application
       description: |
-        configured (an agent model and a sandbox), profile (the stack, node-react-pg@1.1.0), limits (turns, wallMs, costTiyn), canStart, repository (the connected one or null),
+        configured (an agent model and a sandbox), profile (the stack, node-react-pg@1.2.0), limits (turns, wallMs, costTiyn), canStart, repository (the connected one or null),
         latest (status, live steps, stop reason, the agent's report, the platform's own checks install/test/build, file list) and up to
         nine earlier tasks. Readable by everyone who can read the handoff stage.
       x-implementation-status: implemented
@@ -4063,7 +4063,7 @@ paths:
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       responses:
-        '200': { description: 'data: configured, profile, limits, canStart, repository, latest (with pushed: branch, pullRequestUrl, commitUrl, at), history' }
+        '200': { description: 'data: configured, profile, limits, canStart, repository, deployment (url, ok, status, database, error, checkedAt) or null, latest (with pushed: branch, pullRequestUrl, commitUrl, at; hasDemo), history' }
         '404': { $ref: '#/components/responses/Problem' }
     post:
       tags: [Journey]
@@ -4091,6 +4091,30 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
         '429': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/agent/deployment/check:
+    post:
+      tags: [Journey]
+      operationId: checkAppDeployment
+      summary: Check the owner's running application
+      description: |
+        The owner runs the application on their Render or own server (render.yaml, Dockerfile, docker-compose.yml from the agent;
+        profile node-react-pg@1.2.0) and gives its https address. BuildPath reduces it to the origin, resolves it to a public address,
+        pins the connection, does not follow redirects, waits up to 60 s (a sleeping free service wakes up) and asks GET /api/health,
+        expecting 200 {"status":"ok"}. The result is kept per project. Nothing is deployed from BuildPath and no secret is asked for.
+        400 APP_URL_INVALID.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [url], properties: { url: { type: string, maxLength: 300 } } }
+      responses:
+        '200': { description: 'data: url, ok, status, database, error (NOT_PUBLIC, DNS, TIMEOUT, TLS, REFUSED, HTTP_<code>, NOT_HEALTH_ANSWER), checkedAt' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/agent/tasks/{taskId}/stop:
     post:
       tags: [Journey]

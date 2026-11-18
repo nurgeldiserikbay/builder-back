@@ -354,6 +354,7 @@ model Project {
   sshDeployKey     SshDeployKey?
   interviews       StageInterview[]
   agentTasks       AgentTask[]
+  appDeployment    AppDeployment?
   visitCounts      SiteVisitCount[]
   invitations      ProjectInvitation[]
 
@@ -1314,11 +1315,22 @@ model ProjectChoice {
   @@map("project_choices")
 }
 
-/// Repository connected to a project. The access token is encrypted (AES-256-GCM) and never returned by the API.
-/// Deploy key BuildPath generates for one project so it can push to any git server over SSH. The private key is
-/// encrypted like access tokens; the owner adds the public key to their server with write access.
-/// «Разговор» on a form stage (STAGE_WORK_MODEL §70): the messages, what they told so far by field, and the question
-/// waiting for an answer when the form's questions are asked one by one without AI. One conversation per stage.
+/// Step 4 of the AI agent: where the owner runs the application (their Render or server) and the last check of /api/health.
+model AppDeployment {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String    @unique @map("project_id") @db.Uuid
+  url             String    @db.VarChar(300)
+  ok              Boolean
+  status          Int?
+  database        String?   @db.VarChar(20)
+  error           String?   @db.VarChar(40)
+  checkedAt       DateTime  @map("checked_at") @db.Timestamptz(3)
+  checkedByUserId String    @map("checked_by_user_id") @db.Uuid
+  project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("app_deployments")
+}
+
 /// «ИИ-агент» (STAGE_WORK_MODEL §71): one task the agent does in a throwaway sandbox — what it was asked (prompt and its
 /// digest), the limits, live steps, the platform's own checks and the files it left. Nothing here is pushed or deployed.
 model AgentTask {
@@ -1364,6 +1376,8 @@ model AgentTask {
   @@map("agent_tasks")
 }
 
+/// «Разговор» on a form stage (STAGE_WORK_MODEL §70): the messages, what they told so far by field, and the question
+/// waiting for an answer when the form's questions are asked one by one without AI. One conversation per stage.
 model StageInterview {
   id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   projectId       String   @map("project_id") @db.Uuid
@@ -1384,6 +1398,8 @@ model StageInterview {
   @@map("stage_interviews")
 }
 
+/// Deploy key BuildPath generates for one project so it can push to any git server over SSH. The private key is
+/// encrypted like access tokens; the owner adds the public key to their server with write access.
 model SshDeployKey {
   id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   projectId           String   @unique @map("project_id") @db.Uuid
@@ -1397,6 +1413,7 @@ model SshDeployKey {
   @@map("ssh_deploy_keys")
 }
 
+/// Repository connected to a project. The access token is encrypted (AES-256-GCM) and never returned by the API.
 model CodeRepository {
   id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   projectId        String    @unique @map("project_id") @db.Uuid

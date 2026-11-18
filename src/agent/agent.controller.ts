@@ -53,3 +53,18 @@ export class AgentController {
     return this.tasks.files(request.user.id, projectId, taskId(id));
   }
 }
+
+/** Step 4: the address where the owner runs the application, checked by /api/health. */
+@Controller('projects/:projectId/agent/deployment')
+@UseGuards(AuthGuard)
+export class AgentDeploymentController {
+  constructor(private readonly tasks: AgentTasksService) {}
+
+  @Post('check')
+  @HttpCode(200)
+  checkDeployment(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() body: unknown) {
+    const record = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+    if (Object.keys(record).some((key) => key !== 'url') || typeof record.url !== 'string' || record.url.length > 300) throw new BadRequestException('APP_URL_INVALID');
+    return this.tasks.checkDeployment(request.user.id, projectId, record.url);
+  }
+}
