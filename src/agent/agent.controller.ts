@@ -21,10 +21,13 @@ export class AgentController {
   @HttpCode(202)
   start(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() body: unknown) {
     const record = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
-    if (Object.keys(record).some((key) => key !== 'instruction' && key !== 'kind')) throw new BadRequestException('INVALID_BODY');
-    if (record.kind !== undefined && record.kind !== 'build_app') throw new BadRequestException('AGENT_TASK_KIND_INVALID');
+    if (Object.keys(record).some((key) => key !== 'instruction' && key !== 'kind' && key !== 'baseTaskId')) throw new BadRequestException('INVALID_BODY');
+    if (record.kind !== undefined && record.kind !== 'build_app' && record.kind !== 'change_app') throw new BadRequestException('AGENT_TASK_KIND_INVALID');
+    const change = record.kind === 'change_app';
+    if (change !== (typeof record.baseTaskId === 'string')) throw new BadRequestException('AGENT_TASK_KIND_INVALID');
+    if (change && !/^[0-9a-f-]{36}$/i.test(record.baseTaskId as string)) throw new BadRequestException('INVALID_BODY');
     if (record.instruction !== undefined && record.instruction !== null && typeof record.instruction !== 'string') throw new BadRequestException('INVALID_INSTRUCTION');
-    return this.tasks.start(request.user.id, projectId, { instruction: (record.instruction as string | null | undefined) ?? null });
+    return this.tasks.start(request.user.id, projectId, { instruction: (record.instruction as string | null | undefined) ?? null, baseTaskId: change ? record.baseTaskId as string : null });
   }
 
   @Post(':taskId/stop')

@@ -13,7 +13,7 @@ import { ChatCompletionsAgentModel, configuredAgentModel, type AgentMessage, typ
 import { deployFilesCheck, runAgent, safePath, type AgentStep } from './agent-loop.js';
 import { appOrigin, checkAppHealth } from './app-health.js';
 import { createServer } from 'node:http';
-import { AgentRunner, AgentTasksService, buildAgentPrompt, PREVIEW_CSP, promptDigestOf, withPreviewPolicy } from './agent-tasks.js';
+import { AgentRunner, AgentTasksService, buildAgentPrompt, buildChangePrompt, filesDigestOf, pullRequestText, PREVIEW_CSP, promptDigestOf, withPreviewPolicy } from './agent-tasks.js';
 import { JourneyCore } from '../journey/journey-core.js';
 import type { ExecResult, Workspace, WorkspaceProvider } from './workspace.js';
 
@@ -274,6 +274,43 @@ describe('AI agent: tasks (database)', async () => {
       health.close();
       if (before.local === undefined) delete process.env.CODE_HOSTING_ALLOW_LOCAL; else process.env.CODE_HOSTING_ALLOW_LOCAL = before.local;
     }
+    // Step 5: a change starts from the files of the finished task, in the sandbox, and its pull request says what was removed.
+    await assert.rejects(service.start(owner.id, projectId, { instruction: null, baseTaskId: task.id }), /CHANGE_INSTRUCTION_REQUIRED/);
+    await assert.rejects(service.start(owner.id, projectId, { instruction: 'x', baseTaskId: queued.id }), /AGENT_BASE_HAS_NO_CODE/);
+    await assert.rejects(service.start(owner.id, projectId, { instruction: 'x', baseTaskId: randomUUID() }), /AGENT_TASK_NOT_FOUND/);
+    assert.equal((await service.get(owner.id, projectId)).data.changeBase, task.id);
+    const baseFiles = (await prisma!.agentTask.findUniqueOrThrow({ where: { id: task.id } })).files as Array<{ path: string; content: string }>;
+    const changePrompt = buildChangePrompt({ locale: 'ru', projectName: 'Учёт', inputs: { goal: { g: 1 } }, instruction: 'Добавь поле телефона', baseTaskId: task.id, baseFiles });
+    assert.match(changePrompt.system, /CHANGE to an existing application/);
+    assert.match(changePrompt.task, /- src\/rules\.js/);
+    assert.match(changePrompt.task, /OWNER REQUEST[^\n]*\n\nДобавь поле телефона/);
+    assert.match(changePrompt.task, /"goal":\{"g":1\}/);
+    const seenFiles: string[] = [];
+    runner.setAgent(scripted([
+      [{ name: 'read_file', args: { path: 'src/rules.js' } }, { name: 'run', args: { command: 'rm src/rules.js test/rules.test.js', timeoutSeconds: 10 } }],
+      [{ name: 'finish', args: { summary: 'Правила убраны.', done: ['Изменение'], notDone: [] } }],
+    ]), { name: 'local', open: async () => { const ws = await localWorkspace(); const read = ws.read; ws.read = async (file) => { const content = await read(file); if (content !== null) seenFiles.push(file); return content; }; return ws; } });
+    const change = await prisma!.agentTask.create({ data: {
+      projectId, kind: 'change_app', instruction: 'Убери правила', profile: 'x', locale: 'ru', sourceVersionId: randomUUID(), inputVersionIds: [], prompt, promptDigest: promptDigestOf(prompt),
+      limits: { turns: 10, wallMs: 120_000, costTiyn: null }, requestedByUserId: owner.id, baseTaskId: task.id, baseFilesDigest: filesDigestOf(baseFiles as never),
+    } });
+    assert.equal(await runner.processNext(), true);
+    const changed = await prisma!.agentTask.findUniqueOrThrow({ where: { id: change.id } });
+    assert.equal(seenFiles[0], 'src/rules.js', 'the base code was in the folder when the agent read it');
+    assert.equal(changed.status, 'succeeded', JSON.stringify(changed.result));
+    assert.ok(!(changed.files as Array<{ path: string }>).some((file) => file.path === 'src/rules.js'));
+    await service.push(owner.id, projectId, change.id, true);
+    assert.match(pushes.at(-1)!.title, /изменения в «Учёт»/);
+    assert.match(pushes.at(-1)!.body, /Что попросил изменить владелец:\*\* Убери правила/);
+    assert.match(pushes.at(-1)!.body, /`src\/rules\.js`/);
+    // A base whose files changed after queueing is not used.
+    const stale = await prisma!.agentTask.create({ data: {
+      projectId, kind: 'change_app', instruction: 'x', profile: 'x', locale: 'ru', sourceVersionId: randomUUID(), inputVersionIds: [], prompt, promptDigest: promptDigestOf(prompt),
+      limits: { turns: 2, wallMs: 1000, costTiyn: null }, requestedByUserId: owner.id, baseTaskId: task.id, baseFilesDigest: 'e'.repeat(64),
+    } });
+    await runner.processNext();
+    assert.equal((await prisma!.agentTask.findUniqueOrThrow({ where: { id: stale.id } })).errorCode, 'AGENT_BASE_CHANGED');
+    assert.ok(pullRequestText({ taskId: 't', projectName: 'p', profile: 'x', model: null, report: null, checks: [], instruction: null }).title.includes('приложение'));
     const stranger = await prisma!.user.create({ data: { email: `x-${randomUUID()}@test.local`, emailNormalized: `x-${randomUUID()}@test.local`, passwordHash: 'x', name: 'X', locale: 'ru' } });
     users.push(stranger.id);
     await assert.rejects(service.files(stranger.id, projectId, task.id), /PROJECT_NOT_FOUND/);
