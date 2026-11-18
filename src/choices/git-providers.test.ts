@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { GitHubClient, GitLabClient, GitProviderError, parseRepoUrl } from './git-providers.js';
+import { BitbucketClient, GitHubClient, GiteaClient, GitLabClient, GitProviderError, parseRepoUrl } from './git-providers.js';
+import { chooseEntries, REPO_READ_LIMITS, wantedPath } from './repo-read.js';
 import { choiceCards, recommend } from './cards.js';
 
 type Call = { method: string; url: string; body: unknown; headers: Record<string, string> };
@@ -100,6 +101,54 @@ describe('GitLab client', () => {
     assert.deepEqual((calls.at(-1)!.body as { actions: Array<{ action: string }> }).actions.map((item) => item.action), ['update', 'create']);
     const reporter = fakeFetch([['GET', /projects\//, 200, { permissions: { project_access: { access_level: 20 } } }]]);
     assert.equal((await new GitLabClient('t', 'https://gl.kz', reporter.impl).inspect('a/b')).canWrite, false);
+  });
+});
+
+describe('reading the code of a branch back', () => {
+  const b64 = (text: string) => Buffer.from(text).toString('base64');
+  it('keeps source and config, never secrets, build output, packages or binaries, within limits', () => {
+    for (const ok of ['package.json', 'src/app.js', '.env.example', 'README.md', 'public/manifest.webmanifest']) assert.equal(wantedPath(ok), true, ok);
+    for (const bad of ['.env', '.env.production', 'node_modules/x/index.js', 'dist/index.html', '.git/config', 'keys/id_rsa', 'cert.pem', 'logo.png', 'font.woff2', '../x', '/etc/passwd']) assert.equal(wantedPath(bad), false, bad);
+    const many = Array.from({ length: REPO_READ_LIMITS.files + 5 }, (_, n) => ({ path: `src/f${String(n).padStart(4, '0')}.js`, size: 10 }));
+    const chosen = chooseEntries([...many, { path: 'big.js', size: REPO_READ_LIMITS.fileBytes + 1 }]);
+    assert.equal(chosen.chosen.length, REPO_READ_LIMITS.files);
+    assert.equal(chosen.truncated, true);
+  });
+  it('GitHub: the tree of the branch commit, then blobs; an empty repository is null', async () => {
+    const { impl, calls } = fakeFetch([
+      ['GET', /git\/ref\/heads\/main$/, 200, { object: { sha: 'c9' } }],
+      ['GET', /git\/trees\/c9\?recursive=1$/, 200, { tree: [{ path: 'package.json', type: 'blob', size: 20, sha: 's1' }, { path: 'src', type: 'tree', sha: 'x' }, { path: 'src/a.js', type: 'blob', size: 9, sha: 's2' }, { path: '.env', type: 'blob', size: 5, sha: 's3' }, { path: 'logo.png', type: 'blob', size: 5, sha: 's4' }], truncated: false }],
+      ['GET', /git\/blobs\/s1$/, 200, { content: b64('{"name":"app"}') }],
+      ['GET', /git\/blobs\/s2$/, 200, { content: b64('export {}\n') }],
+    ]);
+    const snapshot = await new GitHubClient('t', 'https://api.test', impl).readBranch('a/b', 'main');
+    assert.deepEqual(snapshot, { files: [{ path: 'package.json', content: '{"name":"app"}' }, { path: 'src/a.js', content: 'export {}\n' }], truncated: false, commit: 'c9', branch: 'main' });
+    assert.ok(!calls.some((call) => /s3|s4/.test(call.url)), 'secrets and binaries are not even downloaded');
+    const empty = fakeFetch([['GET', /git\/ref\/heads\/main$/, 409, {}]]);
+    assert.equal(await new GitHubClient('t', 'https://api.test', empty.impl).readBranch('a/b', 'main'), null);
+  });
+  it('GitLab, Gitea and Bitbucket read the same way through their own APIs', async () => {
+    const gitlab = fakeFetch([
+      ['GET', /repository\/branches\/main$/, 200, { commit: { id: 'g1' } }],
+      ['GET', /repository\/tree\?ref=g1&recursive=true&per_page=100&page=1$/, 200, [{ path: 'index.js', type: 'blob', id: 'b1' }, { path: 'lib', type: 'tree', id: 'x' }]],
+      ['GET', /repository\/blobs\/b1$/, 200, { content: b64('1') }],
+    ]);
+    assert.deepEqual((await new GitLabClient('t', 'https://gl.test', gitlab.impl).readBranch('team/app', 'main'))!.files, [{ path: 'index.js', content: '1' }]);
+    const gitea = fakeFetch([
+      ['GET', /repos\/o\/r\/branches\/main$/, 200, { commit: { id: 'e1' } }],
+      ['GET', /git\/trees\/e1\?recursive=true/, 200, { tree: [{ path: 'a.js', type: 'blob', size: 1, sha: 'h1' }] }],
+      ['GET', /git\/blobs\/h1$/, 200, { content: b64('2') }],
+    ]);
+    assert.deepEqual((await new GiteaClient('t', 'https://gt.test', gitea.impl).readBranch('o/r', 'main'))!.files, [{ path: 'a.js', content: '2' }]);
+    const bitbucket = fakeFetch([
+      ['GET', /refs\/branches\/main$/, 200, { target: { hash: 'k1' } }],
+      ['GET', /src\/k1\/\?max_depth=30&pagelen=100$/, 200, { values: [{ type: 'commit_file', path: 'a.js', size: 1 }, { type: 'commit_directory', path: 'lib' }], next: 'https://evil.test/steal' }],
+      ['GET', /src\/k1\/a\.js$/, 200, '3'],
+    ]);
+    const snapshot = await new BitbucketClient('t', 'https://bb.test/2.0', bitbucket.impl).readBranch('o/r', 'main');
+    assert.deepEqual(snapshot!.files, [{ path: 'a.js', content: '"3"' }]);
+    assert.ok(!bitbucket.calls.some((call) => call.url.startsWith('https://evil.test')), 'a «next» link to another host is not followed with the token');
+    assert.equal(snapshot!.truncated, true);
   });
 });
 
