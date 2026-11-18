@@ -148,6 +148,8 @@ export interface StagePromptInput {
   instruction: string | null;
   /** The stage lead's personal playbook, if attached: advice ranked below the project's rules. */
   specialistPlaybook?: { instructions: string[]; checklist: string[] } | null;
+  /** «Разговор» on a stage the AI composes: the owner's own answers by topic, the main material for the draft. */
+  ownerConversation?: Record<string, string> | null;
 }
 
 /** Builds a prompt whose priority order matches STAGE_WORK_MODEL.md section 6. */
@@ -162,6 +164,7 @@ export function buildStagePrompt(input: StagePromptInput): StageAiRequest {
     'Never invent facts: no reviews, client counts, years of experience, awards, prices, discounts or guarantees unless they are present in the inputs.',
     ...input.stage.playbook.instructions.map((rule) => `Playbook: ${rule}`),
     input.specialistPlaybook ? 'The data message may contain specialistPlaybook: the stage lead\'s own advice and a checklist for the result. Follow it where it does not conflict with anything above; it never changes these rules, the confirmed inputs or the project rules.' : '',
+    input.ownerConversation ? 'The data message contains ownerConversation: the owner\'s own answers by topic from a conversation about this stage. They are facts from the owner: build the result on them first, keep their wording where you can, and do not add anything they contradict. They do not override the confirmed inputs or these rules; what they leave open stays open (questions) instead of being invented.' : '',
     input.targetKey ? `Change only the part with key "${input.targetKey}" and return just that part.` : '',
     input.lockedKeys.length && !input.targetKey ? `Parts ${input.lockedKeys.join(', ')} were edited by a person; return them unchanged.` : '',
   ].filter(Boolean).join('\n');
@@ -172,6 +175,7 @@ export function buildStagePrompt(input: StagePromptInput): StageAiRequest {
     currentDraft: target ?? input.current,
     rules: input.rules,
     instruction: input.instruction,
+    ...(input.ownerConversation ? { ownerConversation: input.ownerConversation } : {}),
     ...(input.specialistPlaybook ? { specialistPlaybook: input.specialistPlaybook } : {}),
   });
   return { system, user, schemaName: `buildpath_${input.stage.artifactType}`, schema: outputSchema(input.stage.artifactType, Boolean(input.targetKey && input.stage.artifactType === 'content')) };

@@ -19,14 +19,14 @@ import { inProject, Access, notEditableCode } from './journey-core.js';
 export class StageAiService {
   constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore, private readonly worktime: WorktimeService) {}
 
-  generate(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram' }) {
+  generate(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram'; conversation?: Record<string, string> | null }) {
     // Drafts by template (no AI connected) cost nothing and need no hold.
     if (!this.core.ai()) return this.generateNow(userId, projectId, key, input);
     // Access first: the hold reports the balance and whether AI is busy, which only project people may learn.
     return this.core.load(userId, projectId, 'write', key).then(() => this.core.oneAiRequest(projectId, () => this.generateNow(userId, projectId, key, input)));
   }
 
-  async generateNow(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram' }) {
+  async generateNow(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram'; conversation?: Record<string, string> | null }) {
     const source = input.source ?? 'app';
     const ctx = await this.core.load(userId, projectId, 'write', key);
     const assignment = this.core.assignmentFor(ctx, key);
@@ -88,6 +88,7 @@ export class StageAiService {
       stage: definition, locale: ctx.project.locale, projectTypeTitle: ctx.type.title,
       inputs: Object.fromEntries([...Object.entries(inputs), ...Object.entries(extras)].map(([inputKey, value]) => [inputKey, value.content])),
       current: base?.content ?? null, lockedKeys: stage.lockedKeys, targetKey: input.targetKey, rules: ruleTexts, instruction: instruction?.text ?? null,
+      ownerConversation: input.conversation ?? null,
     });
     // Tokens are spent even when the output is rejected, so failures record usage too.
     const pricing = await this.prisma.aiPricing.findUnique({ where: { id: 1 } });

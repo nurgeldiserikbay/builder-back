@@ -10,8 +10,9 @@ import { JourneyCore, inProject, notEditableCode } from './journey-core.js';
 import { StageAiError } from './stage-ai.js';
 import { canEdit } from './stage-state.js';
 import { WorktimeService } from './worktime.service.js';
+import { StageAiService } from './stage-ai.service.js';
 import {
-  INTERVIEW_LIMITS, INTERVIEW_STAGES, INTERVIEW_VERSION, applyExtracted, buildInterviewPrompt, cleanExtracted, greeting, mergeExtracted, missingRequired, readAiTurn, templateTurn,
+  COMPOSED_STAGES, INTERVIEW_LIMITS, INTERVIEW_STAGES, conversationMaterial, interviewFields, INTERVIEW_VERSION, applyExtracted, buildInterviewPrompt, cleanExtracted, greeting, mergeExtracted, missingRequired, readAiTurn, templateTurn,
   type Extracted, type InterviewMessage,
 } from './interview.js';
 
@@ -19,18 +20,22 @@ type Row = { id: string; mode: string; messages: unknown; extracted: unknown; pe
 
 @Injectable()
 export class InterviewService {
-  constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore, private readonly worktime: WorktimeService) {}
+  constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore, private readonly worktime: WorktimeService, private readonly stageAi: StageAiService) {}
 
   private stageKeyOf(key: string): (typeof INTERVIEW_STAGES)[number] {
     if (!(INTERVIEW_STAGES as readonly string[]).includes(key)) throw new NotFoundException('INTERVIEW_NOT_AVAILABLE');
     return key as (typeof INTERVIEW_STAGES)[number];
   }
 
-  private view(row: Row | null, fields: { key: string; required: boolean }[], aiConfigured: boolean) {
+  private view(row: Row | null, fields: { key: string; label: string; required: boolean }[], aiConfigured: boolean, composed = false) {
     const extracted = (row?.extracted ?? {}) as Extracted;
     return {
       data: {
         version: INTERVIEW_VERSION,
+        // On process and the ТЗ the AI composes the stage from the answers: without AI the conversation is not offered.
+        composed, available: !composed || aiConfigured,
+        // What the conversation asks about: the form's fields or, on composed stages, its topics.
+        topics: fields.map((field) => ({ key: field.key, label: tr(field.label), required: field.required })),
         mode: row?.mode ?? (aiConfigured ? 'ai' : 'template'),
         messages: (row?.messages ?? []) as InterviewMessage[],
         extracted,
@@ -48,7 +53,7 @@ export class InterviewService {
     const ctx = await this.core.load(userId, projectId, 'read', key);
     const stage = this.core.stageOf(ctx, key);
     const row = await this.prisma.stageInterview.findUnique({ where: { stageId: stage.id } });
-    return this.view(row, stageDefinitions[stageKey].fields ?? [], Boolean(this.core.ai()));
+    return this.view(row, interviewFields(stageDefinitions[stageKey]), Boolean(this.core.ai()), COMPOSED_STAGES.includes(stageKey));
   }
 
   /**
@@ -71,8 +76,10 @@ export class InterviewService {
     const stage = this.core.stageOf(ctx, key);
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     const definition = stageDefinitions[stageKey as StageKey];
-    const fields = definition.fields ?? [];
+    const fields = interviewFields(definition);
     const provider = this.core.ai();
+    const composed = COMPOSED_STAGES.includes(stageKey);
+    if (composed && !provider) throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
     const mode = provider ? 'ai' : 'template';
     let row: Row | null = await this.prisma.stageInterview.findUnique({ where: { stageId: stage.id } });
     if (input.restart && row) { await this.prisma.stageInterview.delete({ where: { id: row.id } }); row = null; }
@@ -90,10 +97,10 @@ export class InterviewService {
       }
       const created = await this.prisma.stageInterview.create({ data: { projectId, stageId: stage.id, mode, messages: messages as never, extracted: {}, pendingField, asked, createdByUserId: userId } });
       await this.core.event(this.prisma, projectId, userId, 'interview_started', key, { mode });
-      if (input.message === null) return this.view(created, fields, Boolean(provider));
+      if (input.message === null) return this.view(created, fields, Boolean(provider), composed);
       row = created;
     }
-    if (input.message === null) return this.view(row, fields, Boolean(provider));
+    if (input.message === null) return this.view(row, fields, Boolean(provider), composed);
 
     const messages = [...(row.messages as InterviewMessage[])];
     if (messages.length + 2 > INTERVIEW_LIMITS.turns) throw new HttpException('INTERVIEW_TOO_LONG', HttpStatus.TOO_MANY_REQUESTS);
@@ -109,7 +116,7 @@ export class InterviewService {
         asked: turn.pendingField && !row.asked.includes(turn.pendingField) ? [...row.asked, turn.pendingField] : row.asked,
       } });
       await this.worktime.recordAction(userId, projectId, key);
-      return this.view(updated, fields, Boolean(provider));
+      return this.view(updated, fields, Boolean(provider), composed);
     }
 
     if (await this.core.remainingAiRuns(projectId) < 1) throw new HttpException('AI_DAILY_LIMIT_REACHED', HttpStatus.TOO_MANY_REQUESTS);
@@ -147,7 +154,7 @@ export class InterviewService {
     ]);
     await record('succeeded', null);
     await this.worktime.recordAction(userId, projectId, key);
-    return this.view(updated, fields, true);
+    return this.view(updated, fields, true, composed);
   }
 
   /** Fills the stage form from the conversation: a new version on top of the current one; fields a person locked stay. */
@@ -159,8 +166,16 @@ export class InterviewService {
     const row = await this.prisma.stageInterview.findUnique({ where: { stageId: stage.id } });
     if (!row) throw new NotFoundException('INTERVIEW_NOT_STARTED');
     const definition = stageDefinitions[stageKey as StageKey];
-    const extracted = cleanExtracted(definition.fields ?? [], row.extracted);
+    const extracted = cleanExtracted(interviewFields(definition), row.extracted);
     if (!Object.keys(extracted).length) throw new BadRequestException('INTERVIEW_NOTHING_TO_APPLY');
+    if (COMPOSED_STAGES.includes(stageKey)) {
+      // The AI composes the stage from the answers, with the same rules, checks and costs as any draft on this stage.
+      const material = inProject(ctx, () => conversationMaterial(definition, extracted));
+      const result = await this.stageAi.generate(userId, projectId, key, { instruction: inProject(ctx, () => tr('Составить по разговору с владельцем')), saveAs: 'one_off', targetKey: null, conversation: material });
+      await this.prisma.stageInterview.update({ where: { id: row.id }, data: { appliedVersionId: result.data.versionId } });
+      await this.core.event(this.prisma, projectId, userId, 'interview_applied', key, { versionNumber: result.data.versionNumber, fields: Object.keys(extracted), mode: row.mode, composed: true });
+      return { data: { versionId: result.data.versionId, versionNumber: result.data.versionNumber } };
+    }
     const base = await this.core.versionContent(stage.currentVersionId);
     const empty = stageKey === 'goal' ? emptyBrief() : { services: [], hours: null };
     const proposal = applyExtracted((base?.content ?? empty) as Record<string, unknown>, extracted);
