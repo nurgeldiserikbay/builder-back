@@ -8,6 +8,7 @@ import { stageDefinitions } from './catalog.js';
 import { ChangeNoticesService } from './change-notices.service.js';
 import { cleanExtracted, conversationMaterial, interviewFields, interviewSchema, readAnswer, templateTurn, type Extracted } from './interview.js';
 import { templateProcess } from './process.js';
+import { createServer } from 'node:http';
 import { InterviewService } from './interview.service.js';
 import { JourneyCore } from './journey-core.js';
 import { JourneyService } from './journey.service.js';
@@ -181,5 +182,34 @@ describe('«Разговор» (database)', async () => {
       assert.equal((await interviews.get(owner.id, projectId, 'process')).data.applied, true);
       assert.deepEqual(conversationMaterial(stageDefinitions.features, { users: 'клиенты', must: '  ', other: 'x' }), { 'Кто будет пользоваться продуктом?': 'клиенты' });
     } finally { core.setProvider(null); }
+  });
+
+  it('a voice answer: consent once, the recording is recognised and not kept, only the text comes back', { skip }, async () => {
+    const { interviews, owner, projectId } = await setup();
+    const audio = { buffer: Buffer.from('fake-opus'), mimetype: 'audio/webm;codecs=opus', size: 9 };
+    const keep = { key: process.env.BUILDER_AI_OPENAI_API_KEY, model: process.env.BUILDER_AI_TRANSCRIBE_MODEL, url: process.env.BUILDER_AI_OPENAI_BASE_URL };
+    delete process.env.BUILDER_AI_TRANSCRIBE_MODEL;
+    await assert.rejects(interviews.voice(owner.id, projectId, 'goal', audio, false), /VOICE_NOT_CONFIGURED/);
+    const heard: string[] = [];
+    const server = createServer((req, res) => {
+      let body = ''; req.setEncoding('latin1'); req.on('data', (chunk: string) => { body += chunk; });
+      req.on('end', () => { heard.push(`${req.url} ${/filename="voice\.webm"/.test(body)} ${/name="language"\r\n\r\nru/.test(body)}`); res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ text: '  Барбершоп   Усы в Астане ' })); });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    Object.assign(process.env, { BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_TRANSCRIBE_MODEL: 'whisper-1', BUILDER_AI_OPENAI_BASE_URL: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1` });
+    try {
+      assert.deepEqual((await interviews.get(owner.id, projectId, 'goal')).data.voice, { available: true, consented: false, maxSeconds: 120, service: '127.0.0.1' });
+      await assert.rejects(interviews.voice(owner.id, projectId, 'goal', audio, false), /VOICE_CONSENT_REQUIRED/);
+      assert.equal(heard.length, 0, 'nothing is sent before consent');
+      await assert.rejects(interviews.voice(owner.id, projectId, 'goal', { ...audio, mimetype: 'video/mp4' }, true), /VOICE_FORMAT_NOT_SUPPORTED/);
+      assert.deepEqual((await interviews.voice(owner.id, projectId, 'goal', audio, true)).data, { text: 'Барбершоп Усы в Астане' });
+      assert.deepEqual(heard, ['/v1/audio/transcriptions true true']);
+      assert.equal((await interviews.get(owner.id, projectId, 'goal')).data.voice.consented, true);
+      assert.equal((await interviews.voice(owner.id, projectId, 'goal', audio, false)).data.text, 'Барбершоп Усы в Астане', 'consent is asked once');
+      assert.equal(await prisma!.projectEvent.count({ where: { projectId, type: 'voice_transcribed' } }), 2);
+    } finally {
+      server.close();
+      for (const [name, value] of [['BUILDER_AI_OPENAI_API_KEY', keep.key], ['BUILDER_AI_TRANSCRIBE_MODEL', keep.model], ['BUILDER_AI_OPENAI_BASE_URL', keep.url]] as const) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+    }
   });
 });

@@ -1,6 +1,8 @@
 import { CommentsService } from './comments.service.js';
 import { StageReviewService } from './stage-review.service.js';
-import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Put, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { VOICE_LIMITS } from '../telegram-bot/transcribe.js';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { JourneyService } from './journey.service.js';
@@ -352,6 +354,13 @@ export class JourneyController {
   interviewSay(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
     const input = body(raw ?? {}, ['message', 'restart']);
     return this.interviews.say(request.user.id, projectId, stageKey(key), { message: text(input.message, 'message', 1, 1000, true), restart: input.restart === true });
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/interview/voice')
+  @HttpCode(200)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: VOICE_LIMITS.bytes, files: 1, fields: 1, fieldSize: 10 } }))
+  interviewVoice(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @UploadedFile() file: { buffer: Buffer; mimetype: string; size: number } | undefined, @Body() raw: Record<string, unknown> | undefined) {
+    return this.interviews.voice(request.user.id, projectId, stageKey(key), file, raw?.consent === 'true');
   }
 
   @Post('projects/:projectId/stages/:stageKey/interview/apply')
