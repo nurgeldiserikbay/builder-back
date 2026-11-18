@@ -16,7 +16,7 @@ import { ChoicesService } from '../choices/choices.service.js';
 import { appOrigin, checkAppHealth } from './app-health.js';
 
 /** The capability profile the agent builds within: one stack, so the result can be checked and run the same way every time. */
-export const APP_PROFILE = { key: 'node-react-pg', version: '1.2.0', node: 20 } as const;
+export const APP_PROFILE = { key: 'node-react-pg', version: '1.3.0', node: 20 } as const;
 export const AGENT_TASK_VERSION = '1.0.0';
 const KIND = 'build_app';
 const CHANGE_KIND = 'change_app';
@@ -58,6 +58,7 @@ export function buildAgentPrompt(input: { locale: string; projectName: string; i
     '- Data: PostgreSQL through the pg package, connection from DATABASE_URL, schema created by a migration script (npm run migrate) that can run again safely. Tests must not need a database server: put data access behind a module with an in-memory implementation that the tests use (or use pg-mem). Without DATABASE_URL the server still starts on the in-memory store and logs a warning (npm run migrate then does nothing).',
     '- GET /api/health answers 200 {"status":"ok","database":"postgres"|"memory"} without signing in; the platform starts the app with NODE_ENV=production, PORT and SESSION_SECRET but no database and calls it.',
     '- Launch files for the owner\'s own hosting: render.yaml (Render Blueprint: one web service, runtime node, plan free, buildCommand "npm ci && npm run build", startCommand "npm run migrate && npm start", healthCheckPath /api/health, envVars NODE_VERSION 20, SESSION_SECRET with generateValue: true, DATABASE_URL, ADMIN_EMAIL and ADMIN_PASSWORD with sync: false — never a secret value in the file); a Dockerfile (node:20-alpine, multi-stage, non-root user, EXPOSE 3000, runs migrate then start); docker-compose.yml with the app and postgres:16 on a named volume, reading secrets from .env. README has a section on launching on Render with a free external PostgreSQL (for example Neon) and on an own server with docker compose.',
+    '- Installable on a phone (PWA): dist/index.html links a manifest.webmanifest with name, short_name, start_url "/", display "standalone", theme_color, background_color and icons 192x192 and 512x512 PNG (or one SVG icon with sizes "any"), all files inside dist; an apple-touch-icon and theme-color meta. A service worker (dist/sw.js, served from the root) caches the app shell for offline start and shows a short offline page; it never caches /api responses (personal data, always from the network) and updates itself on a new version. The client registers it with navigator.serviceWorker.register("/sw.js") only in a production build, inside try/catch and only when location.protocol is https: or the host is localhost (the preview runs in a sandboxed frame where it must silently do nothing). Offer an «Install» button on the beforeinstallprompt event and, on iPhone, a one-line hint to use Share → Add to Home Screen.',
     '- Sign-in: email and password, passwords hashed with node:crypto scrypt, sessions in an httpOnly, SameSite=Lax cookie signed with SESSION_SECRET. Roles and rights exactly as in the package; every API route checks the role on the server. The first owner account comes from ADMIN_EMAIL and ADMIN_PASSWORD on the first start.',
     '- Scripts: npm run build (client), npm test (node --test or vitest, real tests of the business rules and rights, both allowed and refused cases), npm start (serves API and client on PORT, default 3000), npm run migrate, npm run build:demo (preview, below).',
     `- Preview for the owner: npm run build:demo writes ONE self-contained file ${DEMO_PATH} (all JS and CSS inline, for example with vite-plugin-singlefile) that runs the real client in the browser with no server and no network: API calls go to an in-browser implementation of the same routes, rights and rules over the in-memory data layer (keep route handlers framework-independent so the server and the preview share them). Seed believable demo data and one demo account per role, and show a small bar, in the app's language, saying this is a demo and which role the user is in, with a role switcher. No cookies, localStorage, external fonts, images by URL or analytics: the preview runs in a sandboxed frame where they do not work.`,
@@ -152,7 +153,7 @@ const errorLabels: Record<string, string> = {
   AGENT_FAILED: 'Задача прервалась из-за внутренней ошибки.',
   AGENT_BASE_CHANGED: 'Код, от которого начиналось изменение, изменился. Запустите задачу снова.',
 };
-const checkLabels: Record<string, string> = { install: 'Пакеты устанавливаются', test: 'Тесты проходят', build: 'Сборка интерфейса проходит', start: 'Приложение запускается и отвечает', deploy_files: 'Файлы для запуска на Render и своём сервере на месте', demo: 'Предпросмотр собирается' };
+const checkLabels: Record<string, string> = { install: 'Пакеты устанавливаются', test: 'Тесты проходят', build: 'Сборка интерфейса проходит', start: 'Приложение запускается и отвечает', deploy_files: 'Файлы для запуска на Render и своём сервере на месте', pwa: 'Приложение ставится на телефон (PWA)', demo: 'Предпросмотр собирается' };
 
 type TaskRow = Omit<NonNullable<Awaited<ReturnType<PrismaService['agentTask']['findFirst']>>>, 'demoHtml'> | null;
 
@@ -259,7 +260,7 @@ export class AgentRunner {
     await workspace.close();
     // The preview is shown or not; it does not decide whether the application itself passed.
     const main = outcome.checks.filter((check) => check.id !== 'demo');
-    const passed = main.some((check) => check.status === 'passed') && main.every((check) => check.status === 'passed' || (check.status === 'skipped' && check.id === 'build'));
+    const passed = main.some((check) => check.status === 'passed') && main.every((check) => check.status === 'passed' || (check.status === 'skipped' && (check.id === 'build' || check.id === 'pwa')));
     // start and deploy_files are part of main: an application that does not start, or cannot be launched, is not done.
     const status = outcome.stopReason === 'stopped' ? 'stopped' : passed && outcome.stopReason === 'finished' ? 'succeeded' : 'failed';
     const files = outcome.files;

@@ -2794,4 +2794,5 @@ export const en: Record<string, string> = {
   "BuildPath: изменения в «{0}» от ИИ-агента": "BuildPath: changes to “{0}” by the AI agent",
   "BuildPath: изменения от ИИ-агента (задача {0})": "BuildPath: changes by the AI agent (task {0})",
   "Код, от которого начиналось изменение, изменился. Запустите задачу снова.": "The code the change started from has changed. Start the task again.",
+  "Приложение ставится на телефон (PWA)": "The application installs on a phone (PWA)",
 };
