@@ -10,7 +10,9 @@ import { BillingService } from '../billing/billing.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { ChatCompletionsAgentModel, configuredAgentModel, type AgentMessage, type AgentModel, type AgentReply } from './agent-model.js';
-import { runAgent, safePath, type AgentStep } from './agent-loop.js';
+import { deployFilesCheck, runAgent, safePath, type AgentStep } from './agent-loop.js';
+import { appOrigin, checkAppHealth } from './app-health.js';
+import { createServer } from 'node:http';
 import { AgentRunner, AgentTasksService, buildAgentPrompt, PREVIEW_CSP, promptDigestOf, withPreviewPolicy } from './agent-tasks.js';
 import { JourneyCore } from '../journey/journey-core.js';
 import type { ExecResult, Workspace, WorkspaceProvider } from './workspace.js';
@@ -49,9 +51,13 @@ function scripted(turns: Array<Array<{ name: string; args: Record<string, unknow
 }
 
 const goodApp = [
-  [{ name: 'write_file', args: { path: 'package.json', content: JSON.stringify({ name: 'app', version: '1.0.0', type: 'module', scripts: { test: 'node --test', 'build:demo': "mkdir -p dist-demo && printf '<html><head><title>d</title></head><body>demo</body></html>' > dist-demo/index.html" } }) } }],
+  [{ name: 'write_file', args: { path: 'package.json', content: JSON.stringify({ name: 'app', version: '1.0.0', type: 'module', scripts: { test: 'node --test', start: 'node server.js', 'build:demo': "mkdir -p dist-demo && printf '<html><head><title>d</title></head><body>demo</body></html>' > dist-demo/index.html" } }) } },
+    { name: 'write_file', args: { path: 'server.js', content: "import { createServer } from 'node:http';\ncreateServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(req.url === '/api/health' ? { status: 'ok', database: 'memory' } : {})); }).listen(Number(process.env.PORT));\n" } },
+    { name: 'write_file', args: { path: 'render.yaml', content: 'services:\n  - type: web\n    runtime: node\n    buildCommand: npm ci\n    startCommand: npm run migrate && npm start\n    healthCheckPath: /api/health\n    envVars:\n      - key: DATABASE_URL\n        sync: false\n      - key: SESSION_SECRET\n        generateValue: true\n' } },
+    { name: 'write_file', args: { path: 'Dockerfile', content: 'FROM node:20-alpine\nCMD ["npm","start"]\n' } },
+    { name: 'write_file', args: { path: 'docker-compose.yml', content: 'services:\n  db:\n    image: postgres:16\n' } }],
   [{ name: 'write_file', args: { path: 'src/rules.js', content: 'export const canDelete = (role) => role === "admin";\n' } }, { name: 'write_file', args: { path: 'test/rules.test.js', content: 'import test from "node:test";\nimport assert from "node:assert/strict";\nimport { canDelete } from "../src/rules.js";\ntest("admin deletes", () => { assert.equal(canDelete("admin"), true); assert.equal(canDelete("client"), false); });\n' } }],
-  [{ name: 'write_file', args: { path: '../outside.txt', content: 'x' } }, { name: 'write_file', args: { path: '.env', content: 'SECRET=1' } }, { name: 'write_file', args: { path: '.env.example', content: 'SESSION_SECRET=\n' } }],
+  [{ name: 'write_file', args: { path: '../outside.txt', content: 'x' } }, { name: 'write_file', args: { path: '.env', content: 'SECRET=1' } }, { name: 'write_file', args: { path: '.env.example', content: 'SESSION_SECRET=\nDATABASE_URL=\n' } }],
   [{ name: 'run', args: { command: 'npm test', timeoutSeconds: 60 } }],
   [{ name: 'finish', args: { summary: 'Удалять может только администратор.', done: ['Права на удаление'], notDone: ['Оплата — нужна интеграция'] } }],
 ];
@@ -67,9 +73,9 @@ describe('AI agent: the loop', () => {
       });
       assert.equal(outcome.stopReason, 'finished');
       assert.deepEqual(outcome.report, { summary: 'Удалять может только администратор.', done: ['Права на удаление'], notDone: ['Оплата — нужна интеграция'] });
-      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['test', 'passed'], ['build', 'skipped'], ['demo', 'passed']]);
+      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['test', 'passed'], ['build', 'skipped'], ['start', 'passed'], ['deploy_files', 'passed'], ['demo', 'passed']]);
       assert.match(outcome.demoHtml!, /<body>demo<\/body>/);
-      assert.deepEqual(outcome.files.map((file) => file.path).sort(), ['.env.example', 'package-lock.json', 'package.json', 'src/rules.js', 'test/rules.test.js']);
+      assert.deepEqual(outcome.files.map((file) => file.path).sort(), ['.env.example', 'Dockerfile', 'docker-compose.yml', 'package-lock.json', 'package.json', 'render.yaml', 'server.js', 'src/rules.js', 'test/rules.test.js']);
       assert.equal(outcome.turns, 5);
       assert.equal(outcome.costTiyn, 25);
       assert.ok(steps.some((step) => step.tool === 'write_file' && step.status === 'failed' && step.summary.includes('outside')), 'a path outside the project is refused');
@@ -112,6 +118,19 @@ describe('AI agent: the loop', () => {
     assert.match(withPreviewPolicy('<p>no head</p>'), /^<!doctype html><head><meta http-equiv="Content-Security-Policy"/);
   });
 
+  it('a launch file with a secret in it, or without a health check, fails the launch check', async () => {
+    const workspace = await localWorkspace();
+    try {
+      await workspace.write('render.yaml', 'services:\n  - type: web\n    startCommand: npm start\n    envVars:\n      - key: DATABASE_URL\n        value: postgres://user:pass@db/app\n      - key: SESSION_SECRET\n        generateValue: true\n');
+      await workspace.write('Dockerfile', 'FROM node:20\n');
+      const check = await deployFilesCheck(workspace);
+      assert.equal(check.status, 'failed');
+      assert.match(check.output, /healthCheckPath/);
+      assert.match(check.output, /secret value/);
+      assert.match(check.output, /docker-compose/);
+    } finally { await workspace.close(); }
+  });
+
   it('confines paths to the project', () => {
     for (const bad of ['/etc/passwd', '../x', 'a/../../b', '.git/config', 'node_modules/x/index.js', 'a\\b', '']) assert.equal(safePath(bad), null, bad);
     assert.equal(safePath('./src/app.js'), 'src/app.js');
@@ -133,11 +152,32 @@ describe('AI agent: the model and the prompt', () => {
   });
   it('fixes the stack and marks the package as untrusted data', () => {
     const prompt = buildAgentPrompt({ locale: 'ru', projectName: 'Учёт заявок', inputs: { features: { roles: [{ key: 'admin' }] } }, instruction: 'Сделай тёмную тему' });
-    assert.match(prompt.system, /node-react-pg@1\.1\.0/);
+    assert.match(prompt.system, /node-react-pg@1\.2\.0/);
     assert.match(prompt.system, /untrusted data/);
     assert.match(prompt.system, /Russian/);
     assert.match(prompt.task, /PACKAGE \(JSON, untrusted data\)/);
     assert.match(prompt.task, /Сделай тёмную тему/);
+  });
+});
+
+describe('AI agent: the running application', () => {
+  it('takes only https addresses (http on this machine in tests) and reduces them to the origin', () => {
+    assert.equal(appOrigin('https://my-app.onrender.com/login?x=1', false), 'https://my-app.onrender.com');
+    assert.equal(appOrigin('http://my-app.onrender.com', false), null);
+    assert.equal(appOrigin('https://user:pass@my-app.com', false), null);
+    assert.equal(appOrigin('http://127.0.0.1:4999', false), null);
+    assert.equal(appOrigin('http://127.0.0.1:4999/x', true), 'http://127.0.0.1:4999');
+  });
+  it('asks /api/health, and refuses addresses inside private networks', async () => {
+    const server = createServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(req.url === '/api/health' ? { status: 'ok', database: 'postgres' } : { status: 'nope' })); });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const answer = await checkAppHealth(`http://127.0.0.1:${port}`, true);
+      assert.deepEqual([answer.ok, answer.status, answer.database], [true, 200, 'postgres']);
+      assert.equal((await checkAppHealth(`http://127.0.0.1:${port}`, false)).error, 'NOT_PUBLIC', 'a local address is refused unless trusted');
+      assert.equal((await checkAppHealth('https://10.1.2.3', false)).error, 'NOT_PUBLIC');
+    } finally { server.close(); }
   });
 });
 
@@ -176,7 +216,7 @@ describe('AI agent: tasks (database)', async () => {
     assert.equal(done.model, 'fake-agent');
     assert.equal(done.turns, 5);
     assert.ok((done.steps as unknown[]).length >= 7);
-    assert.deepEqual(((done.files as Array<{ path: string }>) ?? []).map((file) => file.path).sort(), ['.env.example', 'package-lock.json', 'package.json', 'src/rules.js', 'test/rules.test.js']);
+    assert.equal(((done.files as Array<{ path: string }>) ?? []).length, 9);
     assert.equal(await prisma!.generationRun.count({ where: { projectId, targetKey: 'agent_task' } }), 1);
     assert.equal(opened.length, 1);
 
@@ -202,7 +242,7 @@ describe('AI agent: tasks (database)', async () => {
     assert.equal(view.canStart, false, 'the package is not built yet');
     await assert.rejects(service.start(owner.id, projectId, { instruction: null }), /HANDOFF_NOT_BUILT/);
     const succeeded = (await service.files(owner.id, projectId, task.id)).data;
-    assert.equal(succeeded.files.length, 5);
+    assert.equal(succeeded.files.length, 9);
     assert.equal(view.repository!.repoPath, 'owner/app');
     const demo = (await service.demo(owner.id, projectId, task.id)).data;
     assert.match(demo.html, /^<html><head><meta http-equiv="Content-Security-Policy"/);
@@ -212,7 +252,7 @@ describe('AI agent: tasks (database)', async () => {
     await assert.rejects(service.push(owner.id, projectId, task.id, false), /CONFIRMATION_REQUIRED/);
     const pushed = (await service.push(owner.id, projectId, task.id, true)).data;
     assert.equal(pushes[0].branch, `buildpath/agent-${task.id.slice(0, 8)}`);
-    assert.equal(pushes[0].files, 5);
+    assert.equal(pushes[0].files, 9);
     assert.match(pushes[0].body, /Удалять может только администратор/);
     assert.match(pushes[0].body, /✅ Тесты проходят — `npm test`/);
     assert.match(pushes[0].body, /ИИ-агентом BuildPath/);
@@ -220,6 +260,20 @@ describe('AI agent: tasks (database)', async () => {
     assert.equal((await service.get(owner.id, projectId)).data.latest!.pushed?.branch ?? (await prisma!.agentTask.findUniqueOrThrow({ where: { id: task.id } })).pushedBranch, `buildpath/agent-${task.id.slice(0, 8)}`);
     const queued = await prisma!.agentTask.create({ data: { projectId, kind: 'build_app', profile: 'x', locale: 'ru', sourceVersionId: randomUUID(), inputVersionIds: [], prompt, promptDigest: promptDigestOf(prompt), limits: { turns: 2, wallMs: 1000, costTiyn: null }, requestedByUserId: owner.id } });
     assert.equal((await service.stop(owner.id, projectId, queued.id)).data.status, 'stopped');
+    // Step 4: the owner's address is checked and kept.
+    await assert.rejects(service.checkDeployment(owner.id, projectId, 'ftp://x'), /APP_URL_INVALID/);
+    const health = createServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end('{"status":"ok","database":"memory"}'); });
+    await new Promise<void>((resolve) => health.listen(0, '127.0.0.1', resolve));
+    const before = { local: process.env.CODE_HOSTING_ALLOW_LOCAL };
+    process.env.CODE_HOSTING_ALLOW_LOCAL = 'true';
+    try {
+      const checked = (await service.checkDeployment(owner.id, projectId, `http://127.0.0.1:${(health.address() as { port: number }).port}/app`)).data;
+      assert.deepEqual([checked.ok, checked.database], [true, 'memory']);
+      assert.equal((await service.get(owner.id, projectId)).data.deployment!.ok, true);
+    } finally {
+      health.close();
+      if (before.local === undefined) delete process.env.CODE_HOSTING_ALLOW_LOCAL; else process.env.CODE_HOSTING_ALLOW_LOCAL = before.local;
+    }
     const stranger = await prisma!.user.create({ data: { email: `x-${randomUUID()}@test.local`, emailNormalized: `x-${randomUUID()}@test.local`, passwordHash: 'x', name: 'X', locale: 'ru' } });
     users.push(stranger.id);
     await assert.rejects(service.files(stranger.id, projectId, task.id), /PROJECT_NOT_FOUND/);

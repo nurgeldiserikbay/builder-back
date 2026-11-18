@@ -13,9 +13,10 @@ import { configuredAgentModel, type AgentModel } from './agent-model.js';
 import { AGENT_LOOP_VERSION, DEMO_PATH, runAgent, type AgentCheck, type AgentFile, type AgentLimits, type AgentOutcome, type AgentStep } from './agent-loop.js';
 import { configuredWorkspace, WorkspaceError, type WorkspaceProvider } from './workspace.js';
 import { ChoicesService } from '../choices/choices.service.js';
+import { appOrigin, checkAppHealth } from './app-health.js';
 
 /** The capability profile the agent builds within: one stack, so the result can be checked and run the same way every time. */
-export const APP_PROFILE = { key: 'node-react-pg', version: '1.1.0', node: 20 } as const;
+export const APP_PROFILE = { key: 'node-react-pg', version: '1.2.0', node: 20 } as const;
 export const AGENT_TASK_VERSION = '1.0.0';
 const KIND = 'build_app';
 const MAX_INSTRUCTION = 2000;
@@ -52,7 +53,9 @@ export function buildAgentPrompt(input: { locale: string; projectName: string; i
     'Work in small steps with the tools: write files, run commands, read the errors, fix them. Use list_files and read_file before changing existing code. Keep going until the checks pass, then call finish.',
     `Stack (capability profile ${APP_PROFILE.key}@${APP_PROFILE.version}), not negotiable:`,
     '- One npm package at the project root with "type": "module". Server: Node.js 20 with Express. Client: React with Vite, built into dist/ and served by the same server. JavaScript or TypeScript.',
-    '- Data: PostgreSQL through the pg package, connection from DATABASE_URL, schema created by a migration script (npm run migrate) that can run again safely. Tests must not need a database server: put data access behind a module with an in-memory implementation that the tests use (or use pg-mem).',
+    '- Data: PostgreSQL through the pg package, connection from DATABASE_URL, schema created by a migration script (npm run migrate) that can run again safely. Tests must not need a database server: put data access behind a module with an in-memory implementation that the tests use (or use pg-mem). Without DATABASE_URL the server still starts on the in-memory store and logs a warning (npm run migrate then does nothing).',
+    '- GET /api/health answers 200 {"status":"ok","database":"postgres"|"memory"} without signing in; the platform starts the app with NODE_ENV=production, PORT and SESSION_SECRET but no database and calls it.',
+    '- Launch files for the owner\'s own hosting: render.yaml (Render Blueprint: one web service, runtime node, plan free, buildCommand "npm ci && npm run build", startCommand "npm run migrate && npm start", healthCheckPath /api/health, envVars NODE_VERSION 20, SESSION_SECRET with generateValue: true, DATABASE_URL, ADMIN_EMAIL and ADMIN_PASSWORD with sync: false — never a secret value in the file); a Dockerfile (node:20-alpine, multi-stage, non-root user, EXPOSE 3000, runs migrate then start); docker-compose.yml with the app and postgres:16 on a named volume, reading secrets from .env. README has a section on launching on Render with a free external PostgreSQL (for example Neon) and on an own server with docker compose.',
     '- Sign-in: email and password, passwords hashed with node:crypto scrypt, sessions in an httpOnly, SameSite=Lax cookie signed with SESSION_SECRET. Roles and rights exactly as in the package; every API route checks the role on the server. The first owner account comes from ADMIN_EMAIL and ADMIN_PASSWORD on the first start.',
     '- Scripts: npm run build (client), npm test (node --test or vitest, real tests of the business rules and rights, both allowed and refused cases), npm start (serves API and client on PORT, default 3000), npm run migrate, npm run build:demo (preview, below).',
     `- Preview for the owner: npm run build:demo writes ONE self-contained file ${DEMO_PATH} (all JS and CSS inline, for example with vite-plugin-singlefile) that runs the real client in the browser with no server and no network: API calls go to an in-browser implementation of the same routes, rights and rules over the in-memory data layer (keep route handlers framework-independent so the server and the preview share them). Seed believable demo data and one demo account per role, and show a small bar, in the app's language, saying this is a demo and which role the user is in, with a role switcher. No cookies, localStorage, external fonts, images by URL or analytics: the preview runs in a sandboxed frame where they do not work.`,
@@ -124,7 +127,7 @@ const errorLabels: Record<string, string> = {
   AGENT_INTERRUPTED: 'Работа прервалась: сервер перезапустился во время задачи. Запустите её снова.',
   AGENT_FAILED: 'Задача прервалась из-за внутренней ошибки.',
 };
-const checkLabels: Record<string, string> = { install: 'Пакеты устанавливаются', test: 'Тесты проходят', build: 'Сборка интерфейса проходит', demo: 'Предпросмотр собирается' };
+const checkLabels: Record<string, string> = { install: 'Пакеты устанавливаются', test: 'Тесты проходят', build: 'Сборка интерфейса проходит', start: 'Приложение запускается и отвечает', deploy_files: 'Файлы для запуска на Render и своём сервере на месте', demo: 'Предпросмотр собирается' };
 
 type TaskRow = Omit<NonNullable<Awaited<ReturnType<PrismaService['agentTask']['findFirst']>>>, 'demoHtml'> | null;
 
@@ -215,6 +218,7 @@ export class AgentRunner {
     // The preview is shown or not; it does not decide whether the application itself passed.
     const main = outcome.checks.filter((check) => check.id !== 'demo');
     const passed = main.some((check) => check.status === 'passed') && main.every((check) => check.status === 'passed' || (check.status === 'skipped' && check.id === 'build'));
+    // start and deploy_files are part of main: an application that does not start, or cannot be launched, is not done.
     const status = outcome.stopReason === 'stopped' ? 'stopped' : passed && outcome.stopReason === 'finished' ? 'succeeded' : 'failed';
     const files = outcome.files;
     await this.prisma.$transaction(async (tx) => {
@@ -276,6 +280,7 @@ export class AgentTasksService {
     return {
       data: {
         configured, profile: APP_PROFILE, limits: agentLimits(), repository: await this.choices.repositoryFor(projectId),
+        deployment: await this.prisma.appDeployment.findUnique({ where: { projectId }, select: { url: true, ok: true, status: true, database: true, error: true, checkedAt: true } }),
         canStart: configured && this.core.canWrite(ctx, 'handoff') && Boolean(stage.currentVersionId) && !active,
         latest: tasks[0] ? this.view(tasks[0]) : null,
         history: tasks.slice(1).map((task) => ({ id: task.id, status: task.status, statusLabel: tr(statusLabels[task.status] ?? task.status), createdAt: task.createdAt, finishedAt: task.finishedAt, costTiyn: task.costTiyn })),
@@ -370,5 +375,22 @@ export class AgentTasksService {
     if (!task) throw new NotFoundException('AGENT_TASK_NOT_FOUND');
     if (!task.demoHtml) throw new NotFoundException('AGENT_DEMO_NOT_BUILT');
     return { data: { html: withPreviewPolicy(task.demoHtml), policy: PREVIEW_CSP } };
+  }
+
+  /**
+   * Step 4: the owner runs the application on their Render or server and gives its address; BuildPath asks /api/health and
+   * keeps the answer. The address is the owner's: nothing is deployed from here and no secret is asked for.
+   */
+  async checkDeployment(userId: string, projectId: string, rawUrl: string) {
+    await this.context(userId, projectId, 'write');
+    const allowLocal = process.env.CODE_HOSTING_ALLOW_LOCAL === 'true' && process.env.NODE_ENV !== 'production';
+    const origin = appOrigin(rawUrl, allowLocal);
+    if (!origin) throw new BadRequestException('APP_URL_INVALID');
+    const local = /^http:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(origin);
+    const answer = await checkAppHealth(origin, allowLocal && local);
+    const data = { url: origin, ok: answer.ok, status: answer.status, database: answer.database, error: answer.error, checkedAt: new Date(), checkedByUserId: userId };
+    const saved = await this.prisma.appDeployment.upsert({ where: { projectId }, create: { projectId, ...data }, update: data, select: { url: true, ok: true, status: true, database: true, error: true, checkedAt: true } });
+    await this.core.event(this.prisma, projectId, userId, 'app_deployment_checked', 'handoff', { url: origin, ok: answer.ok, error: answer.error, database: answer.database });
+    return { data: saved };
   }
 }

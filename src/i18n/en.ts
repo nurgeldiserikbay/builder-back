@@ -2787,4 +2787,6 @@ export const en: Record<string, string> = {
   "BuildPath: приложение от ИИ-агента (задача {0})": "BuildPath: application by the AI agent (task {0})",
   "Проверка BuildPath": "BuildPath check",
   "Предпросмотр собирается": "The preview builds",
+  "Приложение запускается и отвечает": "The application starts and answers",
+  "Файлы для запуска на Render и своём сервере на месте": "Files for launching on Render and an own server are in place",
 };
