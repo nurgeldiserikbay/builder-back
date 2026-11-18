@@ -394,12 +394,13 @@ export function buildAppPlan(input: { brief: Brief | null; process: BusinessProc
   });
   const coverage = input.process ? input.process.scenarios.flatMap((scenario) => scenario.steps.map((step) => ({
     scenario: scenario.title, actor: input.process!.actors.find((actor) => actor.key === step.actor)?.name ?? step.actor, action: step.action, capability: step.capability,
-    status: step.capability === 'offline' ? 'manual' as const : 'not_built' as const,
-    how: step.capability === 'offline' ? tr('Делается вручную, как и задумано.') : tr('Делает разработчик по пакету: BuildPath не пишет код приложения.'),
+    // An app does every step of its process that is not done by hand: the AI agent (or a developer) writes it from the package.
+    status: step.capability === 'offline' ? 'manual' as const : 'built' as const,
+    how: step.capability === 'offline' ? tr('Делается вручную, как и задумано.') : tr('Делает приложение: его пишет ИИ-агент по пакету (или разработчик).'),
   }))) : null;
   return {
     planVersion: TECHPLAN_VERSION, kind: 'app',
-    summary: tr('Веб-приложение «{0}» для ролей: {1}. BuildPath готовит пакет для разработки — функции с критериями приёмки, экраны с прототипом, схему данных и контракт API; код пишет разработчик.', [name, features.roles.map((role) => role.name).join(', ')]),
+    summary: tr('Веб-приложение «{0}» для ролей: {1}. BuildPath готовит пакет — функции с критериями приёмки, экраны с прототипом, схему данных и контракт API; по нему ИИ-агент пишет приложение (или разработчик).', [name, features.roles.map((role) => role.name).join(', ')]),
     components, dataModel, sequences, coverage,
     features: features.features.map((feature) => item(feature.title, feature.description, `${tr(priorityLabels[feature.priority])}; ${tr('роли')}: ${feature.roles.map((key) => features.roles.find((role) => role.key === key)?.name ?? key).join(', ')}`)),
     roles: features.roles.map((role) => item(role.name, role.description, tr('Роль «{0}» в API: {1}', [role.name, role.key]))),
@@ -408,7 +409,7 @@ export function buildAppPlan(input: { brief: Brief | null; process: BusinessProc
     notifications: notifies ? [tr('События из бизнес-процесса, где кого-то уведомляют.')] : [],
     hosting: [{ option: tr('Выбирает разработчик'), plain: tr('Любой хостинг с сервером приложения и базой данных. Требования к данным — в разделе ограничений.') }],
     limits: [
-      tr('BuildPath не пишет и не запускает код приложения: пакет передаётся разработчику (можно пригласить специалиста на этап «Пакет для разработки»).'),
+      tr('Приложение работает на вашем хостинге (Render или свой сервер): BuildPath его не размещает. Код пишет ИИ-агент по пакету или разработчик; в репозиторий он попадает только по вашей кнопке.'),
       ...(features.sensitivity === 'payments' ? [tr('Платежи: только через платёжного провайдера, с отдельной проверкой безопасности.')] : []),
       ...(features.sensitivity === 'health' ? [tr('Особо чувствительные данные: нужны юридическая проверка и усиленная защита (шифрование, журнал доступа).')] : []),
       ...(features.sensitivity !== 'normal' ? [tr('Персональные данные: хранить в стране, которую требует закон для ваших клиентов; согласие и удаление по запросу.')] : []),

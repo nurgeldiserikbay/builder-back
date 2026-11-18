@@ -183,8 +183,27 @@ export class AgentRunner {
     })();
   }
 
+  /**
+   * A process that runs tasks starts with none of its own running: a task still marked running was left by a process that
+   * stopped (a deploy, a restart). Its sandbox is gone, so it ends as interrupted now instead of blocking the project for
+   * 45 minutes. Only the process that runs tasks does this (the worker, or the API when there is no separate worker).
+   */
+  async recoverInterrupted(): Promise<number> {
+    const result = await this.prisma.agentTask.updateMany({ where: { status: 'running' }, data: { status: 'failed', errorCode: 'AGENT_INTERRUPTED', finishedAt: new Date() } });
+    if (result.count) this.logger.warn(`Agent tasks interrupted by a restart: ${result.count}`);
+    return result.count;
+  }
+
+  async onApplicationBootstrap(): Promise<void> {
+    if (process.env.SANDBOX_WORKER === 'external' || process.env.NODE_ENV === 'test') return;
+    await this.recoverInterrupted().catch(() => undefined);
+    // Queued tasks wait for a kick: start them now that the process is up.
+    this.kick();
+  }
+
   async loop(stopping: () => boolean): Promise<void> {
     this.logger.log('Agent worker started');
+    await this.recoverInterrupted().catch(() => undefined);
     while (!stopping()) {
       try { if (!(await this.processNext())) await new Promise((resolve) => setTimeout(resolve, 3000)); } catch { await new Promise((resolve) => setTimeout(resolve, 5000)); }
     }
@@ -331,7 +350,7 @@ export class AgentTasksService {
         deployment: await this.prisma.appDeployment.findUnique({ where: { projectId }, select: { url: true, ok: true, status: true, database: true, error: true, checkedAt: true } }),
         canStart: configured && this.core.canWrite(ctx, 'handoff') && Boolean(stage.currentVersionId) && !active,
         // The newest finished task with code is what a change starts from.
-        changeBase: active ? null : (tasks.find((task) => !AGENT_ACTIVE.includes(task.status) && task.filesDigest !== null)?.id ?? null),
+        changeBase: active ? null : (tasks.find((task) => !AGENT_ACTIVE.includes(task.status) && task.filesDigest !== null && ((task.files ?? []) as unknown[]).length > 0)?.id ?? null),
         // With a repository connected, a change can start from its main branch, the owner's own edits included.
         changeFromRepository: !active && repository !== null,
         latest: tasks[0] ? this.view(tasks[0]) : null,

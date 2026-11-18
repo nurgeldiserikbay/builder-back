@@ -2,10 +2,11 @@
 // calls (OpenAI, Anthropic's compatible endpoint, OpenRouter, Groq, Gemini). The agent decides what to do; tools act only in
 // the throwaway sandbox. Keys stay in this process and never reach the sandbox.
 
-export interface AgentToolCall { id: string; name: string; arguments: string }
+/** extra: provider data that must go back with the call (Gemini 3 «thought signatures» in extra_content). */
+export interface AgentToolCall { id: string; name: string; arguments: string; extra?: Record<string, unknown> }
 export type AgentMessage =
   | { role: 'system' | 'user'; content: string }
-  | { role: 'assistant'; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> }
+  | { role: 'assistant'; content: string | null; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string }; extra_content?: Record<string, unknown> }> }
   | { role: 'tool'; tool_call_id: string; content: string };
 export interface AgentTool { name: string; description: string; parameters: Record<string, unknown> }
 export interface AgentReply { text: string | null; toolCalls: AgentToolCall[]; usage: { inputTokens: number | null; outputTokens: number | null } }
@@ -41,9 +42,14 @@ export class ChatCompletionsAgentModel implements AgentModel {
     } catch {
       throw new AgentModelError('AGENT_MODEL_UNAVAILABLE');
     }
-    if (response.status === 400 || response.status === 401 || response.status === 403 || response.status === 404) throw new AgentModelError('AGENT_MODEL_REJECTED');
-    if (!response.ok) throw new AgentModelError('AGENT_MODEL_UNAVAILABLE');
-    let payload: { choices?: Array<{ message?: { content?: unknown; tool_calls?: Array<{ id?: unknown; function?: { name?: unknown; arguments?: unknown } }> } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+    if (!response.ok) {
+      // The status and the start of the provider's answer go to the server log, never to people: enough to see a wrong model
+      // name or a request the provider does not accept. The request and the key are not logged.
+      const detail = (await response.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 300);
+      console.warn(`Agent model ${this.model} answered ${response.status}: ${detail}`);
+      throw new AgentModelError(response.status === 400 || response.status === 401 || response.status === 403 || response.status === 404 ? 'AGENT_MODEL_REJECTED' : 'AGENT_MODEL_UNAVAILABLE');
+    }
+    let payload: { choices?: Array<{ message?: { content?: unknown; tool_calls?: Array<{ id?: unknown; function?: { name?: unknown; arguments?: unknown }; extra_content?: unknown }> } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
     try { payload = await response.json(); } catch { throw new AgentModelError('AGENT_MODEL_INVALID'); }
     const message = payload.choices?.[0]?.message;
     if (!message) throw new AgentModelError('AGENT_MODEL_INVALID');
@@ -51,7 +57,8 @@ export class ChatCompletionsAgentModel implements AgentModel {
       const name = call.function?.name;
       if (typeof name !== 'string') return [];
       const args = call.function?.arguments;
-      return [{ id: typeof call.id === 'string' && call.id ? call.id : `call_${index}`, name, arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}) }];
+      const extra = call.extra_content && typeof call.extra_content === 'object' && !Array.isArray(call.extra_content) ? call.extra_content as Record<string, unknown> : undefined;
+      return [{ id: typeof call.id === 'string' && call.id ? call.id : `call_${index}`, name, arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}), ...(extra ? { extra } : {}) }];
     });
     return {
       text: typeof message.content === 'string' && message.content.trim() ? message.content : null,
