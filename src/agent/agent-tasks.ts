@@ -278,7 +278,7 @@ export class AgentRunner {
       }));
     } catch (error) {
       this.logger.error(`Agent task ${id} failed: ${(error as Error).name}`);
-      await finish({ status: 'failed', errorCode: error instanceof WorkspaceError ? error.code : 'AGENT_FAILED', steps: steps.slice(-MAX_STEPS_STORED) as never });
+      await finish({ status: 'failed', model: model.model.slice(0, 80), errorCode: error instanceof WorkspaceError ? error.code : 'AGENT_FAILED', steps: steps.slice(-MAX_STEPS_STORED) as never });
       await workspace.close();
       return;
     }
@@ -299,7 +299,8 @@ export class AgentRunner {
         inputTokens: outcome.inputTokens || null, outputTokens: outcome.outputTokens || null, costTiyn: pricing ? outcome.costTiyn : null,
       } });
       await tx.agentTask.updateMany({ where: { id, status: 'running' }, data: {
-        status, finishedAt: new Date(), turns: outcome.turns, costTiyn: outcome.costTiyn, inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens,
+        // The model the task finished on: it differs from the start when the task moved to the reserve model.
+        status, finishedAt: new Date(), model: model.model.slice(0, 80), turns: outcome.turns, costTiyn: outcome.costTiyn, inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens,
         steps: steps.slice(-MAX_STEPS_STORED) as never, files: files as never, demoHtml: outcome.demoHtml, demoBytes: outcome.demoHtml ? Buffer.byteLength(outcome.demoHtml) : null, filesDigest: filesDigestOf(files),
         result: { stopReason: outcome.stopReason, report: outcome.report, checks: outcome.checks, filesTruncated: outcome.filesTruncated } as never,
         errorCode: outcome.stopReason === 'model_error' ? outcome.modelErrorCode : null,
