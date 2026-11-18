@@ -19,6 +19,6 @@ import { PlaybooksService } from './playbooks.service.js';
   imports: [AuthModule, CatalogModule],
   controllers: [JourneyController, InviteInfoController],
   providers: [JourneyCore, StageAiService, InterviewService, ChangeNoticesService, JourneyService, SpecialistsService, WorktimeService, ChangeDeadlinesService, CommentsService, StageReviewService, ChangeProposalsService, PlaybooksService],
-  exports: [JourneyService, SpecialistsService, WorktimeService, JourneyCore, CommentsService, StageReviewService],
+  exports: [JourneyService, SpecialistsService, WorktimeService, JourneyCore, CommentsService, StageReviewService, InterviewService],
 })
 export class JourneyModule {}

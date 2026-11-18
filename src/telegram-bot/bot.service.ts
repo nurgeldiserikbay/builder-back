@@ -11,12 +11,17 @@ import { OwnershipService } from '../team/ownership.service.js';
 import { STAGE_FILE_LIMITS } from '../analysis/file-types.js';
 import { answerCallbackQuery, downloadTelegramFile, sendTelegramMessage, telegramConfig, type InlineKeyboard, type TelegramConfig } from '../notifications/telegram.js';
 import { transcribe, transcribeConfig, VOICE_LIMITS } from './transcribe.js';
+import { InterviewService } from '../journey/interview.service.js';
+import { INTERVIEW_STAGES } from '../journey/interview.js';
 import { artifactSummary, errorText, helpText, statusEmoji } from './bot-texts.js';
 
 const PENDING_TTL_MS = 15 * 60 * 1000;
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-type Pending = 'instruction' | 'changes_note' | 'suggestion' | 'comment' | 'blocker' | 'reply' | 'review_reason';
-const PENDING_KINDS: Pending[] = ['instruction', 'changes_note', 'suggestion', 'comment', 'blocker', 'reply', 'review_reason'];
+type Pending = 'instruction' | 'changes_note' | 'suggestion' | 'comment' | 'blocker' | 'reply' | 'review_reason' | 'interview';
+const PENDING_KINDS: Pending[] = ['instruction', 'changes_note', 'suggestion', 'comment', 'blocker', 'reply', 'review_reason', 'interview'];
+/** «Разговор» waits longer than one request: people think between answers. */
+const INTERVIEW_TTL_MS = 60 * 60 * 1000;
+const COMPOSED_KEYS: readonly string[] = ['process', 'features'];
 /** Remarks are typed: for a reply the bot keeps the remark id in pendingText, where a voice message would keep its text. */
 const TEXT_ONLY: Pending[] = ['comment', 'blocker', 'reply', 'review_reason'];
 /** Files can be attached only to remarks. */
@@ -37,7 +42,7 @@ type Ctx = { config: TelegramConfig; chatId: string; userId: string };
  */
 @Injectable()
 export class TelegramBotService {
-  constructor(private readonly prisma: PrismaService, private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly comments: CommentsService, private readonly stageFiles: StageFilesService, private readonly ownership: OwnershipService, private readonly review: StageReviewService) {}
+  constructor(private readonly prisma: PrismaService, private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly comments: CommentsService, private readonly stageFiles: StageFilesService, private readonly ownership: OwnershipService, private readonly review: StageReviewService, private readonly interviews?: InterviewService) {}
 
   private send(ctx: Ctx, text: string, keyboard?: InlineKeyboard) {
     return sendTelegramMessage(ctx.config, ctx.chatId, text, fetch, keyboard);
@@ -58,14 +63,15 @@ export class TelegramBotService {
 
   private async setState(ctx: Ctx, data: { projectId?: string | null; stageKey?: string | null; pending?: Pending | VoicePending | null; pendingText?: string | null; draft?: MentionDraft | null }) {
     const pending = data.pending === undefined ? undefined : data.pending;
+    const ttl = pending && pending.endsWith('interview') ? INTERVIEW_TTL_MS : PENDING_TTL_MS;
     await this.prisma.telegramChatState.upsert({
       where: { chatId: ctx.chatId },
-      create: { chatId: ctx.chatId, userId: ctx.userId, projectId: data.projectId ?? null, stageKey: data.stageKey ?? null, pending: pending ?? null, pendingUntil: pending ? new Date(Date.now() + PENDING_TTL_MS) : null, pendingText: data.pendingText ?? null, pendingDraft: (data.draft ?? undefined) as never },
+      create: { chatId: ctx.chatId, userId: ctx.userId, projectId: data.projectId ?? null, stageKey: data.stageKey ?? null, pending: pending ?? null, pendingUntil: pending ? new Date(Date.now() + ttl) : null, pendingText: data.pendingText ?? null, pendingDraft: (data.draft ?? undefined) as never },
       update: {
         userId: ctx.userId,
         ...(data.projectId !== undefined ? { projectId: data.projectId } : {}),
         ...(data.stageKey !== undefined ? { stageKey: data.stageKey } : {}),
-        ...(pending !== undefined ? { pending, pendingUntil: pending ? new Date(Date.now() + PENDING_TTL_MS) : null, pendingText: data.pendingText ?? null, pendingDraft: (data.draft ?? Prisma.DbNull) as never } : {}),
+        ...(pending !== undefined ? { pending, pendingUntil: pending ? new Date(Date.now() + ttl) : null, pendingText: data.pendingText ?? null, pendingDraft: (data.draft ?? Prisma.DbNull) as never } : {}),
       },
     });
   }
@@ -160,6 +166,12 @@ export class TelegramBotService {
   private async act(ctx: Ctx, projectId: string, stageKey: string, pending: Pending, trimmed: string, target: string | null = null, fileIds: string[] = []) {
     const userId = ctx.userId;
     await this.guarded(ctx, async () => {
+      if (pending === 'interview') {
+        // The conversation goes on: the answer goes to «Разговор» exactly as in the app, and the bot keeps waiting.
+        await this.setState(ctx, { pending: 'interview' });
+        const view = (await this.interviews!.say(userId, projectId, stageKey, { message: trimmed, restart: false })).data;
+        return this.sendInterview(ctx, projectId, stageKey, view, 1);
+      }
       if (pending === 'instruction') {
         await this.send(ctx, tr("✨ ИИ работает — обычно это занимает до минуты…"));
         const result = await this.journey.generate(userId, projectId, stageKey, { instruction: trimmed, saveAs: 'one_off', targetKey: null, source: 'telegram' });
@@ -216,6 +228,23 @@ export class TelegramBotService {
           await this.setState(ctx, { pending: 'instruction' });
           await this.send(ctx, tr("Напишите одним сообщением, что изменить. Например: «Сделай текст первого экрана короче и теплее».\n\nОтменить — /cancel"));
           return;
+        case 'T':
+        case 'TR': {
+          if (!this.interviews || !(INTERVIEW_STAGES as readonly string[]).includes(stageKey)) return;
+          const view = (await this.interviews.say(userId, projectId, stageKey, { message: null, restart: action === 'TR' })).data;
+          await this.setState(ctx, { pending: 'interview' });
+          // A fresh start shows the greeting (and the first question); a conversation in progress shows where it stopped.
+          return this.sendInterview(ctx, projectId, stageKey, view, view.messages.some((message) => message.role === 'owner') ? 1 : 2);
+        }
+        case 'TA': {
+          if (!this.interviews) return;
+          const composed = COMPOSED_KEYS.includes(stageKey);
+          await this.send(ctx, composed ? tr("✨ ИИ составляет этап по разговору — обычно до минуты…") : tr("Заполняю форму по разговору…"));
+          const result = (await this.interviews.apply(userId, projectId, stageKey)).data;
+          await this.setState(ctx, { pending: null });
+          await this.send(ctx, composed ? tr("Готово: версия {0} составлена по разговору. Проверьте её и примите этап.", [result.versionNumber]) : tr("Готово: ответы перенесены в форму, версия {0}. Проверьте её и примите этап.", [result.versionNumber]));
+          return this.showStage(ctx, projectId, stageKey);
+        }
         case 'R':
           await this.setState(ctx, { pending: 'changes_note' });
           await this.send(ctx, tr("Напишите, что нужно доработать. Специалист увидит этот комментарий.\n\nОтменить — /cancel"));
@@ -417,6 +446,22 @@ export class TelegramBotService {
     await this.send(ctx, lines.join('\n'), keyboard);
   }
 
+  /** The latest words of «Разговор» with what is still needed and what to do next; the same conversation as in the app. */
+  private async sendInterview(ctx: Ctx, projectId: string, stageKey: string, view: { messages: Array<{ role: string; text: string }>; missingRequired: string[]; topics: Array<{ key: string; label: string; required: boolean }>; filled: string[]; done: boolean; turnsLeft: number; composed: boolean }, last: number) {
+    const said = view.messages.filter((message) => message.role === 'assistant').slice(-last).map((message) => message.text);
+    const label = (key: string) => view.topics.find((topic) => topic.key === key)?.label ?? key;
+    const required = view.topics.filter((topic) => topic.required).length;
+    const lines = [...said, '', tr("Обязательные ответы: {0} из {1}.", [required - view.missingRequired.length, required])];
+    if (view.missingRequired.length) lines.push(tr("Ещё нужно: {0}.", [view.missingRequired.map(label).join('; ')]));
+    lines.push('', view.turnsLeft > 1 ? tr("Ответьте сообщением — текстом или голосовым. Закончить — /cancel") : tr("Разговор получился длинным: заполните этап или начните заново."));
+    const keyboard: InlineKeyboard = [];
+    if (view.filled.length) keyboard.push([{ text: view.composed ? tr("✅ Составить по разговору") : tr("✅ Заполнить форму"), callback_data: 'TA' }]);
+    keyboard.push([{ text: tr("🔄 Начать заново"), callback_data: 'TR' }]);
+    const button = this.appButton(`/projects/${projectId}/stages/${stageKey}?talk=1`);
+    keyboard.push([...(button ? [button] : []), { text: tr("← Этап"), callback_data: `S:${stageKey}` }]);
+    await this.send(ctx, lines.join('\n').slice(0, 3900), keyboard);
+  }
+
   private async showStage(ctx: Ctx, projectId: string, stageKey: string) {
     const detail = localizeDeep((await this.journey.stage(ctx.userId, projectId, stageKey)).data, currentLocale());
     const { stage, ai, current } = detail;
@@ -434,6 +479,8 @@ export class TelegramBotService {
     if (review) lines.push('', review.uncoveredBlocking.length ? tr("🔎 Проверка качества: {0} из 100 · блокирующих: {1}", [review.score, review.uncoveredBlocking.length]) : tr("🔎 Проверка качества: {0} из 100 · замечаний: {1}", [review.score, review.findings.filter((finding) => !finding.overridden).length]));
     const keyboard: InlineKeyboard = [];
     if (stage.canEdit && ai.level !== 'none' && ai.configured && stage.inputsReady) keyboard.push([{ text: tr("✨ Попросить ИИ"), callback_data: 'I' }]);
+    // «Разговор»: on the form stages always (without AI the form's questions one by one), on the process and the ТЗ with AI.
+    if (this.interviews && stage.canEdit && (INTERVIEW_STAGES as readonly string[]).includes(stageKey) && (!COMPOSED_KEYS.includes(stageKey) || ai.configured)) keyboard.push([{ text: tr("💬 Разговор"), callback_data: 'T' }]);
     if (stage.canEdit && stage.artifactType === 'site' && stage.inputsReady) keyboard.push([{ text: tr("🛠 Собрать сайт"), callback_data: 'B' }]);
     const failedChecks = stage.artifactType === 'site' && (current?.content as { checks?: Array<{ status: string; required: boolean }> } | undefined)?.checks?.some((check) => check.required && check.status === 'failed');
     if (stage.canAccept && current && !detail.issues.length && !failedChecks) keyboard.push([{ text: stage.status === 'stale' ? tr("✅ Подтвердить") : tr("✅ Принять"), callback_data: `A:${current.id}` }]);
