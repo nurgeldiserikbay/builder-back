@@ -9,7 +9,7 @@ import { after, describe, it } from 'node:test';
 import { BillingService } from '../billing/billing.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
-import { ChatCompletionsAgentModel, configuredAgentModel, type AgentMessage, type AgentModel, type AgentReply } from './agent-model.js';
+import { AgentModelError, ChatCompletionsAgentModel, FallbackAgentModel, configuredAgentModel, type AgentMessage, type AgentModel, type AgentReply } from './agent-model.js';
 import { deployFilesCheck, pwaCheck, runAgent, safePath, type AgentStep } from './agent-loop.js';
 import { appOrigin, checkAppHealth } from './app-health.js';
 import { createServer } from 'node:http';
@@ -232,6 +232,42 @@ describe('AI agent: the model and the prompt', () => {
     assert.equal(own.apiKey, 'groq');
     assert.equal(own.baseUrl, 'https://api.groq.com/openai/v1');
     assert.equal((configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'gemini', BUILDER_AGENT_MODEL: 'm' }) as unknown as { apiKey: string }).apiKey, 'gemini');
+  });
+  it('moves a task to the reserve model when the main one stays unavailable, and stays there', async () => {
+    const calls: string[] = []; const seen: AgentMessage[][] = [];
+    const scripted = (name: string, replies: Array<AgentReply | 'down' | 'refused'>): AgentModel => ({ name: 'test', model: name, async next(messages) {
+      calls.push(name); seen.push(messages);
+      const next = replies.shift();
+      if (next === 'down' || next === undefined) throw new AgentModelError('AGENT_MODEL_UNAVAILABLE');
+      if (next === 'refused') throw new AgentModelError('AGENT_MODEL_REJECTED');
+      return next;
+    } });
+    const ok: AgentReply = { text: 'ok', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 } };
+    const history: AgentMessage[] = [{ role: 'user', content: 'x' }, { role: 'assistant', content: null, tool_calls: [{ id: 'a', type: 'function', function: { name: 'run', arguments: '{}' }, extra_content: { google: { thought_signature: 's' } } }] }, { role: 'tool', tool_call_id: 'a', content: 'done' }];
+    const shared = new FallbackAgentModel(scripted('gemini', [ok, 'down', ok]), scripted('groq', [ok, ok]));
+    const task = shared.forTask();
+    assert.equal((await task.next(history, [])).text, 'ok');
+    assert.equal(task.model, 'gemini');
+    assert.equal((await task.next(history, [])).text, 'ok');
+    assert.equal(task.model, 'groq');
+    await task.next(history, []);
+    assert.deepEqual(calls, ['gemini', 'gemini', 'groq', 'groq']);
+    // The reserve never sees Gemini's signatures.
+    assert.equal(JSON.stringify(seen[2]).includes('thought_signature'), false);
+    // The next task starts on the main model again.
+    const second = shared.forTask();
+    assert.equal(second.model, 'gemini');
+    await second.next(history, []);
+    assert.equal(calls.at(-1), 'gemini');
+    // A refused request is not a reason to switch.
+    const strict = new FallbackAgentModel(scripted('gemini', ['refused']), scripted('groq', [ok]));
+    await assert.rejects(strict.next(history, []), /AGENT_MODEL_REJECTED/);
+    assert.equal(strict.model, 'gemini');
+    // Settings: no reserve model means the plain main model.
+    assert.ok(configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AGENT_MODEL: 'm' }) instanceof ChatCompletionsAgentModel);
+    const both = configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AGENT_MODEL: 'm', BUILDER_AGENT_FALLBACK_MODEL: 'openai/gpt-oss-120b', BUILDER_AGENT_FALLBACK_BASE_URL: 'https://api.groq.com/openai/v1', BUILDER_AGENT_FALLBACK_API_KEY: 'g' });
+    assert.ok(both instanceof FallbackAgentModel);
+    assert.equal(both.model, 'm');
   });
   it('fixes the stack and marks the package as untrusted data', () => {
     const prompt = buildAgentPrompt({ locale: 'ru', projectName: 'Учёт заявок', inputs: { features: { roles: [{ key: 'admin' }] } }, instruction: 'Сделай тёмную тему' });
