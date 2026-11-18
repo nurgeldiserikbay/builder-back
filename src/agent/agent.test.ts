@@ -199,6 +199,35 @@ describe('AI agent: the model and the prompt', () => {
     } finally { console.warn = warn; }
     assert.match(logged[0]!, /answered 400: .*thought_signature/);
   });
+  it('retries a slow or busy model turn and logs why', async () => {
+    const warn = console.warn; const logged: string[] = []; console.warn = (message: string) => { logged.push(message); };
+    try {
+      let calls = 0; const bodies: Array<Record<string, unknown>> = [];
+      const flaky = (async (_url: string, init: RequestInit) => {
+        calls += 1; bodies.push(JSON.parse(String(init.body)));
+        if (calls === 1) { const error = new Error('timed out'); error.name = 'TimeoutError'; throw error; }
+        if (calls === 2) return new Response('{"error":"high demand"}', { status: 503 });
+        return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), { status: 200 });
+      }) as unknown as typeof fetch;
+      const reply = await new ChatCompletionsAgentModel('k', 'm', 'https://api.test/v1', flaky, { retryDelaysMs: [1, 1], reasoningEffort: 'low' }).next([{ role: 'user', content: 'x' }], []);
+      assert.equal(reply.text, 'ok');
+      assert.equal(calls, 3);
+      assert.equal(bodies[0]!.reasoning_effort, 'low');
+      assert.match(logged[0]!, /did not answer in time \(attempt 1 of 3\)/);
+      assert.match(logged[1]!, /answered 503: .*high demand/);
+      // After the last try the task ends as unavailable; a refused request is not retried.
+      let down = 0;
+      await assert.rejects(new ChatCompletionsAgentModel('k', 'm', 'https://api.test/v1', (async () => { down += 1; throw new Error('ECONNRESET'); }) as unknown as typeof fetch, { retryDelaysMs: [1] }).next([{ role: 'user', content: 'x' }], []), /AGENT_MODEL_UNAVAILABLE/);
+      assert.equal(down, 2);
+      let refused = 0;
+      await assert.rejects(new ChatCompletionsAgentModel('k', 'm', 'https://api.test/v1', (async () => { refused += 1; return new Response('bad', { status: 400 }); }) as unknown as typeof fetch, { retryDelaysMs: [1] }).next([{ role: 'user', content: 'x' }], []), /AGENT_MODEL_REJECTED/);
+      assert.equal(refused, 1);
+    } finally { console.warn = warn; }
+    // An unknown effort value is ignored instead of being sent to the provider.
+    const options = (model: unknown) => (model as { options: { reasoningEffort?: string } }).options;
+    assert.equal(options(configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AGENT_MODEL: 'm', BUILDER_AGENT_REASONING_EFFORT: 'turbo' })).reasoningEffort, undefined);
+    assert.equal(options(configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AGENT_MODEL: 'm', BUILDER_AGENT_REASONING_EFFORT: 'low' })).reasoningEffort, 'low');
+  });
   it('fixes the stack and marks the package as untrusted data', () => {
     const prompt = buildAgentPrompt({ locale: 'ru', projectName: 'Учёт заявок', inputs: { features: { roles: [{ key: 'admin' }] } }, instruction: 'Сделай тёмную тему' });
     assert.match(prompt.system, /node-react-pg@1\.3\.0/);
