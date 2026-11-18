@@ -227,6 +227,11 @@ describe('AI agent: the model and the prompt', () => {
     const options = (model: unknown) => (model as { options: { reasoningEffort?: string } }).options;
     assert.equal(options(configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AGENT_MODEL: 'm', BUILDER_AGENT_REASONING_EFFORT: 'turbo' })).reasoningEffort, undefined);
     assert.equal(options(configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AGENT_MODEL: 'm', BUILDER_AGENT_REASONING_EFFORT: 'low' })).reasoningEffort, 'low');
+    // The agent may use its own provider and key; the stage AI keeps its own.
+    const own = configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'gemini', BUILDER_AGENT_API_KEY: 'groq', BUILDER_AGENT_BASE_URL: 'https://api.groq.com/openai/v1', BUILDER_AGENT_MODEL: 'openai/gpt-oss-120b' }) as unknown as { apiKey: string; baseUrl: string };
+    assert.equal(own.apiKey, 'groq');
+    assert.equal(own.baseUrl, 'https://api.groq.com/openai/v1');
+    assert.equal((configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'gemini', BUILDER_AGENT_MODEL: 'm' }) as unknown as { apiKey: string }).apiKey, 'gemini');
   });
   it('fixes the stack and marks the package as untrusted data', () => {
     const prompt = buildAgentPrompt({ locale: 'ru', projectName: 'Учёт заявок', inputs: { features: { roles: [{ key: 'admin' }] } }, instruction: 'Сделай тёмную тему' });
