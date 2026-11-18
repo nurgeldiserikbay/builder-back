@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.26.0
+  version: 1.27.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -4055,7 +4055,7 @@ paths:
       operationId: getAgentTasks
       summary: The AI agent's tasks for a web application
       description: |
-        configured (an agent model and a sandbox), profile (the stack, node-react-pg@1.0.0), limits (turns, wallMs, costTiyn), canStart, repository (the connected one or null),
+        configured (an agent model and a sandbox), profile (the stack, node-react-pg@1.1.0), limits (turns, wallMs, costTiyn), canStart, repository (the connected one or null),
         latest (status, live steps, stop reason, the agent's report, the platform's own checks install/test/build, file list) and up to
         nine earlier tasks. Readable by everyone who can read the handoff stage.
       x-implementation-status: implemented
@@ -4134,6 +4134,24 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/agent/tasks/{taskId}/demo:
+    get:
+      tags: [Journey]
+      operationId: getAgentTaskDemo
+      summary: The preview page of the agent's application
+      description: |
+        One self-contained HTML file built by npm run build:demo (dist-demo/index.html, at most 6 MB) that runs the client with an
+        in-browser API over demo data. Returned as text with a Content-Security-Policy meta tag put first in the document (no network,
+        inline scripts and styles only) for the client to show in an iframe with sandbox="allow-scripts allow-forms allow-modals" and
+        no same-origin rights. Never served as a page from a BuildPath origin. 404 AGENT_DEMO_NOT_BUILT.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'data: html, policy' }
+        '404': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/agent/tasks/{taskId}/files:
     get:
       tags: [Journey]

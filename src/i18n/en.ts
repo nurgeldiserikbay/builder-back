@@ -2786,4 +2786,5 @@ export const en: Record<string, string> = {
   "BuildPath: приложение «{0}» от ИИ-агента": "BuildPath: the «{0}» application by the AI agent",
   "BuildPath: приложение от ИИ-агента (задача {0})": "BuildPath: application by the AI agent (task {0})",
   "Проверка BuildPath": "BuildPath check",
+  "Предпросмотр собирается": "The preview builds",
 };

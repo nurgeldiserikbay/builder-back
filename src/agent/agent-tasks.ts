@@ -10,12 +10,12 @@ import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { JourneyCore } from '../journey/journey-core.js';
 import { inputsSatisfied } from '../journey/stage-state.js';
 import { configuredAgentModel, type AgentModel } from './agent-model.js';
-import { AGENT_LOOP_VERSION, runAgent, type AgentCheck, type AgentFile, type AgentLimits, type AgentOutcome, type AgentStep } from './agent-loop.js';
+import { AGENT_LOOP_VERSION, DEMO_PATH, runAgent, type AgentCheck, type AgentFile, type AgentLimits, type AgentOutcome, type AgentStep } from './agent-loop.js';
 import { configuredWorkspace, WorkspaceError, type WorkspaceProvider } from './workspace.js';
 import { ChoicesService } from '../choices/choices.service.js';
 
 /** The capability profile the agent builds within: one stack, so the result can be checked and run the same way every time. */
-export const APP_PROFILE = { key: 'node-react-pg', version: '1.0.0', node: 20 } as const;
+export const APP_PROFILE = { key: 'node-react-pg', version: '1.1.0', node: 20 } as const;
 export const AGENT_TASK_VERSION = '1.0.0';
 const KIND = 'build_app';
 const MAX_INSTRUCTION = 2000;
@@ -54,7 +54,8 @@ export function buildAgentPrompt(input: { locale: string; projectName: string; i
     '- One npm package at the project root with "type": "module". Server: Node.js 20 with Express. Client: React with Vite, built into dist/ and served by the same server. JavaScript or TypeScript.',
     '- Data: PostgreSQL through the pg package, connection from DATABASE_URL, schema created by a migration script (npm run migrate) that can run again safely. Tests must not need a database server: put data access behind a module with an in-memory implementation that the tests use (or use pg-mem).',
     '- Sign-in: email and password, passwords hashed with node:crypto scrypt, sessions in an httpOnly, SameSite=Lax cookie signed with SESSION_SECRET. Roles and rights exactly as in the package; every API route checks the role on the server. The first owner account comes from ADMIN_EMAIL and ADMIN_PASSWORD on the first start.',
-    '- Scripts: npm run build (client), npm test (node --test or vitest, real tests of the business rules and rights, both allowed and refused cases), npm start (serves API and client on PORT, default 3000), npm run migrate.',
+    '- Scripts: npm run build (client), npm test (node --test or vitest, real tests of the business rules and rights, both allowed and refused cases), npm start (serves API and client on PORT, default 3000), npm run migrate, npm run build:demo (preview, below).',
+    `- Preview for the owner: npm run build:demo writes ONE self-contained file ${DEMO_PATH} (all JS and CSS inline, for example with vite-plugin-singlefile) that runs the real client in the browser with no server and no network: API calls go to an in-browser implementation of the same routes, rights and rules over the in-memory data layer (keep route handlers framework-independent so the server and the preview share them). Seed believable demo data and one demo account per role, and show a small bar, in the app's language, saying this is a demo and which role the user is in, with a role switcher. No cookies, localStorage, external fonts, images by URL or analytics: the preview runs in a sandboxed frame where they do not work.`,
     '- Write .env.example with every variable and a README.md for the owner: what the app does, how to run it locally, the variables. Never write real secrets or .env files.',
     '- Mobile-first UI in the language of the project, clear labels, empty states and error messages, no lorem ipsum. Validate input on the server.',
     'Rules of the package are requirements: implement the roles, data and features of the first version and their acceptance criteria. Do not invent features outside the package. If something cannot be done in this stack (payments, outgoing messages, external integrations), leave a clear stub that says so and list it in notDone.',
@@ -96,6 +97,18 @@ export function pullRequestText(input: { taskId: string; projectName: string; pr
   };
 }
 
+/** No network at all: the preview works on data in the page; scripts and styles only inline, images only from data/blob. */
+export const PREVIEW_CSP = "default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'";
+
+/** Puts the policy first in the document, before any script of the page can run. */
+export function withPreviewPolicy(html: string): string {
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${PREVIEW_CSP}">`;
+  const head = /<head[^>]*>/i.exec(html);
+  if (head) return `${html.slice(0, head.index + head[0].length)}${meta}${html.slice(head.index + head[0].length)}`;
+  const doc = /<html[^>]*>/i.exec(html);
+  return doc ? `${html.slice(0, doc.index + doc[0].length)}<head>${meta}</head>${html.slice(doc.index + doc[0].length)}` : `<!doctype html><head>${meta}</head>${html}`;
+}
+
 const statusLabels: Record<string, string> = {
   queued: 'В очереди', running: 'ИИ-агент работает', succeeded: 'Готово: проверки прошли', failed: 'Готово с ошибками', stopped: 'Остановлено', unavailable: 'Агент недоступен',
 };
@@ -111,9 +124,9 @@ const errorLabels: Record<string, string> = {
   AGENT_INTERRUPTED: 'Работа прервалась: сервер перезапустился во время задачи. Запустите её снова.',
   AGENT_FAILED: 'Задача прервалась из-за внутренней ошибки.',
 };
-const checkLabels: Record<string, string> = { install: 'Пакеты устанавливаются', test: 'Тесты проходят', build: 'Сборка интерфейса проходит' };
+const checkLabels: Record<string, string> = { install: 'Пакеты устанавливаются', test: 'Тесты проходят', build: 'Сборка интерфейса проходит', demo: 'Предпросмотр собирается' };
 
-type TaskRow = Awaited<ReturnType<PrismaService['agentTask']['findFirst']>>;
+type TaskRow = Omit<NonNullable<Awaited<ReturnType<PrismaService['agentTask']['findFirst']>>>, 'demoHtml'> | null;
 
 /** Runs queued agent tasks one at a time; the API process runs it too unless SANDBOX_WORKER=external. */
 @Injectable()
@@ -199,7 +212,9 @@ export class AgentRunner {
       return;
     }
     await workspace.close();
-    const passed = outcome.checks.some((check) => check.status === 'passed') && outcome.checks.every((check) => check.status === 'passed' || (check.status === 'skipped' && check.id === 'build'));
+    // The preview is shown or not; it does not decide whether the application itself passed.
+    const main = outcome.checks.filter((check) => check.id !== 'demo');
+    const passed = main.some((check) => check.status === 'passed') && main.every((check) => check.status === 'passed' || (check.status === 'skipped' && check.id === 'build'));
     const status = outcome.stopReason === 'stopped' ? 'stopped' : passed && outcome.stopReason === 'finished' ? 'succeeded' : 'failed';
     const files = outcome.files;
     await this.prisma.$transaction(async (tx) => {
@@ -213,7 +228,7 @@ export class AgentRunner {
       } });
       await tx.agentTask.updateMany({ where: { id, status: 'running' }, data: {
         status, finishedAt: new Date(), turns: outcome.turns, costTiyn: outcome.costTiyn, inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens,
-        steps: steps.slice(-MAX_STEPS_STORED) as never, files: files as never, filesDigest: createHash('sha256').update(JSON.stringify(files)).digest('hex'),
+        steps: steps.slice(-MAX_STEPS_STORED) as never, files: files as never, demoHtml: outcome.demoHtml, demoBytes: outcome.demoHtml ? Buffer.byteLength(outcome.demoHtml) : null, filesDigest: createHash('sha256').update(JSON.stringify(files)).digest('hex'),
         result: { stopReason: outcome.stopReason, report: outcome.report, checks: outcome.checks, filesTruncated: outcome.filesTruncated } as never,
         errorCode: outcome.stopReason === 'model_error' ? outcome.modelErrorCode : null,
       } });
@@ -248,13 +263,14 @@ export class AgentTasksService {
       checks: (result?.checks ?? []).map((check) => ({ ...check, label: tr(checkLabels[check.id] ?? check.id) })),
       error: task.errorCode ? tr(errorLabels[task.errorCode] ?? 'Задача не получилась.') : null,
       files: files.map((file) => ({ path: file.path, bytes: Buffer.byteLength(file.content) })), filesTruncated: result?.filesTruncated ?? false,
+      hasDemo: task.demoBytes !== null,
       pushed: task.pushedAt ? { branch: task.pushedBranch, pullRequestUrl: task.pullRequestUrl, commitUrl: task.commitUrl, at: task.pushedAt } : null,
     };
   }
 
   async get(userId: string, projectId: string) {
     const { ctx, stage } = await this.context(userId, projectId, 'read');
-    const tasks = await this.prisma.agentTask.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' }, take: 10 });
+    const tasks = await this.prisma.agentTask.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' }, take: 10, omit: { demoHtml: true } });
     const configured = Boolean(this.agentModel()) && Boolean(this.agentWorkspace());
     const active = tasks.find((task) => AGENT_ACTIVE.includes(task.status));
     return {
@@ -342,5 +358,17 @@ export class AgentTasksService {
     const updated = await this.prisma.agentTask.update({ where: { id: taskId }, data: { pushedBranch: pushed.branch, pullRequestUrl: pushed.pullRequestUrl, commitUrl: pushed.commitUrl, pushedAt: new Date() } });
     await this.core.event(this.prisma, projectId, userId, 'agent_task_pushed', 'handoff', { taskId, branch: pushed.branch, pullRequest: Boolean(pushed.pullRequestUrl), mainBranch: pushed.mainBranch });
     return { data: { ...this.view(updated), mainBranch: pushed.mainBranch } };
+  }
+
+  /**
+   * Step 3: the preview page. It is the agent's code, so it is never served from a BuildPath origin: the browser shows it in a
+   * sandboxed frame without same-origin rights, and the page carries a policy that forbids any network request.
+   */
+  async demo(userId: string, projectId: string, taskId: string) {
+    await this.context(userId, projectId, 'read');
+    const task = await this.prisma.agentTask.findFirst({ where: { id: taskId, projectId }, select: { demoHtml: true, status: true } });
+    if (!task) throw new NotFoundException('AGENT_TASK_NOT_FOUND');
+    if (!task.demoHtml) throw new NotFoundException('AGENT_DEMO_NOT_BUILT');
+    return { data: { html: withPreviewPolicy(task.demoHtml), policy: PREVIEW_CSP } };
   }
 }

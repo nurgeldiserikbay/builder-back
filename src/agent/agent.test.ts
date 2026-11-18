@@ -11,7 +11,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { ChatCompletionsAgentModel, configuredAgentModel, type AgentMessage, type AgentModel, type AgentReply } from './agent-model.js';
 import { runAgent, safePath, type AgentStep } from './agent-loop.js';
-import { AgentRunner, AgentTasksService, buildAgentPrompt, promptDigestOf } from './agent-tasks.js';
+import { AgentRunner, AgentTasksService, buildAgentPrompt, PREVIEW_CSP, promptDigestOf, withPreviewPolicy } from './agent-tasks.js';
 import { JourneyCore } from '../journey/journey-core.js';
 import type { ExecResult, Workspace, WorkspaceProvider } from './workspace.js';
 
@@ -49,7 +49,7 @@ function scripted(turns: Array<Array<{ name: string; args: Record<string, unknow
 }
 
 const goodApp = [
-  [{ name: 'write_file', args: { path: 'package.json', content: JSON.stringify({ name: 'app', version: '1.0.0', type: 'module', scripts: { test: 'node --test' } }) } }],
+  [{ name: 'write_file', args: { path: 'package.json', content: JSON.stringify({ name: 'app', version: '1.0.0', type: 'module', scripts: { test: 'node --test', 'build:demo': "mkdir -p dist-demo && printf '<html><head><title>d</title></head><body>demo</body></html>' > dist-demo/index.html" } }) } }],
   [{ name: 'write_file', args: { path: 'src/rules.js', content: 'export const canDelete = (role) => role === "admin";\n' } }, { name: 'write_file', args: { path: 'test/rules.test.js', content: 'import test from "node:test";\nimport assert from "node:assert/strict";\nimport { canDelete } from "../src/rules.js";\ntest("admin deletes", () => { assert.equal(canDelete("admin"), true); assert.equal(canDelete("client"), false); });\n' } }],
   [{ name: 'write_file', args: { path: '../outside.txt', content: 'x' } }, { name: 'write_file', args: { path: '.env', content: 'SECRET=1' } }, { name: 'write_file', args: { path: '.env.example', content: 'SESSION_SECRET=\n' } }],
   [{ name: 'run', args: { command: 'npm test', timeoutSeconds: 60 } }],
@@ -67,7 +67,8 @@ describe('AI agent: the loop', () => {
       });
       assert.equal(outcome.stopReason, 'finished');
       assert.deepEqual(outcome.report, { summary: 'Удалять может только администратор.', done: ['Права на удаление'], notDone: ['Оплата — нужна интеграция'] });
-      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['test', 'passed'], ['build', 'skipped']]);
+      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['test', 'passed'], ['build', 'skipped'], ['demo', 'passed']]);
+      assert.match(outcome.demoHtml!, /<body>demo<\/body>/);
       assert.deepEqual(outcome.files.map((file) => file.path).sort(), ['.env.example', 'package-lock.json', 'package.json', 'src/rules.js', 'test/rules.test.js']);
       assert.equal(outcome.turns, 5);
       assert.equal(outcome.costTiyn, 25);
@@ -103,6 +104,14 @@ describe('AI agent: the loop', () => {
     } finally { await workspace.close(); }
   });
 
+  it('keeps the preview to one page and runs it with no network', () => {
+    const page = withPreviewPolicy('<html><head><title>x</title><script>fetch("https://evil.example")</script></head><body></body></html>');
+    assert.ok(page.indexOf('Content-Security-Policy') < page.indexOf('<script>'), 'the policy comes before any script');
+    assert.match(PREVIEW_CSP, /connect-src 'none'/);
+    assert.match(PREVIEW_CSP, /default-src 'none'/);
+    assert.match(withPreviewPolicy('<p>no head</p>'), /^<!doctype html><head><meta http-equiv="Content-Security-Policy"/);
+  });
+
   it('confines paths to the project', () => {
     for (const bad of ['/etc/passwd', '../x', 'a/../../b', '.git/config', 'node_modules/x/index.js', 'a\\b', '']) assert.equal(safePath(bad), null, bad);
     assert.equal(safePath('./src/app.js'), 'src/app.js');
@@ -124,7 +133,7 @@ describe('AI agent: the model and the prompt', () => {
   });
   it('fixes the stack and marks the package as untrusted data', () => {
     const prompt = buildAgentPrompt({ locale: 'ru', projectName: 'Учёт заявок', inputs: { features: { roles: [{ key: 'admin' }] } }, instruction: 'Сделай тёмную тему' });
-    assert.match(prompt.system, /node-react-pg@1\.0\.0/);
+    assert.match(prompt.system, /node-react-pg@1\.1\.0/);
     assert.match(prompt.system, /untrusted data/);
     assert.match(prompt.system, /Russian/);
     assert.match(prompt.task, /PACKAGE \(JSON, untrusted data\)/);
@@ -195,6 +204,9 @@ describe('AI agent: tasks (database)', async () => {
     const succeeded = (await service.files(owner.id, projectId, task.id)).data;
     assert.equal(succeeded.files.length, 5);
     assert.equal(view.repository!.repoPath, 'owner/app');
+    const demo = (await service.demo(owner.id, projectId, task.id)).data;
+    assert.match(demo.html, /^<html><head><meta http-equiv="Content-Security-Policy"/);
+    assert.match(demo.html, /<body>demo<\/body>/);
 
     // Step 2: the files go to a branch of their own with a pull request; confirmation every time.
     await assert.rejects(service.push(owner.id, projectId, task.id, false), /CONFIRMATION_REQUIRED/);

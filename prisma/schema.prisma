@@ -1354,6 +1354,9 @@ model AgentTask {
   pullRequestUrl    String?   @map("pull_request_url") @db.VarChar(500)
   commitUrl         String?   @map("commit_url") @db.VarChar(500)
   pushedAt          DateTime? @map("pushed_at") @db.Timestamptz(3)
+  /// The preview page (step 3): one self-contained HTML file, shown only in a sandboxed frame with a no-network policy.
+  demoHtml          String?   @map("demo_html")
+  demoBytes         Int?      @map("demo_bytes")
   project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt])
