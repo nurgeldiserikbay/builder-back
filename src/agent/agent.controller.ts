@@ -41,6 +41,12 @@ export class AgentController {
     return this.tasks.push(request.user.id, projectId, taskId(id), record.confirm === true);
   }
 
+  @Get(':taskId/demo')
+  @Header('Cache-Control', 'no-store')
+  demo(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('taskId') id: string) {
+    return this.tasks.demo(request.user.id, projectId, taskId(id));
+  }
+
   @Get(':taskId/files')
   @Header('Cache-Control', 'no-store')
   files(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('taskId') id: string) {

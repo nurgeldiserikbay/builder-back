@@ -11,11 +11,14 @@ const READ_LIMIT = 60_000;
 const WRITE_LIMIT = 200_000;
 const COLLECT = { files: 400, bytes: 3_000_000, fileBytes: 300_000 };
 /** Never sent back as the project: installed packages, build output, version control and secrets. */
-const SKIP_DIRS = ['node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.cache', '.turbo', '.npm'];
+const SKIP_DIRS = ['node_modules', '.git', 'dist', 'dist-demo', 'build', 'coverage', '.next', '.cache', '.turbo', '.npm'];
+/** The preview build: one self-contained HTML file the platform shows in a sandboxed frame (step 3). */
+export const DEMO_PATH = 'dist-demo/index.html';
+const DEMO_LIMIT = 6_000_000;
 
 export interface AgentLimits { turns: number; wallMs: number; costTiyn: number | null }
 export interface AgentStep { at: string; kind: 'note' | 'tool'; tool?: string; summary: string; status?: 'ok' | 'failed'; output?: string }
-export interface AgentCheck { id: 'install' | 'test' | 'build'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number }
+export interface AgentCheck { id: 'install' | 'test' | 'build' | 'demo'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number }
 export interface AgentFile { path: string; content: string }
 export interface AgentOutcome {
   stopReason: 'finished' | 'turns' | 'time' | 'budget' | 'stopped' | 'model_error';
@@ -24,6 +27,8 @@ export interface AgentOutcome {
   checks: AgentCheck[];
   files: AgentFile[];
   filesTruncated: boolean;
+  /** The preview page, when npm run build:demo produced it within the limit. */
+  demoHtml: string | null;
   turns: number; inputTokens: number; outputTokens: number; costTiyn: number;
 }
 
@@ -152,7 +157,9 @@ export async function runAgent(input: AgentRunInput): Promise<AgentOutcome> {
 
   const checks = await platformChecks(input.workspace);
   const { files, truncated } = await collectFiles(input.workspace);
-  return { stopReason, modelErrorCode, report, checks, files, filesTruncated: truncated, turns: totals.turns, inputTokens: totals.inputTokens, outputTokens: totals.outputTokens, costTiyn: totals.costTiyn };
+  const demoHtml = checks.find((check) => check.id === 'demo')?.status === 'passed' ? await readDemo(input.workspace) : null;
+  if (!demoHtml) { const demo = checks.find((check) => check.id === 'demo'); if (demo?.status === 'passed') { demo.status = 'failed'; demo.output = `${DEMO_PATH} is missing, not one file, or larger than ${DEMO_LIMIT} bytes`; } }
+  return { stopReason, modelErrorCode, report, checks, files, filesTruncated: truncated, demoHtml, turns: totals.turns, inputTokens: totals.inputTokens, outputTokens: totals.outputTokens, costTiyn: totals.costTiyn };
 }
 
 function listCommand(): string {
@@ -169,17 +176,26 @@ export async function platformChecks(workspace: Workspace): Promise<AgentCheck[]
     { id: 'install', command: 'npm install --no-audit --no-fund', present: pkgText !== null, timeoutMs: 600_000 },
     { id: 'test', command: 'npm test', present: typeof scripts.test === 'string' && !/no test specified/.test(String(scripts.test)), timeoutMs: 600_000 },
     { id: 'build', command: 'npm run build', present: typeof scripts.build === 'string', timeoutMs: 600_000 },
+    { id: 'demo', command: 'npm run build:demo', present: typeof scripts['build:demo'] === 'string', timeoutMs: 600_000 },
   ];
   const results: AgentCheck[] = [];
   let failed = false;
   for (const item of plan) {
-    if (!item.present || failed) { results.push({ id: item.id, command: item.command, status: 'skipped', exitCode: null, output: '', durationMs: 0 }); continue; }
+    // The preview is built even when the main build failed: it is a separate page and does not hide that failure.
+    if (!item.present || (failed && item.id !== 'demo') || (item.id === 'demo' && results[0]?.status !== 'passed')) { results.push({ id: item.id, command: item.command, status: 'skipped', exitCode: null, output: '', durationMs: 0 }); continue; }
     const result = await workspace.exec(item.command, item.timeoutMs);
     const status = result.timedOut ? 'timed_out' : result.exitCode === 0 ? 'passed' : 'failed';
     results.push({ id: item.id, command: item.command, status, exitCode: result.exitCode, output: cut(`${result.stdout}\n${result.stderr}`.trim(), 3000), durationMs: result.durationMs });
-    if (status !== 'passed') failed = true;
+    if (status !== 'passed' && item.id !== 'demo') failed = true;
   }
   return results;
+}
+
+/** One HTML file with everything inline: external scripts or styles would not load in the preview frame anyway. */
+async function readDemo(workspace: Workspace): Promise<string | null> {
+  const html = await workspace.read(DEMO_PATH);
+  if (!html || html.length > DEMO_LIMIT || !/<html[\s>]/i.test(html)) return null;
+  return html;
 }
 
 export async function collectFiles(workspace: Workspace): Promise<{ files: AgentFile[]; truncated: boolean }> {
