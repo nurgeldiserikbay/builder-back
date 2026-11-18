@@ -12,6 +12,7 @@ import { inputsSatisfied } from '../journey/stage-state.js';
 import { configuredAgentModel, type AgentModel } from './agent-model.js';
 import { AGENT_LOOP_VERSION, runAgent, type AgentCheck, type AgentFile, type AgentLimits, type AgentOutcome, type AgentStep } from './agent-loop.js';
 import { configuredWorkspace, WorkspaceError, type WorkspaceProvider } from './workspace.js';
+import { ChoicesService } from '../choices/choices.service.js';
 
 /** The capability profile the agent builds within: one stack, so the result can be checked and run the same way every time. */
 export const APP_PROFILE = { key: 'node-react-pg', version: '1.0.0', node: 20 } as const;
@@ -72,6 +73,27 @@ export function buildAgentPrompt(input: { locale: string; projectName: string; i
     }, 120_000),
   ].filter(Boolean).join('\n\n');
   return { system, task };
+}
+
+/** The pull request people read before merging: what the agent says, what the platform checked, and that AI wrote it. */
+export function pullRequestText(input: { taskId: string; projectName: string; profile: string; model: string | null; report: AgentOutcome['report']; checks: AgentCheck[]; instruction: string | null }) {
+  const mark = (status: string) => (status === 'passed' ? '✅' : status === 'skipped' ? '➖' : '❌');
+  const lines = [
+    `## ${tr('Что сделал ИИ-агент')}`, '',
+    input.report?.summary || tr('Агент не оставил отчёта.'), '',
+    ...(input.report?.done.length ? [`**${tr('Сделано')}**`, ...input.report.done.map((line) => `- ${line}`), ''] : []),
+    ...(input.report?.notDone.length ? [`**${tr('Не сделано или сделано частично')}**`, ...input.report.notDone.map((line) => `- ${line}`), ''] : []),
+    `## ${tr('Проверка BuildPath')}`, '',
+    ...input.checks.map((check) => `- ${mark(check.status)} ${tr(checkLabels[check.id] ?? check.id)} — \`${check.command}\``), '',
+    ...(input.instruction ? [`**${tr('Пожелание владельца')}:** ${input.instruction}`, ''] : []),
+    '---',
+    tr('Код написан ИИ-агентом BuildPath (стек {0}, модель {1}). Проверьте изменения перед слиянием: агент мог ошибиться. Переменные окружения перечислены в .env.example.', [input.profile, input.model ?? '—']),
+  ];
+  return {
+    title: tr('BuildPath: приложение «{0}» от ИИ-агента', [input.projectName.slice(0, 80)]),
+    body: lines.join('\n').slice(0, 60_000),
+    message: tr('BuildPath: приложение от ИИ-агента (задача {0})', [input.taskId.slice(0, 8)]),
+  };
 }
 
 const statusLabels: Record<string, string> = {
@@ -202,7 +224,7 @@ export class AgentRunner {
 
 @Injectable()
 export class AgentTasksService {
-  constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore, private readonly billing: BillingService, private readonly runner: AgentRunner) {}
+  constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore, private readonly billing: BillingService, private readonly runner: AgentRunner, private readonly choices: ChoicesService) {}
 
   private agentModel() { return this.runner.agentModel(); }
   private agentWorkspace() { return this.runner.agentWorkspace(); }
@@ -226,6 +248,7 @@ export class AgentTasksService {
       checks: (result?.checks ?? []).map((check) => ({ ...check, label: tr(checkLabels[check.id] ?? check.id) })),
       error: task.errorCode ? tr(errorLabels[task.errorCode] ?? 'Задача не получилась.') : null,
       files: files.map((file) => ({ path: file.path, bytes: Buffer.byteLength(file.content) })), filesTruncated: result?.filesTruncated ?? false,
+      pushed: task.pushedAt ? { branch: task.pushedBranch, pullRequestUrl: task.pullRequestUrl, commitUrl: task.commitUrl, at: task.pushedAt } : null,
     };
   }
 
@@ -236,7 +259,7 @@ export class AgentTasksService {
     const active = tasks.find((task) => AGENT_ACTIVE.includes(task.status));
     return {
       data: {
-        configured, profile: APP_PROFILE, limits: agentLimits(),
+        configured, profile: APP_PROFILE, limits: agentLimits(), repository: await this.choices.repositoryFor(projectId),
         canStart: configured && this.core.canWrite(ctx, 'handoff') && Boolean(stage.currentVersionId) && !active,
         latest: tasks[0] ? this.view(tasks[0]) : null,
         history: tasks.slice(1).map((task) => ({ id: task.id, status: task.status, statusLabel: tr(statusLabels[task.status] ?? task.status), createdAt: task.createdAt, finishedAt: task.finishedAt, costTiyn: task.costTiyn })),
@@ -297,5 +320,27 @@ export class AgentTasksService {
     if (!task) throw new NotFoundException('AGENT_TASK_NOT_FOUND');
     if (AGENT_ACTIVE.includes(task.status)) throw new ConflictException('AGENT_TASK_RUNNING');
     return { data: { status: task.status, digest: task.filesDigest, files: (task.files ?? []) as unknown as AgentFile[] } };
+  }
+
+  /**
+   * Step 2: sends the task's files to the owner's repository on the branch buildpath/agent-<task>, with a pull request that
+   * carries the agent's report and the platform's checks. Confirmed every time; the main branch is written only when the
+   * repository is still empty. Owners and managers only (the same rule as other pushes).
+   */
+  async push(userId: string, projectId: string, taskId: string, confirm: boolean) {
+    if (!confirm) throw new BadRequestException('CONFIRMATION_REQUIRED');
+    const { ctx } = await this.context(userId, projectId, 'write');
+    const task = await this.prisma.agentTask.findFirst({ where: { id: taskId, projectId } });
+    if (!task) throw new NotFoundException('AGENT_TASK_NOT_FOUND');
+    if (AGENT_ACTIVE.includes(task.status)) throw new ConflictException('AGENT_TASK_RUNNING');
+    const files = (task.files ?? []) as unknown as AgentFile[];
+    if (!files.length) throw new ConflictException('AGENT_TASK_NO_FILES');
+    if (task.filesDigest !== createHash('sha256').update(JSON.stringify(files)).digest('hex')) throw new ConflictException('AGENT_TASK_FILES_CHANGED');
+    const result = (task.result ?? {}) as { report?: AgentOutcome['report']; checks?: AgentCheck[] };
+    const text = runWithLocale(contentLocale(ctx.project.locale), () => pullRequestText({ taskId, projectName: ctx.project.name, profile: task.profile, model: task.model, report: result.report ?? null, checks: result.checks ?? [], instruction: task.instruction }));
+    const pushed = await this.choices.pushBranch(userId, projectId, { branch: `buildpath/agent-${taskId.slice(0, 8)}`, files, ...text });
+    const updated = await this.prisma.agentTask.update({ where: { id: taskId }, data: { pushedBranch: pushed.branch, pullRequestUrl: pushed.pullRequestUrl, commitUrl: pushed.commitUrl, pushedAt: new Date() } });
+    await this.core.event(this.prisma, projectId, userId, 'agent_task_pushed', 'handoff', { taskId, branch: pushed.branch, pullRequest: Boolean(pushed.pullRequestUrl), mainBranch: pushed.mainBranch });
+    return { data: { ...this.view(updated), mainBranch: pushed.mainBranch } };
   }
 }

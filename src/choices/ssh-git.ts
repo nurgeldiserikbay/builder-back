@@ -164,15 +164,17 @@ export class SshGitClient {
   }
 
   /** One commit on top of the branch (or the first commit of an empty repository), pushed without force. */
-  async commit(branch: string, files: GitFile[], message: string): Promise<{ commit: string }> {
-    if (!/^[A-Za-z0-9._/-]{1,100}$/.test(branch) || branch.startsWith('-') || branch.includes('..')) throw new GitProviderError('REPO_BRANCH_INVALID');
+  /** from: the branch a new branch starts at (the agent's work goes on a branch made from the main one). */
+  async commit(branch: string, files: GitFile[], message: string, from: string | null = null): Promise<{ commit: string }> {
+    for (const name of [branch, from]) if (name !== null && (!/^[A-Za-z0-9._/-]{1,100}$/.test(name) || name.startsWith('-') || name.includes('..'))) throw new GitProviderError('REPO_BRANCH_INVALID');
     return this.prepare(async (dir) => {
       const repo = path.join(dir, 'repo');
       await this.git(dir, ['init', '-q']);
       await this.git(dir, ['remote', 'add', 'origin', this.url()]);
       const remote = await this.git(dir, ['ls-remote', 'origin', `refs/heads/${branch}`]);
-      if (remote.trim()) {
-        await this.git(dir, ['fetch', '-q', '--depth=1', 'origin', `refs/heads/${branch}`]);
+      const start = remote.trim() ? branch : from && (await this.git(dir, ['ls-remote', 'origin', `refs/heads/${from}`])).trim() ? from : null;
+      if (start) {
+        await this.git(dir, ['fetch', '-q', '--depth=1', 'origin', `refs/heads/${start}`]);
         await this.git(dir, ['checkout', '-q', '-B', branch, 'FETCH_HEAD']);
       } else {
         await this.git(dir, ['checkout', '-q', '--orphan', branch]);
@@ -191,7 +193,7 @@ export class SshGitClient {
       const status = await this.git(dir, ['status', '--porcelain']);
       if (status.trim()) {
         await this.git(dir, ['-c', 'user.name=BuildPath', '-c', 'user.email=noreply@buildpath.kz', 'commit', '-q', '-m', message]);
-      } else if (!remote.trim()) {
+      } else if (!start) {
         throw new GitProviderError('REPO_PROVIDER_FAILED');
       }
       await this.git(dir, ['push', '-q', 'origin', `HEAD:refs/heads/${branch}`], true);

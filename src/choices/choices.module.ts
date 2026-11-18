@@ -8,5 +8,6 @@ import { ChoicesService } from './choices.service.js';
   imports: [AuthModule, JourneyModule],
   controllers: [ChoicesController, GithubOauthController, GitAccountsController],
   providers: [ChoicesService],
+  exports: [ChoicesService],
 })
 export class ChoicesModule {}
