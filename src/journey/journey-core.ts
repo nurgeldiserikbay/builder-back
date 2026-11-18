@@ -235,7 +235,12 @@ export class JourneyCore {
 
   async remainingAiRuns(projectId: string): Promise<number> {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const used = await this.prisma.generationRun.count({ where: { projectId, provider: { not: 'template' }, createdAt: { gte: since } } });
+    // A request the provider did not answer (down, busy, timed out) spent nothing and does not count; one it answered does,
+    // even if the answer was refused, because the tokens were spent.
+    const used = await this.prisma.generationRun.count({ where: {
+      projectId, provider: { not: 'template' }, createdAt: { gte: since },
+      OR: [{ status: 'succeeded' }, { safeErrorCode: null }, { NOT: { safeErrorCode: { startsWith: 'AI_PROVIDER' } } }],
+    } });
     return Math.max(0, this.dailyLimit() - used);
   }
 

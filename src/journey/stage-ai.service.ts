@@ -11,6 +11,7 @@ import type { BusinessProcess } from './process.js';
 import { templateFeatures, templateScreens, type AppFeatures } from './webapp.js';
 import { costOf } from '../budget/budget.js';
 import { StageAiError, buildStagePrompt } from './stage-ai.js';
+import { normalizeAiOutput } from './ai-normalize.js';
 import { canEdit, inputsSatisfied } from './stage-state.js';
 import { JourneyCore } from './journey-core.js';
 import { inProject, Access, notEditableCode } from './journey-core.js';
@@ -114,7 +115,7 @@ export class StageAiService {
         const baseContent = base!.content as ContentArtifact;
         proposal = input.targetKey === 'seo' ? baseContent : normalizeContent({ sections: [{ ...(section as object), key: input.targetKey }], seo: baseContent.seo });
       } else {
-        proposal = inProject(ctx, () => normalizeArtifact(definition.artifactType, raw));
+        proposal = inProject(ctx, () => normalizeAiOutput(raw, (value) => normalizeArtifact(definition.artifactType, value)));
       }
       merged = inProject(ctx, () => normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, proposal, stage.lockedKeys, input.targetKey)));
     } catch (error) {
