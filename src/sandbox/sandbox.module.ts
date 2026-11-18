@@ -4,6 +4,8 @@ import { JourneyModule } from '../journey/journey.module.js';
 import { SandboxRunner, StarterChecksService } from './starter-checks.js';
 import { AppCodeController, StarterChecksController } from './starter-checks.controller.js';
 import { AppCodeService } from './app-code.js';
+import { AgentController } from '../agent/agent.controller.js';
+import { AgentRunner, AgentTasksService } from '../agent/agent-tasks.js';
 
-@Module({ imports: [AuthModule, JourneyModule], controllers: [StarterChecksController, AppCodeController], providers: [SandboxRunner, StarterChecksService, AppCodeService] })
+@Module({ imports: [AuthModule, JourneyModule], controllers: [StarterChecksController, AppCodeController, AgentController], providers: [SandboxRunner, StarterChecksService, AppCodeService, AgentRunner, AgentTasksService] })
 export class SandboxModule {}
