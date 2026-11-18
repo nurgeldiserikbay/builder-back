@@ -2789,4 +2789,9 @@ export const en: Record<string, string> = {
   "Предпросмотр собирается": "The preview builds",
   "Приложение запускается и отвечает": "The application starts and answers",
   "Файлы для запуска на Render и своём сервере на месте": "Files for launching on Render and an own server are in place",
+  "Что попросил изменить владелец": "What the owner asked to change",
+  "Агент удалил эти файлы — удалите их в ветке сами, BuildPath файлы не удаляет": "The agent removed these files — delete them in the branch yourself, BuildPath does not delete files",
+  "BuildPath: изменения в «{0}» от ИИ-агента": "BuildPath: changes to “{0}” by the AI agent",
+  "BuildPath: изменения от ИИ-агента (задача {0})": "BuildPath: changes by the AI agent (task {0})",
+  "Код, от которого начиналось изменение, изменился. Запустите задачу снова.": "The code the change started from has changed. Start the task again.",
 };
