@@ -18,7 +18,7 @@ const DEMO_LIMIT = 6_000_000;
 
 export interface AgentLimits { turns: number; wallMs: number; costTiyn: number | null }
 export interface AgentStep { at: string; kind: 'note' | 'tool'; tool?: string; summary: string; status?: 'ok' | 'failed'; output?: string }
-export interface AgentCheck { id: 'install' | 'test' | 'build' | 'start' | 'deploy_files' | 'demo'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number }
+export interface AgentCheck { id: 'install' | 'test' | 'build' | 'start' | 'deploy_files' | 'pwa' | 'demo'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number }
 export interface AgentFile { path: string; content: string }
 export interface AgentOutcome {
   stopReason: 'finished' | 'turns' | 'time' | 'budget' | 'stopped' | 'model_error';
@@ -192,6 +192,9 @@ export async function platformChecks(workspace: Workspace): Promise<AgentCheck[]
     if (item.id === 'start') results.push(await deployFilesCheck(workspace));
   }
   if (!results.some((check) => check.id === 'deploy_files')) results.splice(results.length - 1, 0, await deployFilesCheck(workspace));
+  // Installable on a phone: read from the built client, so it is checked only when the build passed.
+  const built = results.find((check) => check.id === 'build')?.status === 'passed';
+  results.splice(results.findIndex((check) => check.id === 'deploy_files') + 1, 0, built ? await pwaCheck(workspace) : { id: 'pwa', command: PWA_COMMAND, status: 'skipped', exitCode: null, output: '', durationMs: 0 });
   return results;
 }
 
@@ -221,6 +224,48 @@ export async function deployFilesCheck(workspace: Workspace): Promise<AgentCheck
   if (!compose || !/postgres/i.test(compose)) missing.push('docker-compose.yml with PostgreSQL');
   if (!envExample || !/DATABASE_URL/.test(envExample)) missing.push('.env.example with DATABASE_URL');
   return { id: 'deploy_files', command: 'render.yaml, Dockerfile, docker-compose.yml, .env.example', status: missing.length ? 'failed' : 'passed', exitCode: null, output: missing.length ? `Missing or wrong: ${missing.join('; ')}` : '', durationMs: 0 };
+}
+
+const PWA_COMMAND = 'dist/index.html → manifest, icons, service worker';
+/** Finds the first navigator.serviceWorker.register("<path>") in the built client. */
+const SW_GREP = 'grep -rhoE ' + "'serviceWorker\\.register\\(\\s*[\"'\"'\"'`][^\"'\"'\"'`]+'" + ' dist --include=*.js --include=*.html 2>/dev/null | head -1';
+
+/**
+ * Step 6: the application installs on a phone. Read from the build output: a linked web app manifest with a name, a start URL,
+ * a standalone display and 192 and 512 px icons (or one SVG), the icon files, and a service worker the client registers.
+ */
+export async function pwaCheck(workspace: Workspace): Promise<AgentCheck> {
+  const problems: string[] = [];
+  const html = await workspace.read('dist/index.html');
+  const inDist = (ref: string) => { const path = safePath(ref.split(/[?#]/)[0]!.replace(/^\/+/, '')); return path ? `dist/${path}` : null; };
+  if (!html) problems.push('dist/index.html');
+  else {
+    const link = /<link[^>]+rel=["']?manifest["']?[^>]*>/i.exec(html)?.[0];
+    const href = link ? /href=["']?([^"'\s>]+)/i.exec(link)?.[1] : undefined;
+    const manifestPath = href && !/^[a-z]+:/i.test(href) ? inDist(href) : null;
+    const text = manifestPath ? await workspace.read(manifestPath) : null;
+    if (!text) problems.push('<link rel="manifest"> to a file in dist');
+    else {
+      let manifest: { name?: unknown; short_name?: unknown; start_url?: unknown; display?: unknown; icons?: Array<{ src?: unknown; sizes?: unknown; type?: unknown }> } = {};
+      try { manifest = JSON.parse(text) as typeof manifest; } catch { problems.push('manifest is not JSON'); }
+      if (typeof manifest.name !== 'string' && typeof manifest.short_name !== 'string') problems.push('manifest: name');
+      if (typeof manifest.start_url !== 'string') problems.push('manifest: start_url');
+      if (!['standalone', 'fullscreen', 'minimal-ui'].includes(String(manifest.display))) problems.push('manifest: display standalone');
+      const icons = Array.isArray(manifest.icons) ? manifest.icons : [];
+      const has = (size: string) => icons.some((icon) => String(icon.sizes ?? '').split(/\s+/).includes(size) || (String(icon.sizes) === 'any' && /svg/.test(String(icon.type ?? icon.src))));
+      if (!has('192x192') || !has('512x512')) problems.push('manifest: icons 192x192 and 512x512 (or one SVG with sizes "any")');
+      for (const icon of icons.slice(0, 6)) {
+        const src = typeof icon.src === 'string' && !/^[a-z]+:/i.test(icon.src) ? inDist(icon.src) : null;
+        if (src && (await workspace.exec(`test -f '${src.replace(/'/g, '')}'`, 10_000)).exitCode !== 0) problems.push(`icon file ${src}`);
+      }
+    }
+    const registered = (await workspace.exec(SW_GREP, 20_000)).stdout.trim();
+    const sw = /['"`]([^'"`]+)$/.exec(registered)?.[1];
+    const swPath = sw && !/^[a-z]+:/i.test(sw) ? inDist(sw) : null;
+    if (!swPath) problems.push('navigator.serviceWorker.register(…) in the client');
+    else if ((await workspace.exec(`test -f '${swPath.replace(/'/g, '')}'`, 10_000)).exitCode !== 0) problems.push(`service worker file ${swPath}`);
+  }
+  return { id: 'pwa', command: PWA_COMMAND, status: problems.length ? 'failed' : 'passed', exitCode: null, output: problems.length ? `Missing or wrong: ${problems.join('; ')}` : '', durationMs: 0 };
 }
 
 /** One HTML file with everything inline: external scripts or styles would not load in the preview frame anyway. */

@@ -10,7 +10,7 @@ import { BillingService } from '../billing/billing.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { ChatCompletionsAgentModel, configuredAgentModel, type AgentMessage, type AgentModel, type AgentReply } from './agent-model.js';
-import { deployFilesCheck, runAgent, safePath, type AgentStep } from './agent-loop.js';
+import { deployFilesCheck, pwaCheck, runAgent, safePath, type AgentStep } from './agent-loop.js';
 import { appOrigin, checkAppHealth } from './app-health.js';
 import { createServer } from 'node:http';
 import { AgentRunner, AgentTasksService, buildAgentPrompt, buildChangePrompt, filesDigestOf, pullRequestText, PREVIEW_CSP, promptDigestOf, withPreviewPolicy } from './agent-tasks.js';
@@ -50,11 +50,23 @@ function scripted(turns: Array<Array<{ name: string; args: Record<string, unknow
   };
 }
 
+/** A stand-in client build with what a phone needs to install the application. */
+const PWA_BUILD = [
+  "import { mkdirSync, writeFileSync } from 'node:fs';",
+  "mkdirSync('dist/icons', { recursive: true });",
+  "writeFileSync('dist/index.html', '<html><head><link rel=\"manifest\" href=\"/manifest.webmanifest\"></head><body><script src=\"/app.js\"></script></body></html>');",
+  "writeFileSync('dist/manifest.webmanifest', JSON.stringify({ name: 'Учёт', short_name: 'Учёт', start_url: '/', display: 'standalone', icons: [{ src: '/icons/192.png', sizes: '192x192', type: 'image/png' }, { src: '/icons/512.png', sizes: '512x512', type: 'image/png' }] }));",
+  "writeFileSync('dist/icons/192.png', 'png'); writeFileSync('dist/icons/512.png', 'png');",
+  "writeFileSync('dist/app.js', 'try { navigator.serviceWorker.register(\"/sw.js\"); } catch {}');",
+  "writeFileSync('dist/sw.js', 'self.addEventListener(\"fetch\", () => {});');",
+].join('\n');
+
 const goodApp = [
-  [{ name: 'write_file', args: { path: 'package.json', content: JSON.stringify({ name: 'app', version: '1.0.0', type: 'module', scripts: { test: 'node --test', start: 'node server.js', 'build:demo': "mkdir -p dist-demo && printf '<html><head><title>d</title></head><body>demo</body></html>' > dist-demo/index.html" } }) } },
+  [{ name: 'write_file', args: { path: 'package.json', content: JSON.stringify({ name: 'app', version: '1.0.0', type: 'module', scripts: { test: 'node --test', start: 'node server.js', build: 'node build.js', 'build:demo': "mkdir -p dist-demo && printf '<html><head><title>d</title></head><body>demo</body></html>' > dist-demo/index.html" } }) } },
     { name: 'write_file', args: { path: 'server.js', content: "import { createServer } from 'node:http';\ncreateServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(req.url === '/api/health' ? { status: 'ok', database: 'memory' } : {})); }).listen(Number(process.env.PORT));\n" } },
     { name: 'write_file', args: { path: 'render.yaml', content: 'services:\n  - type: web\n    runtime: node\n    buildCommand: npm ci\n    startCommand: npm run migrate && npm start\n    healthCheckPath: /api/health\n    envVars:\n      - key: DATABASE_URL\n        sync: false\n      - key: SESSION_SECRET\n        generateValue: true\n' } },
     { name: 'write_file', args: { path: 'Dockerfile', content: 'FROM node:20-alpine\nCMD ["npm","start"]\n' } },
+    { name: 'write_file', args: { path: 'build.js', content: PWA_BUILD } },
     { name: 'write_file', args: { path: 'docker-compose.yml', content: 'services:\n  db:\n    image: postgres:16\n' } }],
   [{ name: 'write_file', args: { path: 'src/rules.js', content: 'export const canDelete = (role) => role === "admin";\n' } }, { name: 'write_file', args: { path: 'test/rules.test.js', content: 'import test from "node:test";\nimport assert from "node:assert/strict";\nimport { canDelete } from "../src/rules.js";\ntest("admin deletes", () => { assert.equal(canDelete("admin"), true); assert.equal(canDelete("client"), false); });\n' } }],
   [{ name: 'write_file', args: { path: '../outside.txt', content: 'x' } }, { name: 'write_file', args: { path: '.env', content: 'SECRET=1' } }, { name: 'write_file', args: { path: '.env.example', content: 'SESSION_SECRET=\nDATABASE_URL=\n' } }],
@@ -73,9 +85,9 @@ describe('AI agent: the loop', () => {
       });
       assert.equal(outcome.stopReason, 'finished');
       assert.deepEqual(outcome.report, { summary: 'Удалять может только администратор.', done: ['Права на удаление'], notDone: ['Оплата — нужна интеграция'] });
-      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['test', 'passed'], ['build', 'skipped'], ['start', 'passed'], ['deploy_files', 'passed'], ['demo', 'passed']]);
+      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['test', 'passed'], ['build', 'passed'], ['start', 'passed'], ['deploy_files', 'passed'], ['pwa', 'passed'], ['demo', 'passed']]);
       assert.match(outcome.demoHtml!, /<body>demo<\/body>/);
-      assert.deepEqual(outcome.files.map((file) => file.path).sort(), ['.env.example', 'Dockerfile', 'docker-compose.yml', 'package-lock.json', 'package.json', 'render.yaml', 'server.js', 'src/rules.js', 'test/rules.test.js']);
+      assert.deepEqual(outcome.files.map((file) => file.path).sort(), ['.env.example', 'Dockerfile', 'build.js', 'docker-compose.yml', 'package-lock.json', 'package.json', 'render.yaml', 'server.js', 'src/rules.js', 'test/rules.test.js']);
       assert.equal(outcome.turns, 5);
       assert.equal(outcome.costTiyn, 25);
       assert.ok(steps.some((step) => step.tool === 'write_file' && step.status === 'failed' && step.summary.includes('outside')), 'a path outside the project is refused');
@@ -131,6 +143,20 @@ describe('AI agent: the loop', () => {
     } finally { await workspace.close(); }
   });
 
+  it('an application without a manifest link, a 512 px icon or a service worker does not pass the phone check', async () => {
+    const workspace = await localWorkspace();
+    try {
+      await workspace.write('dist/index.html', '<html><head><link rel="manifest" href="/m.json"></head></html>');
+      await workspace.write('dist/m.json', JSON.stringify({ name: 'A', start_url: '/', display: 'browser', icons: [{ src: '/i.png', sizes: '192x192' }] }));
+      const check = await pwaCheck(workspace);
+      assert.equal(check.status, 'failed');
+      assert.match(check.output, /display standalone/);
+      assert.match(check.output, /512x512/);
+      assert.match(check.output, /icon file dist\/i\.png/);
+      assert.match(check.output, /serviceWorker\.register/);
+    } finally { await workspace.close(); }
+  });
+
   it('confines paths to the project', () => {
     for (const bad of ['/etc/passwd', '../x', 'a/../../b', '.git/config', 'node_modules/x/index.js', 'a\\b', '']) assert.equal(safePath(bad), null, bad);
     assert.equal(safePath('./src/app.js'), 'src/app.js');
@@ -152,7 +178,7 @@ describe('AI agent: the model and the prompt', () => {
   });
   it('fixes the stack and marks the package as untrusted data', () => {
     const prompt = buildAgentPrompt({ locale: 'ru', projectName: 'Учёт заявок', inputs: { features: { roles: [{ key: 'admin' }] } }, instruction: 'Сделай тёмную тему' });
-    assert.match(prompt.system, /node-react-pg@1\.2\.0/);
+    assert.match(prompt.system, /node-react-pg@1\.3\.0/);
     assert.match(prompt.system, /untrusted data/);
     assert.match(prompt.system, /Russian/);
     assert.match(prompt.task, /PACKAGE \(JSON, untrusted data\)/);
@@ -216,7 +242,7 @@ describe('AI agent: tasks (database)', async () => {
     assert.equal(done.model, 'fake-agent');
     assert.equal(done.turns, 5);
     assert.ok((done.steps as unknown[]).length >= 7);
-    assert.equal(((done.files as Array<{ path: string }>) ?? []).length, 9);
+    assert.equal(((done.files as Array<{ path: string }>) ?? []).length, 10);
     assert.equal(await prisma!.generationRun.count({ where: { projectId, targetKey: 'agent_task' } }), 1);
     assert.equal(opened.length, 1);
 
@@ -242,7 +268,7 @@ describe('AI agent: tasks (database)', async () => {
     assert.equal(view.canStart, false, 'the package is not built yet');
     await assert.rejects(service.start(owner.id, projectId, { instruction: null }), /HANDOFF_NOT_BUILT/);
     const succeeded = (await service.files(owner.id, projectId, task.id)).data;
-    assert.equal(succeeded.files.length, 9);
+    assert.equal(succeeded.files.length, 10);
     assert.equal(view.repository!.repoPath, 'owner/app');
     const demo = (await service.demo(owner.id, projectId, task.id)).data;
     assert.match(demo.html, /^<html><head><meta http-equiv="Content-Security-Policy"/);
@@ -252,7 +278,7 @@ describe('AI agent: tasks (database)', async () => {
     await assert.rejects(service.push(owner.id, projectId, task.id, false), /CONFIRMATION_REQUIRED/);
     const pushed = (await service.push(owner.id, projectId, task.id, true)).data;
     assert.equal(pushes[0].branch, `buildpath/agent-${task.id.slice(0, 8)}`);
-    assert.equal(pushes[0].files, 9);
+    assert.equal(pushes[0].files, 10);
     assert.match(pushes[0].body, /Удалять может только администратор/);
     assert.match(pushes[0].body, /✅ Тесты проходят — `npm test`/);
     assert.match(pushes[0].body, /ИИ-агентом BuildPath/);
