@@ -103,3 +103,14 @@ describe('bot voice messages (database)', async () => {
     }
   });
 });
+
+describe('voice recognition provider', () => {
+  it('may use its own address and key (Gemini has no transcription endpoint), else the stage AI ones', async () => {
+    const { transcribeConfig } = await import('./transcribe.js');
+    const base = { BUILDER_AI_OPENAI_API_KEY: 'gemini-key', BUILDER_AI_OPENAI_BASE_URL: 'https://generativelanguage.googleapis.com/v1beta/openai/' };
+    assert.equal(transcribeConfig(base), null, 'no model — no voice');
+    assert.deepEqual(transcribeConfig({ ...base, BUILDER_AI_TRANSCRIBE_MODEL: 'whisper-large-v3-turbo', BUILDER_AI_TRANSCRIBE_BASE_URL: 'https://api.groq.com/openai/v1', BUILDER_AI_TRANSCRIBE_API_KEY: 'groq-key' }),
+      { apiKey: 'groq-key', model: 'whisper-large-v3-turbo', baseUrl: 'https://api.groq.com/openai/v1' });
+    assert.deepEqual(transcribeConfig({ ...base, BUILDER_AI_TRANSCRIBE_MODEL: 'm' }), { apiKey: 'gemini-key', model: 'm', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai' });
+  });
+});
