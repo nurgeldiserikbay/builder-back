@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.31.0
+  version: 1.32.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -3334,7 +3334,7 @@ paths:
         - $ref: '#/components/parameters/ProjectId'
         - $ref: '#/components/parameters/StageKey'
       responses:
-        '200': { description: 'data: version, composed, available, topics (key, label, required), mode, messages (role assistant|owner, text, at), extracted, filled, missingRequired, done, applied, turnsLeft' }
+        '200': { description: 'data: version, composed, available, topics (key, label, required), voice (available, consented, maxSeconds, service — the recognition host named in the consent; GET only), mode, messages (role assistant|owner, text, at), extracted, filled, missingRequired, done, applied, turnsLeft' }
         '404': { $ref: '#/components/responses/Problem' }
     post:
       tags: [Journey]
@@ -3364,6 +3364,36 @@ paths:
         '409': { $ref: '#/components/responses/Problem' }
         '429': { $ref: '#/components/responses/Problem' }
         '502': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/interview/voice:
+    post:
+      tags: [Journey]
+      operationId: transcribeInterviewVoice
+      summary: Turn a voice answer into text
+      description: |
+        multipart/form-data with file (audio/webm, ogg, mp4, m4a, aac, mpeg or wav; at most 2.5 MB, the client stops at 120 s) and,
+        the first time, consent=true. The recording is sent once to the speech recognition service (BUILDER_AI_TRANSCRIBE_MODEL on
+        the OpenAI-compatible provider) in the project language and is not stored; the text comes back for the owner to check and
+        send as an ordinary answer. Consent and the daily limit (30) are shared with voice messages in the Telegram bot; event
+        voice_transcribed. 400 VOICE_REQUIRED, VOICE_TOO_LONG, VOICE_FORMAT_NOT_SUPPORTED; 409 VOICE_CONSENT_REQUIRED and as for the
+        interview; 422 VOICE_NOT_RECOGNISED; 429 VOICE_DAILY_LIMIT_REACHED; 503 VOICE_NOT_CONFIGURED.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { type: object, required: [file], properties: { file: { type: string, format: binary }, consent: { type: string, enum: ['true'] } } }
+      responses:
+        '200': { description: 'data: text (at most 1000 characters)' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '422': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/stages/{stageKey}/interview/apply:
     post:

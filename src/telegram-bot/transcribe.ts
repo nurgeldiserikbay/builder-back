@@ -1,5 +1,5 @@
 /**
- * Speech recognition for voice messages in the bot, through the same OpenAI-compatible provider as stage AI.
+ * Speech recognition for voice messages in the bot and voice answers in «Разговор», through the same OpenAI-compatible provider as stage AI.
  * Off unless BUILDER_AI_TRANSCRIBE_MODEL is set. The audio is sent once and not stored; only the recognised text is kept
  * until the person confirms or cancels it.
  */
@@ -17,9 +17,9 @@ export function transcribeConfig(env: NodeJS.ProcessEnv = process.env): Transcri
 }
 
 /** Text of the recording, trimmed; null when the provider fails or hears nothing. */
-export async function transcribe(config: TranscribeConfig, audio: Buffer, language: 'ru' | 'en' | 'kk', fetchImpl: typeof fetch = fetch): Promise<string | null> {
+export async function transcribe(config: TranscribeConfig, audio: Buffer, language: 'ru' | 'en' | 'kk', fetchImpl: typeof fetch = fetch, format: { mime: string; name: string } = { mime: 'audio/ogg', name: 'voice.ogg' }): Promise<string | null> {
   const form = new FormData();
-  form.append('file', new Blob([new Uint8Array(audio)], { type: 'audio/ogg' }), 'voice.ogg');
+  form.append('file', new Blob([new Uint8Array(audio)], { type: format.mime }), format.name);
   form.append('model', config.model);
   form.append('language', language);
   form.append('response_format', 'json');

@@ -11,10 +11,18 @@ import { StageAiError } from './stage-ai.js';
 import { canEdit } from './stage-state.js';
 import { WorktimeService } from './worktime.service.js';
 import { StageAiService } from './stage-ai.service.js';
+import { transcribe, transcribeConfig, VOICE_LIMITS } from '../telegram-bot/transcribe.js';
 import {
   COMPOSED_STAGES, INTERVIEW_LIMITS, INTERVIEW_STAGES, conversationMaterial, interviewFields, INTERVIEW_VERSION, applyExtracted, buildInterviewPrompt, cleanExtracted, greeting, mergeExtracted, missingRequired, readAiTurn, templateTurn,
   type Extracted, type InterviewMessage,
 } from './interview.js';
+
+/** What browsers record: Chrome and Firefox webm/ogg with Opus, Safari mp4/AAC. The name tells the service the format. */
+const VOICE_FORMATS: Record<string, { mime: string; name: string }> = {
+  'audio/webm': { mime: 'audio/webm', name: 'voice.webm' }, 'audio/ogg': { mime: 'audio/ogg', name: 'voice.ogg' },
+  'audio/mp4': { mime: 'audio/mp4', name: 'voice.mp4' }, 'audio/x-m4a': { mime: 'audio/mp4', name: 'voice.m4a' }, 'audio/aac': { mime: 'audio/aac', name: 'voice.aac' },
+  'audio/mpeg': { mime: 'audio/mpeg', name: 'voice.mp3' }, 'audio/wav': { mime: 'audio/wav', name: 'voice.wav' },
+};
 
 type Row = { id: string; mode: string; messages: unknown; extracted: unknown; pendingField: string | null; asked: string[]; done: boolean; appliedVersionId: string | null; updatedAt: Date };
 
@@ -53,7 +61,41 @@ export class InterviewService {
     const ctx = await this.core.load(userId, projectId, 'read', key);
     const stage = this.core.stageOf(ctx, key);
     const row = await this.prisma.stageInterview.findUnique({ where: { stageId: stage.id } });
-    return this.view(row, interviewFields(stageDefinitions[stageKey]), Boolean(this.core.ai()), COMPOSED_STAGES.includes(stageKey));
+    const view = this.view(row, interviewFields(stageDefinitions[stageKey]), Boolean(this.core.ai()), COMPOSED_STAGES.includes(stageKey));
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { voiceConsentAt: true } });
+    const config = transcribeConfig();
+    // The consent names where the recording goes: the host of the connected recognition service.
+    return { data: { ...view.data, voice: { available: Boolean(config), consented: Boolean(user?.voiceConsentAt), maxSeconds: VOICE_LIMITS.seconds, service: config ? new URL(config.baseUrl).hostname : null } } };
+  }
+
+  /**
+   * A voice answer: the recording goes once to the speech recognition service and is not stored; the owner gets the text to
+   * check and send. The same consent and daily limit as voice messages in the Telegram bot.
+   */
+  async voice(userId: string, projectId: string, key: string, file: { buffer: Buffer; mimetype: string; size: number } | undefined, consent: boolean) {
+    const stageKey = this.stageKeyOf(key);
+    const ctx = await this.core.load(userId, projectId, 'write', key);
+    const stage = this.core.stageOf(ctx, key);
+    if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
+    const config = transcribeConfig();
+    if (!config) throw new ServiceUnavailableException('VOICE_NOT_CONFIGURED');
+    if (!file || !file.size) throw new BadRequestException('VOICE_REQUIRED');
+    if (file.size > VOICE_LIMITS.bytes) throw new BadRequestException('VOICE_TOO_LONG');
+    const format = VOICE_FORMATS[file.mimetype.split(';')[0]!.trim().toLowerCase()];
+    if (!format) throw new BadRequestException('VOICE_FORMAT_NOT_SUPPORTED');
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { voiceConsentAt: true, locale: true } });
+    if (!user.voiceConsentAt) {
+      if (!consent) throw new ConflictException('VOICE_CONSENT_REQUIRED');
+      await this.prisma.user.update({ where: { id: userId }, data: { voiceConsentAt: new Date() } });
+      await this.core.event(this.prisma, projectId, userId, 'voice_consent_given', stageKey, { source: 'app' });
+    }
+    const today = await this.prisma.projectEvent.count({ where: { actorUserId: userId, type: 'voice_transcribed', createdAt: { gte: new Date(Date.now() - 86_400_000) } } });
+    if (today >= VOICE_LIMITS.perDay) throw new HttpException('VOICE_DAILY_LIMIT_REACHED', HttpStatus.TOO_MANY_REQUESTS);
+    const language = ctx.project.locale === 'en' ? 'en' : ctx.project.locale === 'kk' ? 'kk' : 'ru';
+    const text = await transcribe(config, file.buffer, language, fetch, format);
+    if (!text) throw new HttpException('VOICE_NOT_RECOGNISED', HttpStatus.UNPROCESSABLE_ENTITY);
+    await this.core.event(this.prisma, projectId, userId, 'voice_transcribed', stageKey, { kind: 'interview', characters: text.length, source: 'app' });
+    return { data: { text: text.slice(0, INTERVIEW_LIMITS.message) } };
   }
 
   /**
