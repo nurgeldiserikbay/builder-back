@@ -4,6 +4,7 @@
 // project folder, outputs are cut, and nothing it says changes the limits.
 import type { AgentMessage, AgentModel, AgentTool } from './agent-model.js';
 import type { Workspace } from './workspace.js';
+import { parse as parseYaml } from 'yaml';
 
 export const AGENT_LOOP_VERSION = '1.1.0';
 const FILES_PER_CALL = 30;
@@ -225,18 +226,37 @@ export const START_CHECK = [
   'kill -- -$pid 2>/dev/null; kill $pid 2>/dev/null; tail -40 .buildpath-start.log; rm -f .buildpath-start.log; exit $ok',
 ].join('; ');
 
+const BLUEPRINT_SECRETS = ['DATABASE_URL', 'SESSION_SECRET', 'ADMIN_PASSWORD'];
+
+/**
+ * render.yaml read as YAML, the way Render reads it: services is a list, the web service has a name, a start command and
+ * healthCheckPath /api/health (quoted or not), DATABASE_URL and SESSION_SECRET are declared, and no secret has a value
+ * written in the file. A text search took a quoted path for missing and a map of services for a valid Blueprint.
+ */
+export function blueprintProblems(text: string): string[] {
+  let doc: unknown;
+  try { doc = parseYaml(text, { maxAliasCount: 50 }); } catch { return ['render.yaml: not valid YAML'] as string[]; }
+  const services = (doc as { services?: unknown } | null)?.services;
+  if (!Array.isArray(services)) return ['render.yaml: services must be a list (- type: web …)'];
+  const web = services.find((service): service is Record<string, unknown> => Boolean(service) && typeof service === 'object' && (service as { type?: unknown }).type === 'web');
+  if (!web) return ['render.yaml: type: web'];
+  const problems: string[] = [];
+  if (typeof web.name !== 'string' || !web.name.trim()) problems.push('render.yaml: name of the web service');
+  if (typeof web.startCommand !== 'string' || !web.startCommand.trim()) problems.push('render.yaml: startCommand');
+  if (web.healthCheckPath !== '/api/health') problems.push('render.yaml: healthCheckPath: /api/health');
+  const envVars = Array.isArray(web.envVars) ? web.envVars.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object') : [];
+  for (const key of ['DATABASE_URL', 'SESSION_SECRET']) if (!envVars.some((item) => item.key === key)) problems.push(`render.yaml: ${key}`);
+  // Secrets are entered by the owner in Render, never written into the repository.
+  if (envVars.some((item) => BLUEPRINT_SECRETS.includes(String(item.key)) && item.value !== undefined && String(item.value).trim() !== '')) problems.push('render.yaml: a secret value is written in the file');
+  return problems;
+}
+
 /** What a host needs, checked by reading the files: a Render Blueprint, a Docker image, a compose file with a database. */
 export async function deployFilesCheck(workspace: Workspace): Promise<AgentCheck> {
   const [blueprint, dockerfile, compose, envExample] = await Promise.all(['render.yaml', 'Dockerfile', 'docker-compose.yml', '.env.example'].map((path) => workspace.read(path)));
   const missing: string[] = [];
   if (!blueprint) missing.push('render.yaml');
-  else {
-    for (const [need, test] of [['type: web', /type:\s*web/], ['healthCheckPath: /api/health', /healthCheckPath:\s*\/api\/health/], ['startCommand', /startCommand:/], ['DATABASE_URL', /DATABASE_URL/], ['SESSION_SECRET', /SESSION_SECRET/]] as const) {
-      if (!test.test(blueprint)) missing.push(`render.yaml: ${need}`);
-    }
-    // Secrets are entered by the owner in Render, never written into the repository.
-    if (/(DATABASE_URL|SESSION_SECRET|ADMIN_PASSWORD)[\s\S]{0,40}value:\s*["']?[^\s"']{6,}/.test(blueprint)) missing.push('render.yaml: a secret value is written in the file');
-  }
+  else missing.push(...blueprintProblems(blueprint));
   if (!dockerfile || !/^FROM\s+node:/im.test(dockerfile)) missing.push('Dockerfile (FROM node:…)');
   if (!compose || !/postgres/i.test(compose)) missing.push('docker-compose.yml with PostgreSQL');
   if (!envExample || !/DATABASE_URL/.test(envExample)) missing.push('.env.example with DATABASE_URL');

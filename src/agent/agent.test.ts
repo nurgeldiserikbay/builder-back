@@ -10,7 +10,7 @@ import { BillingService } from '../billing/billing.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { AgentModelError, ChatCompletionsAgentModel, FallbackAgentModel, configuredAgentModel, type AgentMessage, type AgentModel, type AgentReply } from './agent-model.js';
-import { deployFilesCheck, pwaCheck, runAgent, safePath, type AgentStep } from './agent-loop.js';
+import { blueprintProblems, deployFilesCheck, pwaCheck, runAgent, safePath, type AgentStep } from './agent-loop.js';
 import { appOrigin, checkAppHealth } from './app-health.js';
 import { createServer } from 'node:http';
 import { AgentRunner, AgentTasksService, buildAgentPrompt, buildChangePrompt, filesDigestOf, keepAwake, keepAwakeUrl, pullRequestText, PREVIEW_CSP, promptDigestOf, withPreviewPolicy } from './agent-tasks.js';
@@ -64,7 +64,7 @@ const PWA_BUILD = [
 const goodApp = [
   [{ name: 'write_file', args: { path: 'package.json', content: JSON.stringify({ name: 'app', version: '1.0.0', type: 'module', scripts: { test: 'node --test', start: 'node server.js', build: 'node build.js', 'build:demo': "mkdir -p dist-demo && printf '<html><head><title>d</title></head><body>demo</body></html>' > dist-demo/index.html" } }) } },
     { name: 'write_file', args: { path: 'server.js', content: "import { createServer } from 'node:http';\ncreateServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(req.url === '/api/health' ? { status: 'ok', database: 'memory' } : {})); }).listen(Number(process.env.PORT));\n" } },
-    { name: 'write_file', args: { path: 'render.yaml', content: 'services:\n  - type: web\n    runtime: node\n    buildCommand: npm ci\n    startCommand: npm run migrate && npm start\n    healthCheckPath: /api/health\n    envVars:\n      - key: DATABASE_URL\n        sync: false\n      - key: SESSION_SECRET\n        generateValue: true\n' } },
+    { name: 'write_file', args: { path: 'render.yaml', content: 'services:\n  - type: web\n    name: app\n    runtime: node\n    buildCommand: npm ci\n    startCommand: npm run migrate && npm start\n    healthCheckPath: /api/health\n    envVars:\n      - key: DATABASE_URL\n        sync: false\n      - key: SESSION_SECRET\n        generateValue: true\n' } },
     { name: 'write_file', args: { path: 'Dockerfile', content: 'FROM node:20-alpine\nCMD ["npm","start"]\n' } },
     { name: 'write_file', args: { path: 'build.js', content: PWA_BUILD } },
     { name: 'write_file', args: { path: 'docker-compose.yml', content: 'services:\n  db:\n    image: postgres:16\n' } }],
@@ -165,6 +165,16 @@ describe('AI agent: the loop', () => {
       assert.match(check.output, /secret value/);
       assert.match(check.output, /docker-compose/);
     } finally { await workspace.close(); }
+  });
+
+  it('reads render.yaml as YAML: a quoted path passes, a map of services does not', () => {
+    const good = 'services:\n  - type: web\n    name: master-doma\n    runtime: node\n    startCommand: "npm run migrate && npm start"\n    healthCheckPath: "/api/health"\n    envVars:\n      - key: DATABASE_URL\n        sync: false\n      - key: SESSION_SECRET\n        generateValue: true\n';
+    assert.deepEqual(blueprintProblems(good), []);
+    // What the agent wrote on prod: services as a map, which Render does not accept.
+    assert.deepEqual(blueprintProblems('services:\n  web:\n    type: web\n    healthCheckPath: "/api/health"\n'), ['render.yaml: services must be a list (- type: web …)']);
+    assert.deepEqual(blueprintProblems(good.replace('    name: master-doma\n', '')), ['render.yaml: name of the web service']);
+    assert.deepEqual(blueprintProblems('services: [oops'), ['render.yaml: not valid YAML']);
+    assert.deepEqual(blueprintProblems(good.replace('generateValue: true', 'value: "a-long-secret-123"')), ['render.yaml: a secret value is written in the file']);
   });
 
   it('an application without a manifest link, a 512 px icon or a service worker does not pass the phone check', async () => {

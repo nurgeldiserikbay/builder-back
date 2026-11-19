@@ -46,7 +46,8 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "sharp": "^0.35.5",
-    "unpdf": "^2.1.0"
+    "unpdf": "^2.1.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
