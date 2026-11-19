@@ -132,8 +132,11 @@ export function configuredAgentModel(env: NodeJS.ProcessEnv = process.env): Agen
   const baseUrl = (env.BUILDER_AGENT_BASE_URL || env.BUILDER_AI_OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '');
   if (!/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(`${baseUrl}/`)) return null;
   const effort = env.BUILDER_AGENT_REASONING_EFFORT;
-  const main = new ChatCompletionsAgentModel(apiKey, model, baseUrl, fetch, effort && ['none', 'minimal', 'low', 'medium', 'high'].includes(effort) ? { reasoningEffort: effort } : {});
   const reserveModel = env.BUILDER_AGENT_FALLBACK_MODEL;
+  // With a reserve the main model gets two tries, not five: a free model that did not answer in 4 minutes rarely answers on
+  // the fifth try, and the task would wait about 20 minutes before moving on.
+  const mainEffort = effort && ['none', 'minimal', 'low', 'medium', 'high'].includes(effort) ? { reasoningEffort: effort } : {};
+  const main = new ChatCompletionsAgentModel(apiKey, model, baseUrl, fetch, reserveModel ? { ...mainEffort, retryDelaysMs: [15_000] } : mainEffort);
   const reserveKey = env.BUILDER_AGENT_FALLBACK_API_KEY || apiKey;
   const reserveUrl = (env.BUILDER_AGENT_FALLBACK_BASE_URL || baseUrl).replace(/\/$/, '');
   if (!reserveModel || !/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(`${reserveUrl}/`)) return main;
