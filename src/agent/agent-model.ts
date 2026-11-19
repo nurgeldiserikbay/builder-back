@@ -86,34 +86,38 @@ export class ChatCompletionsAgentModel implements AgentModel {
 }
 
 /**
- * The main model with a reserve at another provider (BUILDER_AGENT_FALLBACK_*). When the main model stays unavailable after its
- * retries, the task moves to the reserve and stays there: Gemini 3 needs its own thought signatures on every earlier turn, and
- * turns made by another model have none. Provider-only fields (extra_content) are removed before the reserve sees the history.
+ * The main model with a reserve (BUILDER_AGENT_FALLBACK_*). When the main model stays unavailable after its retries, the task
+ * moves to the reserve and stays there. The reserve can be another provider or another Gemini model on the same key: free
+ * Gemini quotas are counted per model. Turns the main model made carry its provider fields (Gemini 3 thought signatures),
+ * which another model cannot verify: they are removed for another provider, and for a Gemini reserve replaced with Google's
+ * documented «skip_thought_signature_validator», since Gemini 3 refuses tool calls of the current turn without a signature.
+ * The reserve's own turns keep their fields.
  */
 export class FallbackAgentModel implements AgentModel {
-  private switched = false;
-  constructor(private readonly main: AgentModel, private readonly reserve: AgentModel) {}
-  get name(): string { return this.switched ? this.reserve.name : this.main.name; }
-  get model(): string { return this.switched ? this.reserve.model : this.main.model; }
-  forTask(): AgentModel { return new FallbackAgentModel(this.main, this.reserve); }
+  private handedOver: number | null = null;
+  constructor(private readonly main: AgentModel, private readonly reserve: AgentModel, private readonly reserveIsGemini = false) {}
+  get name(): string { return this.handedOver !== null ? this.reserve.name : this.main.name; }
+  get model(): string { return this.handedOver !== null ? this.reserve.model : this.main.model; }
+  forTask(): AgentModel { return new FallbackAgentModel(this.main, this.reserve, this.reserveIsGemini); }
 
   async next(messages: AgentMessage[], tools: AgentTool[]): Promise<AgentReply> {
-    if (!this.switched) {
+    if (this.handedOver === null) {
       try {
         return await this.main.next(messages, tools);
       } catch (error) {
         if (!(error instanceof AgentModelError) || error.code !== 'AGENT_MODEL_UNAVAILABLE') throw error;
-        this.switched = true;
+        this.handedOver = messages.length;
         console.warn(`Agent model ${this.main.model} unavailable; the task continues on ${this.reserve.model}`);
       }
     }
-    return this.reserve.next(messages.map(withoutProviderFields), tools);
+    const before = this.handedOver;
+    return this.reserve.next(messages.map((message, index) => (index < before ? this.handOver(message) : message)), tools);
   }
-}
 
-function withoutProviderFields(message: AgentMessage): AgentMessage {
-  if (message.role !== 'assistant' || !message.tool_calls) return message;
-  return { ...message, tool_calls: message.tool_calls.map(({ extra_content: _extra, ...call }) => call) };
+  private handOver(message: AgentMessage): AgentMessage {
+    if (message.role !== 'assistant' || !message.tool_calls) return message;
+    return { ...message, tool_calls: message.tool_calls.map(({ extra_content: _extra, ...call }) => (this.reserveIsGemini ? { ...call, extra_content: { google: { thought_signature: 'skip_thought_signature_validator' } } } : call)) };
+  }
 }
 
 /**
@@ -135,5 +139,5 @@ export function configuredAgentModel(env: NodeJS.ProcessEnv = process.env): Agen
   if (!reserveModel || !/^https:\/\/|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(`${reserveUrl}/`)) return main;
   // The reserve gets the same thinking level only when it is a level every provider knows.
   const reserveEffort = env.BUILDER_AGENT_FALLBACK_REASONING_EFFORT;
-  return new FallbackAgentModel(main, new ChatCompletionsAgentModel(reserveKey, reserveModel, reserveUrl, fetch, reserveEffort && ['low', 'medium', 'high'].includes(reserveEffort) ? { reasoningEffort: reserveEffort } : {}));
+  return new FallbackAgentModel(main, new ChatCompletionsAgentModel(reserveKey, reserveModel, reserveUrl, fetch, reserveEffort && ['low', 'medium', 'high'].includes(reserveEffort) ? { reasoningEffort: reserveEffort } : {}), /^https:\/\/generativelanguage\.googleapis\.com\//.test(`${reserveUrl}/`));
 }
