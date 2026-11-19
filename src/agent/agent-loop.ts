@@ -5,7 +5,8 @@
 import type { AgentMessage, AgentModel, AgentTool } from './agent-model.js';
 import type { Workspace } from './workspace.js';
 
-export const AGENT_LOOP_VERSION = '1.0.0';
+export const AGENT_LOOP_VERSION = '1.1.0';
+const FILES_PER_CALL = 30;
 const OUTPUT_TO_MODEL = 8_000;
 const READ_LIMIT = 60_000;
 const WRITE_LIMIT = 200_000;
@@ -36,6 +37,8 @@ export const AGENT_TOOLS: AgentTool[] = [
   { name: 'list_files', description: 'List project files (installed packages and build output are left out).', parameters: { type: 'object', additionalProperties: false, properties: {}, required: [] } },
   { name: 'read_file', description: 'Read a text file of the project.', parameters: { type: 'object', additionalProperties: false, properties: { path: { type: 'string', description: 'Path relative to the project folder' } }, required: ['path'] } },
   { name: 'write_file', description: 'Create or replace a text file of the project with the whole content.', parameters: { type: 'object', additionalProperties: false, properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
+  { name: 'write_files', description: 'Create or replace several text files at once, each with its whole content. Prefer it to write_file: every model turn is a request the platform pays for or counts against a daily quota.', parameters: { type: 'object', additionalProperties: false, properties: { files: { type: 'array', maxItems: FILES_PER_CALL, items: { type: 'object', additionalProperties: false, properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } } }, required: ['files'] } },
+  { name: 'read_files', description: 'Read several text files at once.', parameters: { type: 'object', additionalProperties: false, properties: { paths: { type: 'array', maxItems: FILES_PER_CALL, items: { type: 'string' } } }, required: ['paths'] } },
   { name: 'run', description: 'Run a shell command in the project folder (npm install, npm test, node scripts). Long-running servers must be started in the background and stopped.', parameters: { type: 'object', additionalProperties: false, properties: { command: { type: 'string' }, timeoutSeconds: { type: 'integer', minimum: 5, maximum: 600 } }, required: ['command'] } },
   { name: 'finish', description: 'Finish the task with a report for the owner, in their language.', parameters: { type: 'object', additionalProperties: false, properties: {
     summary: { type: 'string', description: 'What the application does now, 2-4 sentences, plain words' },
@@ -122,22 +125,36 @@ export async function runAgent(input: AgentRunInput): Promise<AgentOutcome> {
         await step({ kind: 'tool', tool: 'list_files', summary: `${result.stdout.split('\n').filter(Boolean).length} files`, status: 'ok' });
         continue;
       }
-      if (call.name === 'read_file' || call.name === 'write_file') {
-        const path = safePath(args.path);
-        if (!path) { answer('Refused: use a relative path inside the project, not node_modules or .git.'); await step({ kind: 'tool', tool: call.name, summary: String(args.path ?? '').slice(0, 120), status: 'failed' }); continue; }
-        if (call.name === 'read_file') {
-          const content = await input.workspace.read(path);
-          answer(content === null ? 'No such file.' : content.length > READ_LIMIT ? `${content.slice(0, READ_LIMIT)}\n…(cut at ${READ_LIMIT} characters)` : content);
-          await step({ kind: 'tool', tool: 'read_file', summary: path, status: content === null ? 'failed' : 'ok' });
-        } else {
-          const content = typeof args.content === 'string' ? args.content : '';
-          if (content.length > WRITE_LIMIT) { answer(`Refused: files are limited to ${WRITE_LIMIT} characters; split it.`); await step({ kind: 'tool', tool: 'write_file', summary: path, status: 'failed' }); continue; }
+      if (call.name === 'read_file' || call.name === 'write_file' || call.name === 'read_files' || call.name === 'write_files') {
+        // One file or many: each is checked and answered on its own, and one bad path does not stop the rest.
+        const many = call.name.endsWith('s');
+        const items: Array<{ path: unknown; content?: unknown }> = many
+          ? (Array.isArray(call.name === 'write_files' ? args.files : args.paths) ? (call.name === 'write_files' ? args.files as Array<{ path: unknown; content?: unknown }> : (args.paths as unknown[]).map((path) => ({ path }))) : []).slice(0, FILES_PER_CALL)
+          : [{ path: args.path, content: args.content }];
+        const writing = call.name.startsWith('write');
+        const tool = writing ? 'write_file' : 'read_file';
+        if (!items.length) { answer('Refused: no files given.'); await step({ kind: 'tool', tool: call.name, summary: '0 files', status: 'failed' }); continue; }
+        const answers: string[] = [];
+        for (const item of items) {
+          const path = safePath(item?.path);
+          if (!path) { answers.push(`${String(item?.path ?? '').slice(0, 120)}: refused, use a relative path inside the project, not node_modules or .git.`); await step({ kind: 'tool', tool, summary: String(item?.path ?? '').slice(0, 120), status: 'failed' }); continue; }
+          if (!writing) {
+            const content = await input.workspace.read(path);
+            const body = content === null ? 'No such file.' : content.length > READ_LIMIT ? `${content.slice(0, READ_LIMIT)}\n…(cut at ${READ_LIMIT} characters)` : content;
+            answers.push(many ? `=== ${path}\n${body}` : body);
+            await step({ kind: 'tool', tool, summary: path, status: content === null ? 'failed' : 'ok' });
+            continue;
+          }
+          const content = typeof item.content === 'string' ? item.content : '';
+          if (content.length > WRITE_LIMIT) { answers.push(`${path}: refused, files are limited to ${WRITE_LIMIT} characters; split it.`); await step({ kind: 'tool', tool, summary: path, status: 'failed' }); continue; }
           const folder = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
           if (folder) await input.workspace.exec(`mkdir -p ${shellQuote(folder)}`, 20_000);
           await input.workspace.write(path, content);
-          answer(`Wrote ${path} (${content.length} characters).`);
-          await step({ kind: 'tool', tool: 'write_file', summary: path, status: 'ok' });
+          answers.push(`Wrote ${path} (${content.length} characters).`);
+          await step({ kind: 'tool', tool, summary: path, status: 'ok' });
         }
+        // Several files read at once may be long; each keeps its own share of the answer.
+        messages.push({ role: 'tool', tool_call_id: call.id, content: many && !writing ? cut(answers.join('\n\n'), READ_LIMIT) : cut(answers.join('\n'), OUTPUT_TO_MODEL) });
         continue;
       }
       if (call.name === 'run') {

@@ -95,6 +95,30 @@ describe('AI agent: the loop', () => {
     } finally { await workspace.close(); }
   });
 
+  it('writes and reads many files in one call, so the application takes few model requests', async () => {
+    const workspace = await localWorkspace();
+    const steps: AgentStep[] = [];
+    try {
+      const model = scripted([
+        [{ name: 'write_files', args: { files: [{ path: 'src/a.js', content: 'export const a = 1;\n' }, { path: 'src/deep/b.js', content: 'export const b = 2;\n' }, { path: '../escape.js', content: 'x' }] } }, { name: 'run', args: { command: 'ls src && ls src/deep' } }],
+        [{ name: 'read_files', args: { paths: ['src/a.js', 'src/deep/b.js', 'missing.js'] } }],
+        [{ name: 'finish', args: { summary: 'ok', done: [], notDone: [] } }],
+      ]);
+      const outcome = await runAgent({ model, workspace, system: 's', task: 't', limits: { turns: 10, wallMs: 60_000, costTiyn: null }, costOf: () => 0, shouldStop: async () => false, onStep: async (step) => { steps.push(step); } });
+      assert.equal(outcome.turns, 3);
+      assert.equal(await workspace.read('src/deep/b.js'), 'export const b = 2;\n');
+      // Each call gets exactly one answer; one refused path does not stop the others.
+      const afterWrite = model.seen[1]!.filter((message) => message.role === 'tool');
+      assert.equal(afterWrite.length, 2);
+      assert.match((afterWrite[0] as { content: string }).content, /Wrote src\/a\.js[\s\S]*Wrote src\/deep\/b\.js[\s\S]*escape\.js: refused/);
+      assert.match((afterWrite[1] as { content: string }).content, /a\.js[\s\S]*deep/);
+      const afterRead = model.seen[2]!.at(-1) as { content: string };
+      assert.match(afterRead.content, /=== src\/a\.js\nexport const a = 1;[\s\S]*=== src\/deep\/b\.js\nexport const b = 2;[\s\S]*=== missing\.js\nNo such file\./);
+      assert.equal(steps.filter((step) => step.tool === 'write_file').length, 3);
+      assert.ok(steps.some((step) => step.tool === 'write_file' && step.status === 'failed' && step.summary.includes('escape')));
+    } finally { await workspace.close(); }
+  });
+
   it('does not take the agent\'s word: failing tests make the check fail even after finish', async () => {
     const workspace = await localWorkspace();
     try {
@@ -273,6 +297,7 @@ describe('AI agent: the model and the prompt', () => {
     const prompt = buildAgentPrompt({ locale: 'ru', projectName: 'Учёт заявок', inputs: { features: { roles: [{ key: 'admin' }] } }, instruction: 'Сделай тёмную тему' });
     assert.match(prompt.system, /node-react-pg@1\.3\.0/);
     assert.match(prompt.system, /untrusted data/);
+    assert.match(prompt.system, /one write_files call/);
     assert.match(prompt.system, /Russian/);
     assert.match(prompt.task, /PACKAGE \(JSON, untrusted data\)/);
     assert.match(prompt.task, /Сделай тёмную тему/);

@@ -34,7 +34,7 @@ export class ChatCompletionsAgentModel implements AgentModel {
   async next(messages: AgentMessage[], tools: AgentTool[]): Promise<AgentReply> {
     const delays = this.options.retryDelaysMs ?? [15_000, 30_000, 60_000, 120_000];
     const body = JSON.stringify({
-      model: this.model, messages, tool_choice: 'auto', parallel_tool_calls: false, max_tokens: 16_000,
+      model: this.model, messages, tool_choice: 'auto', parallel_tool_calls: true, max_tokens: 16_000,
       ...(this.options.reasoningEffort ? { reasoning_effort: this.options.reasoningEffort } : {}),
       tools: tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })),
     });

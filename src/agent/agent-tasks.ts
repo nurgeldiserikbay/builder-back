@@ -17,7 +17,7 @@ import { appOrigin, checkAppHealth } from './app-health.js';
 
 /** The capability profile the agent builds within: one stack, so the result can be checked and run the same way every time. */
 export const APP_PROFILE = { key: 'node-react-pg', version: '1.3.0', node: 20 } as const;
-export const AGENT_TASK_VERSION = '1.0.0';
+export const AGENT_TASK_VERSION = '1.1.0';
 const KIND = 'build_app';
 const CHANGE_KIND = 'change_app';
 export const filesDigestOf = (files: AgentFile[]) => createHash('sha256').update(JSON.stringify(files)).digest('hex');
@@ -52,7 +52,8 @@ export function buildAgentPrompt(input: { locale: string; projectName: string; i
   const language = contentLocale(input.locale) === 'en' ? 'English' : input.locale === 'kk' ? 'Kazakh' : 'Russian';
   const system = [
     'You are the BuildPath agent: a senior full-stack developer working alone in a throwaway Linux machine with Node.js 20, npm and internet access to package registries. You build the application from the accepted project package and leave it working, tested and ready to deploy.',
-    'Work in small steps with the tools: write files, run commands, read the errors, fix them. Use list_files and read_file before changing existing code. Keep going until the checks pass, then call finish.',
+    'Work with the tools: write files, run commands, read the errors, fix them. Use list_files and read_files before changing existing code. Keep going until the checks pass, then call finish.',
+    'Every model turn is one request against a small daily quota, so do as much as possible in each turn: write all the files of a step in one write_files call (for example the whole server, or the whole client), read several files with one read_files call, join shell commands with && in one run call, and make several tool calls in the same turn when they do not depend on each other. Plan the application first, then write it in a few large steps rather than file by file.',
     `Stack (capability profile ${APP_PROFILE.key}@${APP_PROFILE.version}), not negotiable:`,
     '- One npm package at the project root with "type": "module". Server: Node.js 20 with Express. Client: React with Vite, built into dist/ and served by the same server. JavaScript or TypeScript.',
     '- Data: PostgreSQL through the pg package, connection from DATABASE_URL, schema created by a migration script (npm run migrate) that can run again safely. Tests must not need a database server: put data access behind a module with an in-memory implementation that the tests use (or use pg-mem). Without DATABASE_URL the server still starts on the in-memory store and logs a warning (npm run migrate then does nothing).',
