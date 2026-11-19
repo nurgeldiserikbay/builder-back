@@ -210,6 +210,15 @@ export async function platformChecks(workspace: Workspace): Promise<AgentCheck[]
     if (item.id === 'start') results.push(await deployFilesCheck(workspace));
   }
   if (!results.some((check) => check.id === 'deploy_files')) results.splice(results.length - 1, 0, await deployFilesCheck(workspace));
+  // A client that builds but ships its styles unprocessed (Tailwind directives with no Tailwind in the build) looks like bare
+  // HTML: the build and the preview do not pass then. Seen on prod: the classes were there, the CSS was not.
+  for (const [id, folder] of [['build', 'dist'], ['demo', 'dist-demo']] as const) {
+    const check = results.find((item) => item.id === id);
+    if (check?.status !== 'passed') continue;
+    const raw = await workspace.exec(`grep -rlE '@tailwind[[:space:]]+(base|components|utilities)|@apply[[:space:]]' ${folder} --include='*.css' --include='*.html' 2>/dev/null | head -5`, 30_000);
+    const files = raw.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+    if (files.length) { check.status = 'failed'; check.output = cut(`${check.output}\nStyles are not processed (raw @tailwind or @apply in ${files.join(', ')}): install and configure Tailwind (tailwindcss, postcss config) or write plain CSS.`, 3000); }
+  }
   // Installable on a phone: read from the built client, so it is checked only when the build passed.
   const built = results.find((check) => check.id === 'build')?.status === 'passed';
   results.splice(results.findIndex((check) => check.id === 'deploy_files') + 1, 0, built ? await pwaCheck(workspace) : { id: 'pwa', command: PWA_COMMAND, status: 'skipped', exitCode: null, output: '', durationMs: 0 });

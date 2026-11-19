@@ -167,6 +167,19 @@ describe('AI agent: the loop', () => {
     } finally { await workspace.close(); }
   });
 
+  it('a client that ships raw Tailwind directives fails the build and the preview', async () => {
+    const workspace = await localWorkspace();
+    try {
+      const steps = [[{ name: 'write_file', args: { path: 'package.json', content: JSON.stringify({ name: 'app', version: '1.0.0', scripts: { build: "mkdir -p dist && printf '<style>@tailwind base;</style>' > dist/index.html", 'build:demo': "mkdir -p dist-demo && printf '<html><head><title>d</title><style>body{margin:0}</style></head><body>demo</body></html>' > dist-demo/index.html" } }) } }]];
+      const outcome = await runAgent({ model: scripted(steps), workspace, system: 's', task: 't', limits: { turns: 5, wallMs: 60_000, costTiyn: null }, costOf: () => 0, shouldStop: async () => false, onStep: async () => undefined });
+      const build = outcome.checks.find((check) => check.id === 'build')!;
+      assert.equal(build.status, 'failed');
+      assert.match(build.output, /Styles are not processed[\s\S]*dist\/index\.html/);
+      const demo = outcome.checks.find((check) => check.id === 'demo')!;
+      assert.equal(demo.status, 'passed', demo.output);
+    } finally { await workspace.close(); }
+  });
+
   it('reads render.yaml as YAML: a quoted path passes, a map of services does not', () => {
     const good = 'services:\n  - type: web\n    name: master-doma\n    runtime: node\n    startCommand: "npm run migrate && npm start"\n    healthCheckPath: "/api/health"\n    envVars:\n      - key: DATABASE_URL\n        sync: false\n      - key: SESSION_SECRET\n        generateValue: true\n';
     assert.deepEqual(blueprintProblems(good), []);
