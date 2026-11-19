@@ -13,7 +13,7 @@ import { AgentModelError, ChatCompletionsAgentModel, FallbackAgentModel, configu
 import { deployFilesCheck, pwaCheck, runAgent, safePath, type AgentStep } from './agent-loop.js';
 import { appOrigin, checkAppHealth } from './app-health.js';
 import { createServer } from 'node:http';
-import { AgentRunner, AgentTasksService, buildAgentPrompt, buildChangePrompt, filesDigestOf, pullRequestText, PREVIEW_CSP, promptDigestOf, withPreviewPolicy } from './agent-tasks.js';
+import { AgentRunner, AgentTasksService, buildAgentPrompt, buildChangePrompt, filesDigestOf, keepAwake, keepAwakeUrl, pullRequestText, PREVIEW_CSP, promptDigestOf, withPreviewPolicy } from './agent-tasks.js';
 import { JourneyCore } from '../journey/journey-core.js';
 import type { ExecResult, Workspace, WorkspaceProvider } from './workspace.js';
 
@@ -297,6 +297,7 @@ describe('AI agent: the model and the prompt', () => {
     // own later turns keep theirs.
     const sameKey = configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_OPENAI_BASE_URL: 'https://generativelanguage.googleapis.com/v1beta/openai', BUILDER_AGENT_MODEL: 'gemini-3.6-flash', BUILDER_AGENT_FALLBACK_MODEL: 'gemini-3.5-flash-lite' });
     assert.equal((sameKey as unknown as { reserveIsGemini: boolean }).reserveIsGemini, true);
+    assert.deepEqual((sameKey as unknown as { main: { options: { retryDelaysMs?: number[] } } }).main.options.retryDelaysMs, [15_000]);
     seen.length = 0;
     const gemini = new FallbackAgentModel(scripted('gemini', ['down']), scripted('lite', [ok, ok]), true);
     await gemini.next(history, []);
@@ -305,6 +306,20 @@ describe('AI agent: the model and the prompt', () => {
     const sent = seen.at(-1)!.filter((message) => message.role === 'assistant') as Array<{ tool_calls: Array<{ extra_content?: { google: { thought_signature: string } } }> }>;
     assert.equal(sent[0]!.tool_calls[0]!.extra_content!.google.thought_signature, 'skip_thought_signature_validator');
     assert.equal(sent[1]!.tool_calls[0]!.extra_content!.google.thought_signature, 'own');
+  });
+  it('keeps a free host awake while tasks run, through its own public address', async () => {
+    assert.equal(keepAwakeUrl({ RENDER_EXTERNAL_URL: 'https://api.example.com/' }), 'https://api.example.com/api/v1/health');
+    assert.equal(keepAwakeUrl({ BUILDER_KEEP_AWAKE_URL: 'https://own.example.com', RENDER_EXTERNAL_URL: 'https://api.example.com' }), 'https://own.example.com/api/v1/health');
+    assert.equal(keepAwakeUrl({ BUILDER_KEEP_AWAKE_URL: 'off', RENDER_EXTERNAL_URL: 'https://api.example.com' }), null);
+    assert.equal(keepAwakeUrl({}), null);
+    const asked: string[] = [];
+    const stop = keepAwake('https://api.example.com/api/v1/health', (async (url: string) => { asked.push(url); return new Response('{}'); }) as unknown as typeof fetch, 5);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    stop();
+    const count = asked.length;
+    assert.ok(count >= 2);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(asked.length, count, 'stops when the queue is empty');
   });
   it('fixes the stack and marks the package as untrusted data', () => {
     const prompt = buildAgentPrompt({ locale: 'ru', projectName: 'Учёт заявок', inputs: { features: { roles: [{ key: 'admin' }] } }, instruction: 'Сделай тёмную тему' });

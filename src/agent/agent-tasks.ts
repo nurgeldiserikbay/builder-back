@@ -15,6 +15,24 @@ import { configuredWorkspace, WorkspaceError, type WorkspaceProvider } from './w
 import { ChoicesService } from '../choices/choices.service.js';
 import { appOrigin, checkAppHealth } from './app-health.js';
 
+/**
+ * A free Render instance is stopped after about 15 minutes without incoming requests, and work in the background does not
+ * count: the agent was stopped halfway through a task. While tasks run in this process it asks its own public address for
+ * /api/v1/health every few minutes. BUILDER_KEEP_AWAKE_URL, or Render's RENDER_EXTERNAL_URL; nothing when neither is set.
+ */
+export function keepAwakeUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  const raw = (env.BUILDER_KEEP_AWAKE_URL || env.RENDER_EXTERNAL_URL || '').trim().replace(/\/$/, '');
+  if (!raw || env.BUILDER_KEEP_AWAKE_URL === 'off' || !/^https:\/\//.test(raw)) return null;
+  return `${raw}/api/v1/health`;
+}
+
+export function keepAwake(url: string | null, fetchImpl: typeof fetch = fetch, everyMs = 4 * 60_000): () => void {
+  if (!url) return () => undefined;
+  const timer = setInterval(() => { void fetchImpl(url, { signal: AbortSignal.timeout(30_000) }).then((response) => response.body?.cancel()).catch(() => undefined); }, everyMs);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 /** The capability profile the agent builds within: one stack, so the result can be checked and run the same way every time. */
 export const APP_PROFILE = { key: 'node-react-pg', version: '1.3.0', node: 20 } as const;
 export const AGENT_TASK_VERSION = '1.1.0';
@@ -180,7 +198,8 @@ export class AgentRunner {
     if (this.busy) return;
     this.busy = true;
     void (async () => {
-      try { while (await this.processNext()); } catch { this.logger.error('Agent queue failed'); } finally { this.busy = false; }
+      const awake = keepAwake(keepAwakeUrl());
+      try { while (await this.processNext()); } catch { this.logger.error('Agent queue failed'); } finally { awake(); this.busy = false; }
     })();
   }
 
