@@ -292,6 +292,19 @@ describe('AI agent: the model and the prompt', () => {
     const both = configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AGENT_MODEL: 'm', BUILDER_AGENT_FALLBACK_MODEL: 'openai/gpt-oss-120b', BUILDER_AGENT_FALLBACK_BASE_URL: 'https://api.groq.com/openai/v1', BUILDER_AGENT_FALLBACK_API_KEY: 'g' });
     assert.ok(both instanceof FallbackAgentModel);
     assert.equal(both.model, 'm');
+    assert.equal((both as unknown as { reserveIsGemini: boolean }).reserveIsGemini, false);
+    // Another Gemini model on the same key (its own free quota): earlier turns get Google's skip signature, and the reserve's
+    // own later turns keep theirs.
+    const sameKey = configuredAgentModel({ BUILDER_AI_OPENAI_API_KEY: 'k', BUILDER_AI_OPENAI_BASE_URL: 'https://generativelanguage.googleapis.com/v1beta/openai', BUILDER_AGENT_MODEL: 'gemini-3.6-flash', BUILDER_AGENT_FALLBACK_MODEL: 'gemini-3.5-flash-lite' });
+    assert.equal((sameKey as unknown as { reserveIsGemini: boolean }).reserveIsGemini, true);
+    seen.length = 0;
+    const gemini = new FallbackAgentModel(scripted('gemini', ['down']), scripted('lite', [ok, ok]), true);
+    await gemini.next(history, []);
+    const longer: AgentMessage[] = [...history, { role: 'assistant', content: null, tool_calls: [{ id: 'b', type: 'function', function: { name: 'run', arguments: '{}' }, extra_content: { google: { thought_signature: 'own' } } }] }, { role: 'tool', tool_call_id: 'b', content: 'done' }];
+    await gemini.next(longer, []);
+    const sent = seen.at(-1)!.filter((message) => message.role === 'assistant') as Array<{ tool_calls: Array<{ extra_content?: { google: { thought_signature: string } } }> }>;
+    assert.equal(sent[0]!.tool_calls[0]!.extra_content!.google.thought_signature, 'skip_thought_signature_validator');
+    assert.equal(sent[1]!.tool_calls[0]!.extra_content!.google.thought_signature, 'own');
   });
   it('fixes the stack and marks the package as untrusted data', () => {
     const prompt = buildAgentPrompt({ locale: 'ru', projectName: 'Учёт заявок', inputs: { features: { roles: [{ key: 'admin' }] } }, instruction: 'Сделай тёмную тему' });
