@@ -5,7 +5,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { costOf } from '../budget/budget.js';
 import { tr } from '../i18n/i18n.js';
 import { emptyBrief, mergeProposal, normalizeArtifact } from './artifacts.js';
-import { stageDefinitions, type StageKey } from './catalog.js';
+import { stageFor, type StageKey } from './catalog.js';
 import { JourneyCore, inProject, notEditableCode } from './journey-core.js';
 import { StageAiError } from './stage-ai.js';
 import { canEdit } from './stage-state.js';
@@ -61,7 +61,7 @@ export class InterviewService {
     const ctx = await this.core.load(userId, projectId, 'read', key);
     const stage = this.core.stageOf(ctx, key);
     const row = await this.prisma.stageInterview.findUnique({ where: { stageId: stage.id } });
-    const view = this.view(row, interviewFields(stageDefinitions[stageKey]), Boolean(this.core.ai()), COMPOSED_STAGES.includes(stageKey));
+    const view = this.view(row, interviewFields(stageFor(stageKey, ctx.type.key)), Boolean(this.core.ai()), COMPOSED_STAGES.includes(stageKey));
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { voiceConsentAt: true } });
     const config = transcribeConfig();
     // The consent names where the recording goes: the host of the connected recognition service.
@@ -117,7 +117,7 @@ export class InterviewService {
     const ctx = await this.core.load(userId, projectId, 'write', key);
     const stage = this.core.stageOf(ctx, key);
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
-    const definition = stageDefinitions[stageKey as StageKey];
+    const definition = stageFor(stageKey as StageKey, ctx.type.key);
     const fields = interviewFields(definition);
     const provider = this.core.ai();
     const composed = COMPOSED_STAGES.includes(stageKey);
@@ -207,7 +207,7 @@ export class InterviewService {
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     const row = await this.prisma.stageInterview.findUnique({ where: { stageId: stage.id } });
     if (!row) throw new NotFoundException('INTERVIEW_NOT_STARTED');
-    const definition = stageDefinitions[stageKey as StageKey];
+    const definition = stageFor(stageKey as StageKey, ctx.type.key);
     const extracted = cleanExtracted(interviewFields(definition), row.extracted);
     if (!Object.keys(extracted).length) throw new BadRequestException('INTERVIEW_NOTHING_TO_APPLY');
     if (COMPOSED_STAGES.includes(stageKey)) {
