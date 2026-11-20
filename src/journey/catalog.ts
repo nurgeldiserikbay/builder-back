@@ -459,13 +459,60 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
   web_app: {
     key: 'web_app',
     title: 'Веб-приложение',
-    description: 'Приложение со входом, ролями и своей логикой: кабинет клиента, учёт заявок, внутренняя система. BuildPath доведёт его до полного пакета для разработчика — функции, экраны с прототипом, архитектуру и контракт API.',
-    goodFor: 'Тем, кому нужен личный кабинет, учёт или внутренний сервис, и кто будет заказывать разработку.',
+    description: 'Приложение со входом, ролями и своей логикой: кабинет клиента, учёт заявок, внутренняя система. BuildPath доведёт его до полного пакета — функции, экраны с прототипом, архитектуру и контракт API, — а ИИ-агент напишет по нему код приложения.',
+    goodFor: 'Тем, кому нужен личный кабинет, учёт или внутренний сервис.',
     examples: ['Кабинет клиента сервиса', 'Учёт заявок и выездов', 'Запись на курсы с кабинетом ученика', 'Внутренняя система для сотрудников'],
     stages: ['goal', 'process', 'features', 'screens', 'techplan', 'handoff'],
-    resultExplanation: 'Пакет для разработки: техническое задание, права по ролям, схема данных, контракт API и кликабельный прототип. Код приложения пишет разработчик — BuildPath его не создаёт и не публикует.',
+    resultExplanation: 'Пакет для разработки — техническое задание, права по ролям, схема данных, контракт API и кликабельный прототип — и код всего приложения, который пишет ИИ-агент и проверяет платформа. Запускаете вы: на своём Render или сервере.',
   },
 };
+
+/**
+ * A stage as one project type sees it. The goal form speaks of a site («посетитель», «главная кнопка сайта»); for an
+ * application that wording led the AI to pick a messenger button for a repair service whose owner spoke of requests. The
+ * shape of the result stays the same, only the words and the AI's guidance change.
+ */
+export function stageFor(key: StageKey, typeKey: string | null | undefined): StageDefinition {
+  const definition = stageDefinitions[key];
+  if (typeKey === 'web_app' && key === 'process') {
+    return {
+      ...definition,
+      playbook: {
+        ...definition.playbook,
+        instructions: [
+          ...definition.playbook.instructions,
+          'This is a web application, not a site: the «system» actor is the application. Tag app actions with create_request (a client creates a request or order), assign (someone assigns a person to it), change_status (a status changes or work is marked done) and manage_staff (staff and their access); use offline only for work done outside the application.',
+        ],
+      },
+    };
+  }
+  if (key !== 'goal' || typeKey !== 'web_app') return definition;
+  const appActions: Partial<Record<string, { label: string; hint: string }>> = {
+    form: { label: 'Оставить заявку в приложении', hint: 'Клиент создаёт заявку или заказ в приложении, вы и сотрудники ведёте её там до конца.' },
+    message: { label: 'Написать вам в мессенджер', hint: 'Приложение подскажет клиенту написать в Telegram или WhatsApp.' },
+    call: { label: 'Позвонить вам', hint: 'Приложение покажет номер для звонка.' },
+  };
+  return {
+    ...definition,
+    title: 'Цель приложения',
+    purpose: 'Поймём, кому нужно приложение и с чего клиент начинает работу с вами. От этого зависят следующие этапы: процесс, функции, экраны и код.',
+    outcome: 'Короткий паспорт проекта: кто вы, кто пользуется приложением и с чего начинается работа.',
+    fields: (definition.fields ?? []).map((field) => field.key !== 'mainAction' ? field : {
+      ...field,
+      label: 'С чего клиент начинает работу с вами?',
+      why: 'Это первое действие клиента в приложении. Вокруг него строятся процесс и экраны.',
+      example: 'Оставить заявку в приложении',
+      options: (field.options ?? []).map((option) => ({ ...option, ...(appActions[option.value] ?? {}) })),
+    }),
+    playbook: {
+      ...definition.playbook,
+      instructions: [
+        ...definition.playbook.instructions.filter((rule) => !rule.startsWith('Choose mainAction')),
+        'This is a web application, not a site. Choose mainAction «form» when clients create requests, orders or bookings that the business then handles (assigns, changes status, completes); choose message, call, email or visit only when the user says clients just contact them that way.',
+      ],
+    },
+  };
+}
 
 export function projectTypeOf
 

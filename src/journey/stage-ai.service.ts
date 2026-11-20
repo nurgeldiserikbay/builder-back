@@ -4,7 +4,7 @@ import { BadGatewayException, BadRequestException, ConflictException, ForbiddenE
 import { WorktimeService } from './worktime.service.js';
 import { templateProcess } from './process.js';
 import { PrismaService } from '../database/prisma.service.js';
-import { stageDefinitions, type StageKey } from './catalog.js';
+import { stageFor, stageDefinitions, type StageKey } from './catalog.js';
 import { ArtifactValidationError, defaultDesign, emptyBrief, lockableKeys, mergeProposal, normalizeArtifact, normalizeContent, templateContent, type Brief, type ContentArtifact, type Offer } from './artifacts.js';
 import { templateSitemap, type Sitemap } from './sitemap.js';
 import type { BusinessProcess } from './process.js';
@@ -34,7 +34,7 @@ export class StageAiService {
     if (input.saveAs === 'project_rule' && assignment) throw new ForbiddenException('PROJECT_RULE_FORBIDDEN');
     const stage = this.core.stageOf(ctx, key);
     const stageKey = key as StageKey;
-    const definition = stageDefinitions[stageKey];
+    const definition = stageFor(stageKey, ctx.type.key);
     if (definition.ai.level === 'none') throw new BadRequestException('AI_NOT_USED_FOR_STAGE');
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     if (!inputsSatisfied(ctx.route, ctx.dep, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');

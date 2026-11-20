@@ -28,10 +28,30 @@ export const CAPABILITIES = {
   manage_orders: 'Подтвердить или выполнить заказ',
   pay_online: 'Оплатить онлайн',
   account: 'Личный кабинет клиента',
+  create_request: 'Создать заявку или заказ в приложении',
+  assign: 'Назначить исполнителя',
+  change_status: 'Сменить статус или отметить выполнение',
+  manage_staff: 'Управлять сотрудниками и доступами',
   offline: 'Делается вне сайта, вручную',
   other: 'Другое',
 } as const;
 export type Capability = keyof typeof CAPABILITIES;
+
+/** Steps an application does that a site built by BuildPath does not: offered to applications only. */
+const APP_CAPABILITIES: Capability[] = ['create_request', 'assign', 'change_status', 'manage_staff'];
+
+/**
+ * The step choices the process editor offers. A site gets its own list; an application gets the app actions first and the
+ * site-only words replaced, so «назначить мастера» or «сменить статус» is not filed under «Другое».
+ */
+export function capabilitiesFor(typeKey: string | null | undefined): Partial<Record<Capability, string>> {
+  const app = typeKey === 'web_app';
+  const keys = app
+    ? [...APP_CAPABILITIES, ...(Object.keys(CAPABILITIES) as Capability[]).filter((key) => !APP_CAPABILITIES.includes(key))]
+    : (Object.keys(CAPABILITIES) as Capability[]).filter((key) => !APP_CAPABILITIES.includes(key));
+  const words: Partial<Record<Capability, string>> = app ? { view_info: 'Посмотреть информацию', offline: 'Делается вне приложения, вручную' } : {};
+  return Object.fromEntries(keys.map((key) => [key, words[key] ?? CAPABILITIES[key]]));
+}
 const capabilityKeys = Object.keys(CAPABILITIES) as Capability[];
 
 export interface ProcessActor { key: string; name: string; kind: ActorKind }
@@ -171,6 +191,33 @@ export function templateProcess(projectType: string, brief: Brief | null): Busin
   const client: ProcessActor = { key: 'client', name: tr("Клиент"), kind: 'client' };
   const owner: ProcessActor = { key: 'owner', name: name.length <= 40 ? name : tr("Владелец"), kind: 'business' };
   const site: ProcessActor = { key: 'site', name: tr("Сайт"), kind: 'system' };
+  if (projectType === 'web_app') {
+    // An application: requests live in it from creation to done, with a person assigned and a status everyone sees.
+    const app: ProcessActor = { key: 'app', name: tr("Приложение"), kind: 'system' };
+    const staff: ProcessActor = { key: 'staff', name: tr("Сотрудник"), kind: 'staff' };
+    return {
+      actors: [client, app, owner, staff],
+      scenarios: [
+        { key: 'request', title: tr("Заявка"), goal: tr("Заявка клиента доходит до исполнителя и закрывается, а клиент видит, что с ней."), steps: [
+          { key: 'p1', actor: 'client', action: tr("Входит в приложение и создаёт заявку"), capability: 'create_request' },
+          { key: 'p2', actor: 'app', action: tr("Сообщает о новой заявке"), capability: 'notify_owner' },
+          { key: 'p3', actor: 'owner', action: tr("Назначает сотрудника на заявку"), capability: 'assign' },
+          { key: 'p4', actor: 'staff', action: tr("Выполняет работу и отмечает заявку выполненной"), capability: 'change_status' },
+          { key: 'p5', actor: 'client', action: tr("Видит статус заявки в приложении"), capability: 'view_info' },
+        ] },
+        { key: 'staff', title: tr("Сотрудники"), goal: tr("Владелец решает, кто работает в приложении и что ему доступно."), steps: [
+          { key: 'p1', actor: 'owner', action: tr("Добавляет сотрудника или закрывает ему доступ"), capability: 'manage_staff' },
+          { key: 'p2', actor: 'staff', action: tr("Входит и видит только свои заявки"), capability: 'view_info' },
+        ] },
+      ],
+      rules: [tr("Сотрудник видит только назначенные ему заявки."), consentRule()],
+      data: [
+        { key: 'client', name: tr("Клиент"), fields: [tr("Имя"), tr("Телефон"), tr("Почта")], links: [{ to: 'request', kind: 'many', label: tr("создаёт") }] },
+        { key: 'request', name: tr("Заявка"), fields: [tr("Что нужно"), tr("Адрес или время"), tr("Статус"), tr("Когда создана")], links: [{ to: 'staff', kind: 'one', label: tr("назначена") }] },
+        { key: 'staff', name: tr("Сотрудник"), fields: [tr("Имя"), tr("Роль"), tr("Доступ открыт")], links: [] },
+      ],
+    };
+  }
   if (projectType === 'store') {
     return {
       actors: [client, site, owner],

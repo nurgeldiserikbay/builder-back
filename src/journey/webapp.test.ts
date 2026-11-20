@@ -6,8 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { after, describe, it } from 'node:test';
 import { parse } from 'parse5';
 import type { Brief } from './artifacts.js';
-import { templateProcess } from './process.js';
-import { projectTypes, routeInputs } from './catalog.js';
+import { capabilitiesFor, normalizeProcess, processIssues, templateProcess } from './process.js';
+import { projectTypes, routeInputs, stageDefinitions, stageFor } from './catalog.js';
 import { buildAppPlan, buildHandoff, featuresChanges, featuresIssues, normalizeFeatures, normalizeScreens, renderPrototype, screensIssues, templateFeatures, templateScreens } from './webapp.js';
 import { auditSite } from '../quality/site-audit.js';
 import { PrismaService } from '../database/prisma.service.js';
@@ -45,6 +45,30 @@ describe('web application route', () => {
     assert.ok(screensIssues(linked, must).some((issue) => issue.message.includes('«Заявка»')));
     assert.ok(screensIssues(linked, must).some((issue) => issue.message.includes('«B»')));
     assert.ok(featuresChanges(features, { ...features, features: features.features.slice(1) }).some((line) => line.startsWith('Убрано')));
+  });
+
+  it('an application is described in its own words: goal, process steps and the template', () => {
+    // The goal form spoke of a site («посетитель», «главная кнопка сайта») and the AI picked a messenger button for a
+    // repair service whose owner spoke of requests.
+    const goal = stageFor('goal', 'web_app');
+    const action = goal.fields!.find((field) => field.key === 'mainAction')!;
+    assert.equal(goal.title, 'Цель приложения');
+    assert.doesNotMatch(`${action.label} ${action.why}`, /посетител|сайт/i);
+    assert.equal(action.options!.find((option) => option.value === 'form')!.label, 'Оставить заявку в приложении');
+    assert.ok(goal.playbook.instructions.some((rule) => rule.includes('web application') && rule.includes('«form»')));
+    assert.ok(!goal.playbook.instructions.some((rule) => rule.startsWith('Choose mainAction')));
+    assert.equal(stageFor('goal', 'landing'), stageDefinitions.goal, 'a site keeps its own words');
+    assert.ok(stageFor('process', 'web_app').playbook.instructions.some((rule) => rule.includes('change_status')));
+    // Step choices: app actions first for an application, none of them for a site.
+    const app = Object.keys(capabilitiesFor('web_app'));
+    assert.deepEqual(app.slice(0, 4), ['create_request', 'assign', 'change_status', 'manage_staff']);
+    assert.equal(capabilitiesFor('web_app').offline, 'Делается вне приложения, вручную');
+    assert.ok(!Object.keys(capabilitiesFor('booking')).includes('assign'));
+    // Without AI an application gets a request that is assigned and closed, not a site with a contact button.
+    const process = templateProcess('web_app', brief);
+    assert.deepEqual(processIssues(normalizeProcess(process)), []);
+    assert.deepEqual(process.scenarios[0]!.steps.map((step) => step.capability), ['create_request', 'notify_owner', 'assign', 'change_status', 'view_info']);
+    assert.ok(!JSON.stringify(process).includes('сайт'));
   });
 
   it('the prototype is script-free, links between screens and passes the page audit', () => {

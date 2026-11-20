@@ -3,13 +3,13 @@ import { assertBrowserGate } from '../quality/browser-gate.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { WorktimeService } from './worktime.service.js';
 import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, weekdayShort, type Schedule } from './schedule.js';
-import { CAPABILITIES, PROCESS_LIMITS } from './process.js';
+import { capabilitiesFor, PROCESS_LIMITS } from './process.js';
 import { PHASES_VERSION, STAGE_GUIDES, STAGE_PHASE, phasesOf } from './phases.js';
 import { TYPE_QUESTIONS, TYPE_QUESTIONS_VERSION, hintAnswers, parseAnswers, suggestType, type TypeAnswers } from './type-suggest.js';
 import { SITUATIONS_VERSION, situationsFor } from './situations.js';
 import { bookingApiContract, sameTechPlan, techPlanMarkdown, techPlanNotes, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
-import { ROUTE_CATALOG_VERSION, projectTypes, routeInputs, stageDefinitions, statusExplanations, type StageKey } from './catalog.js';
+import { stageFor, ROUTE_CATALOG_VERSION, projectTypes, routeInputs, stageDefinitions, statusExplanations, type StageKey } from './catalog.js';
 import { changedKeys, completenessIssues, importBriefText, importContentText, importOfferText, lockableKeys, stableStringify, normalizeArtifact, sectionTypeLabels, importCatalogText, type Brief, type ContentArtifact, type Offer, type SiteArtifact } from './artifacts.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderPages, renderSite, siteMeta } from './site-renderer.js';
 import { RESERVED_PATHS, SITEMAP_LIMITS, templateSitemap, type Sitemap } from './sitemap.js';
@@ -165,7 +165,7 @@ export class JourneyService {
         nextAction: next ? { stageKey: next, title: stageDefinitions[next].title, text: nextText } : { stageKey: null, title: 'Готово', text: nextText },
         stages: visible.map((key) => {
           const stage = this.core.stageOf(ctx, key);
-          const definition = stageDefinitions[key];
+          const definition = stageFor(key, ctx.type.key);
           return {
             key, title: definition.title, purpose: definition.purpose, outcome: definition.outcome, phase: STAGE_PHASE[key], aiLevel: definition.ai.level, contract: Boolean(definition.contract),
             status: stage.status, statusLabel: statusExplanations[stage.status].label, statusExplanation: statusExplanations[stage.status].explanation,
@@ -192,7 +192,7 @@ export class JourneyService {
     const ctx = await this.core.load(userId, projectId, 'read', key);
     const stage = this.core.stageOf(ctx, key);
     const stageKey = key as StageKey;
-    const definition = stageDefinitions[stageKey];
+    const definition = stageFor(stageKey, ctx.type.key);
     const changesPending = ctx.openNotices.some((notice) => notice.targetKey === stageKey);
     const waiting = this.core.waitingBranches(ctx, stageKey);
     // What accepting this stage will do to the stages built on it: start them, or notify those that already have work.
@@ -309,7 +309,7 @@ export class JourneyService {
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
           ...(definition.artifactType === 'techplan' ? { techplan: { preview: techPlanPreview, outdated: techPlanOutdated } } : {}),
-          ...(definition.artifactType === 'process' ? { process: { capabilities: CAPABILITIES, actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS, situations: { version: SITUATIONS_VERSION, items: situationsFor(ctx.type.key) } } } : {}),
+          ...(definition.artifactType === 'process' ? { process: { capabilities: capabilitiesFor(ctx.type.key), actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS, situations: { version: SITUATIONS_VERSION, items: situationsFor(ctx.type.key) } } } : {}),
           ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.core.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
           ...(stageKey === 'content' && ctx.route.includes('sitemap') ? { pages: (await this.core.checkContext(ctx, stageKey)).sitemap?.pages ?? null } : {}),
