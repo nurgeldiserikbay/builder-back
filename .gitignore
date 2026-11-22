@@ -7,3 +7,4 @@ coverage/
 *.log
 
 src/generated/prisma/
+e2e/out/
