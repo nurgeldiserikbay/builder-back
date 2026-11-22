@@ -10,7 +10,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { ReviewTargetPolicyError, resolveAndValidateReviewTarget } from '../reviews/url-target-policy.js';
-import { choiceCards, recommend, technologiesCard, type CardKey, githubOauthSteps } from './cards.js';
+import { choiceCards, codeHostingCard, recommend, technologiesCard, type CardKey, githubOauthSteps } from './cards.js';
 import { domainTarget } from '../publishing/domain.js';
 import { sitesConfig } from '../publishing/slug.js';
 import { checkSite } from './site-check.js';
@@ -89,7 +89,7 @@ export class ChoicesService {
     ]);
     const live = publication?.status === 'live';
     const items = cards.map((key) => {
-      const card = key === 'technologies' ? technologiesCard(access.projectType) : choiceCards[key];
+      const card = key === 'technologies' ? technologiesCard(access.projectType) : key === 'code_hosting' ? codeHostingCard(access.projectType) : choiceCards[key];
       const choice = choices.find((item) => item.cardKey === key);
       const recommendation = recommend(key, access);
       const optionKey = choice?.optionKey ?? recommendation.optionKey;
@@ -134,8 +134,8 @@ export class ChoicesService {
     return {
       data: {
         card: cardKey === 'code_hosting' && githubOauthConfig() && this.key()
-          ? { ...choiceCards[cardKey], options: choiceCards[cardKey].options.map((option) => (option.key === 'github' ? { ...option, steps: githubOauthSteps } : option)) }
-          : cardKey === 'technologies' ? technologiesCard(access.projectType) : choiceCards[cardKey],
+          ? { ...codeHostingCard(access.projectType), options: choiceCards[cardKey].options.map((option) => (option.key === 'github' ? { ...option, steps: githubOauthSteps } : option)) }
+          : cardKey === 'technologies' ? technologiesCard(access.projectType) : cardKey === 'code_hosting' ? codeHostingCard(access.projectType) : choiceCards[cardKey],
         recommendation: recommend(cardKey, access),
         choice: choice ? { optionKey: choice.optionKey, reason: choice.reason, stepsDone: choice.stepsDone, chosenAt: choice.chosenAt, cardVersion: choice.cardVersion, verification: choice.verification ?? null } : null,
         available: met,

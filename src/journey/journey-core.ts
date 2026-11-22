@@ -8,7 +8,7 @@ import { type BookingConfig, type Schedule } from './schedule.js';
 import { type BusinessProcess } from './process.js';
 import { TECHPLAN_VERSION, buildTechPlan, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
-import { projectTypeOf, routeAncestors, routeInputs, stageDefinitions, type ArtifactType, type StageKey } from './catalog.js';
+import { projectTypeOf, stageTitle, routeAncestors, routeInputs, stageDefinitions, type ArtifactType, type StageKey } from './catalog.js';
 import { ArtifactValidationError, defaultDesign, normalizeArtifact, contentImageIds, type Brief, type ContentArtifact, type DesignArtifact, type Offer } from './artifacts.js';
 import { inlineImages } from '../images/image-processing.js';
 import { type ImageInfo } from './site-renderer.js';
@@ -164,11 +164,11 @@ export class JourneyCore {
    * A stage that brings branches together (two or more inputs) waits while any stage it is built on still has an undecided
    * change: otherwise the branches could be built on different versions of the same contract.
    */
-  waitingBranches(ctx: { route: StageKey[]; openNotices: Array<{ targetKey: StageKey; sourceKey: StageKey }> }, key: StageKey) {
+  waitingBranches(ctx: { route: StageKey[]; openNotices: Array<{ targetKey: StageKey; sourceKey: StageKey }>; type?: { key: string } }, key: StageKey) {
     if (routeInputs(ctx.route, key).length < 2) return [];
     const ancestors = new Set(routeAncestors(ctx.route, key));
     return ctx.openNotices.filter((notice) => ancestors.has(notice.targetKey))
-      .map((notice) => ({ stageKey: notice.targetKey, title: stageDefinitions[notice.targetKey].title, sourceKey: notice.sourceKey, sourceTitle: stageDefinitions[notice.sourceKey].title }));
+      .map((notice) => ({ stageKey: notice.targetKey, title: stageTitle(notice.targetKey, ctx.type?.key), sourceKey: notice.sourceKey, sourceTitle: stageTitle(notice.sourceKey, ctx.type?.key) }));
   }
 
   /** Accepted version of a stage as seen by `forKey`: pinned by an undecided change notice, otherwise the latest accepted one. */

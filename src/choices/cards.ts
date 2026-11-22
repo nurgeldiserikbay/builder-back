@@ -379,7 +379,24 @@ export function technologiesCard(projectType: string | null): ChoiceCard {
   return { ...card, options: card.options.map((option) => (option.key === 'buildpath' ? { ...option, ...bookingBuildpathOption } : option)) };
 }
 
-export function recommend(card: CardKey, project: { hasSpecialists: boolean }): { optionKey: string; reason: string } {
+/**
+ * The code hosting card as an application sees it: its code is written by the AI agent and run by the owner, so a repository
+ * is where it lives, not a spare copy of a site that runs on BuildPath.
+ */
+export function codeHostingCard(projectType: string | null | undefined): ChoiceCard {
+  const card = choiceCards.code_hosting;
+  if (projectType !== 'web_app') return card;
+  return {
+    ...card,
+    question: 'Где будет лежать код вашего приложения?',
+    why: 'Код приложения пишет ИИ-агент, а запускаете его вы — на Render или своём сервере. Они берут код из репозитория, поэтому без него приложение не запустить; архив подойдёт только чтобы посмотреть код.',
+  };
+}
+
+export function recommend(card: CardKey, project: { hasSpecialists: boolean; projectType?: string | null }): { optionKey: string; reason: string } {
+  if (card === 'code_hosting' && project.projectType === 'web_app') {
+    return { optionKey: 'github', reason: 'Код приложения нужно где-то хранить, чтобы его запустить: Render берёт его из GitHub, а агент отправляет туда каждую версию отдельной веткой. GitHub бесплатен и для закрытых репозиториев.' };
+  }
   if (card === 'technologies') {
     return { optionKey: 'buildpath', reason: 'BuildPath сам соберёт и проверит такой сайт, а файлы останутся вашими. Свой стек нужен, только если требуется то, чего здесь нет: оплата онлайн, личный кабинет, интеграции.' };
   }

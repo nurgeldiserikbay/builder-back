@@ -4,12 +4,12 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { WorktimeService } from './worktime.service.js';
 import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, weekdayShort, type Schedule } from './schedule.js';
 import { capabilitiesFor, PROCESS_LIMITS } from './process.js';
-import { PHASES_VERSION, STAGE_GUIDES, STAGE_PHASE, phasesOf } from './phases.js';
+import { PHASES_VERSION, guideFor, STAGE_PHASE, phasesOf } from './phases.js';
 import { TYPE_QUESTIONS, TYPE_QUESTIONS_VERSION, hintAnswers, parseAnswers, suggestType, type TypeAnswers } from './type-suggest.js';
 import { SITUATIONS_VERSION, situationsFor } from './situations.js';
 import { bookingApiContract, sameTechPlan, techPlanMarkdown, techPlanNotes, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
-import { stageFor, ROUTE_CATALOG_VERSION, projectTypes, routeInputs, stageDefinitions, statusExplanations, type StageKey } from './catalog.js';
+import { stageFor, stageTitle, ROUTE_CATALOG_VERSION, projectTypes, routeInputs, stageDefinitions, statusExplanations, type StageKey } from './catalog.js';
 import { changedKeys, completenessIssues, importBriefText, importContentText, importOfferText, lockableKeys, stableStringify, normalizeArtifact, sectionTypeLabels, importCatalogText, type Brief, type ContentArtifact, type Offer, type SiteArtifact } from './artifacts.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderPages, renderSite, siteMeta } from './site-renderer.js';
 import { RESERVED_PATHS, SITEMAP_LIMITS, templateSitemap, type Sitemap } from './sitemap.js';
@@ -72,7 +72,7 @@ export class JourneyService {
         version: ROUTE_CATALOG_VERSION,
         projectTypes: Object.values(projectTypes).map((type) => ({
           ...type,
-          stages: type.stages.map((key) => ({ key, title: stageDefinitions[key].title, outcome: stageDefinitions[key].outcome, importHint: stageDefinitions[key].importHint })),
+          stages: type.stages.map((key) => ({ key, title: stageTitle(key, type.key), outcome: stageDefinitions[key].outcome, importHint: stageDefinitions[key].importHint })),
         })),
       },
     };
@@ -88,7 +88,7 @@ export class JourneyService {
     const specialist = ctx.viewer.kind === 'specialist';
     const next = specialist ? visible.find((key) => !isSatisfied(ctx.statuses[key])) ?? null : nextStage(ctx.route, ctx.statuses);
     const nextStatus = next ? ctx.statuses[next] : null;
-    const title = next ? stageDefinitions[next].title : '';
+    const title = next ? stageTitle(next, ctx.type.key) : '';
     const nextText = !next ? (specialist ? 'Ваш этап принят владельцем. Спасибо за работу!' : 'Все этапы приняты. Опубликуйте сайт или скачайте результат ниже. Вернуться к любому этапу можно в любой момент.')
       : next && ctx.openNotices.some((notice) => notice.targetKey === next) ? tr("Изменился этап, на котором построен «{0}». Посмотрите, что изменилось, и решите: принять, оставить как есть или обсудить.", [title])
       : nextStatus === 'stale' ? tr("Изменился предыдущий этап. Проверьте «{0}» и подтвердите или обновите.", [title])
@@ -162,14 +162,14 @@ export class JourneyService {
               : null,
           ),
         },
-        nextAction: next ? { stageKey: next, title: stageDefinitions[next].title, text: nextText } : { stageKey: null, title: 'Готово', text: nextText },
+        nextAction: next ? { stageKey: next, title: stageTitle(next, ctx.type.key), text: nextText } : { stageKey: null, title: 'Готово', text: nextText },
         stages: visible.map((key) => {
           const stage = this.core.stageOf(ctx, key);
           const definition = stageFor(key, ctx.type.key);
           return {
             key, title: definition.title, purpose: definition.purpose, outcome: definition.outcome, phase: STAGE_PHASE[key], aiLevel: definition.ai.level, contract: Boolean(definition.contract),
             status: stage.status, statusLabel: statusExplanations[stage.status].label, statusExplanation: statusExplanations[stage.status].explanation,
-            inputs: routeInputs(ctx.route, key).map((input) => ({ key: input, title: stageDefinitions[input].title, satisfied: isSatisfied(ctx.dep[input]) })),
+            inputs: routeInputs(ctx.route, key).map((input) => ({ key: input, title: stageTitle(input, ctx.type.key), satisfied: isSatisfied(ctx.dep[input]) })),
             currentVersionNumber: numberOf(stage.currentVersionId), acceptedVersionNumber: numberOf(stage.approvedVersionId),
             acceptedAt: stage.approvedAt, updatedAt: stage.updatedAt,
             people: {
@@ -199,7 +199,7 @@ export class JourneyService {
     const dependents = directDependents(ctx.route, stageKey).filter((item) => this.core.canRead(ctx, item)).map((item) => {
       const dependent = this.core.stageOf(ctx, item);
       const hasWork = Boolean(dependent.currentVersionId) || ['approved', 'imported', 'stale'].includes(dependent.status);
-      return { key: item, title: stageDefinitions[item].title, status: dependent.status, hasWork, opens: dependent.status === 'locked' && inputsSatisfied(ctx.route, { ...ctx.dep, [stageKey]: 'approved' }, item) };
+      return { key: item, title: stageTitle(item, ctx.type.key), status: dependent.status, hasWork, opens: dependent.status === 'locked' && inputsSatisfied(ctx.route, { ...ctx.dep, [stageKey]: 'approved' }, item) };
     });
     const inputs = await this.core.viewInputs(ctx, stageKey);
     const extras = await this.core.extraReads(ctx, stageKey);
@@ -232,7 +232,7 @@ export class JourneyService {
     const review = current && definition.artifactType !== 'site' && definition.artifactType !== 'handoff'
       ? await this.review.view(ctx, userId, projectId, stageKey, stage.id, current) : null;
     // The hand-over list: what this stage gives the stages built on it (only those on this project's route).
-    const consumers = ctx.type.stages.filter((other) => ctx.stages.some((item) => item.stageKey === other) && stageDefinitions[other as StageKey].inputs.includes(stageKey)).map((other) => stageDefinitions[other as StageKey].title);
+    const consumers = ctx.type.stages.filter((other) => ctx.stages.some((item) => item.stageKey === other) && stageDefinitions[other as StageKey].inputs.includes(stageKey)).map((other) => stageTitle(other as StageKey, ctx.type.key));
     const outputs = current && !withoutOutputs(definition.artifactType) ? { version: OUTPUTS_VERSION, for: consumers, items: stageOutputs(definition.artifactType, current.content, await this.core.checkContext(ctx, stageKey)) } : null;
     const suggestions = await this.prisma.stageInstruction.findMany({
       where: { stageId: stage.id, kind: 'suggestion' }, orderBy: { createdAt: 'desc' }, take: 30,
@@ -249,7 +249,7 @@ export class JourneyService {
         }),
         stage: {
           key: stageKey, title: definition.title, purpose: definition.purpose, outcome: definition.outcome, artifactType: definition.artifactType,
-          phase: STAGE_PHASE[stageKey], guide: STAGE_GUIDES[stageKey],
+          phase: STAGE_PHASE[stageKey], guide: guideFor(stageKey, ctx.type.key),
           status: stage.status, statusLabel: statusExplanations[stage.status].label, statusExplanation: statusExplanations[stage.status].explanation,
           acceptance: definition.acceptance, acceptExplanation: definition.acceptExplanation, importHint: definition.importHint,
           fields: definition.fields ?? null, lockedKeys: stage.lockedKeys, acceptedVersionId: stage.approvedVersionId,
@@ -276,11 +276,11 @@ export class JourneyService {
           inputsReady: inputsSatisfied(ctx.route, ctx.dep, stageKey),
         },
         inputs: routeInputs(ctx.route, stageKey).map((input) => ({
-          key: input, title: stageDefinitions[input].title, satisfied: isSatisfied(ctx.dep[input]),
+          key: input, title: stageTitle(input, ctx.type.key), satisfied: isSatisfied(ctx.dep[input]),
           versionNumber: inputs[input]?.versionNumber ?? null, content: inputs[input]?.content ?? null,
         })),
         // Results the owner opened to this specialist beyond the stage's inputs (read-only).
-        extraReads: Object.entries(extras).map(([extraKey, value]) => ({ key: extraKey, title: stageDefinitions[extraKey as StageKey].title, versionNumber: value.versionNumber, content: value.content })),
+        extraReads: Object.entries(extras).map(([extraKey, value]) => ({ key: extraKey, title: stageTitle(extraKey as StageKey, ctx.type.key), versionNumber: value.versionNumber, content: value.content })),
         access: assignment ? { hiddenParts: assignment.scope.hiddenParts, allowDownload: assignment.scope.allowDownload, readDays: assignment.scope.readDays } : null,
         current: current ? {
           id: current.id, versionNumber: current.versionNumber, origin: current.origin, note: current.note, createdAt: current.createdAt,
@@ -653,7 +653,7 @@ export class JourneyService {
 
   private async afterAccept(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: string, notices: Array<{ targetKey: StageKey }>) {
     const definition = stageDefinitions[key as StageKey];
-    for (const notice of notices) await this.changes.notifyChange(ctx, notice.targetKey, () => tr("В проекте «{0}» изменился этап «{1}», на котором построен этап «{2}». Посмотрите, что изменилось, и решите: принять или обсудить. {3}", [ctx.project.name, tr(definition.title), tr(stageDefinitions[notice.targetKey].title), this.core.stageLink(ctx.project.id, notice.targetKey)]).trim(), 'target');
+    for (const notice of notices) await this.changes.notifyChange(ctx, notice.targetKey, () => tr("В проекте «{0}» изменился этап «{1}», на котором построен этап «{2}». Посмотрите, что изменилось, и решите: принять или обсудить. {3}", [ctx.project.name, tr(definition.title), tr(stageTitle(notice.targetKey, ctx.type.key)), this.core.stageLink(ctx.project.id, notice.targetKey)]).trim(), 'target');
   }
 
   private approvalRow(stageId: string) {
@@ -738,7 +738,7 @@ export class JourneyService {
       accepted = true;
       return this.applyAccept(tx, ctx, key, versionId, version, userId, { count: state.approvedBy.length, policy });
     });
-    const title = stageDefinitions[key as StageKey].title;
+    const title = stageTitle(key as StageKey, ctx.type.key);
     const approver = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
     const who = approver?.name || approver?.email || '';
     if (accepted) {
@@ -760,7 +760,7 @@ export class JourneyService {
 
   /** Parallel review tells every reviewer; sequential only the one whose turn it is. */
   private async notifyReviewers(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: string, policy: ApprovalPolicy, exceptUserId: string, approvals: string[] = [], authorId: string | null = null) {
-    const title = stageDefinitions[key as StageKey].title;
+    const title = stageTitle(key as StageKey, ctx.type.key);
     const targets = policy.order === 'sequential'
       ? [approvalState(policy, await this.teamRoles(ctx.project.id), approvals, authorId).next].filter((id): id is string => Boolean(id))
       : policy.reviewers;
@@ -829,8 +829,8 @@ export class JourneyService {
     // The leads, and a team member who made the version; the person asking does not get their own message.
     const recipients = new Set([...leads.map((lead) => lead.userId), author?.createdByUserId].filter((id): id is string => Boolean(id) && id !== userId));
     for (const id of recipients) {
-      await this.core.notifyUser(id, () => (managing ? tr("Владелец проекта «{0}» просит доработать этап «{1}»: {2} {3}", [ctx.project.name, tr(stageDefinitions[key as StageKey].title), note, this.core.stageLink(projectId, key)])
-        : tr("Проверяющий в проекте «{0}» просит доработать этап «{1}»: {2} {3}", [ctx.project.name, tr(stageDefinitions[key as StageKey].title), note, this.core.stageLink(projectId, key)])).trim()).catch(() => undefined);
+      await this.core.notifyUser(id, () => (managing ? tr("Владелец проекта «{0}» просит доработать этап «{1}»: {2} {3}", [ctx.project.name, tr(stageTitle(key as StageKey, ctx.type.key)), note, this.core.stageLink(projectId, key)])
+        : tr("Проверяющий в проекте «{0}» просит доработать этап «{1}»: {2} {3}", [ctx.project.name, tr(stageTitle(key as StageKey, ctx.type.key)), note, this.core.stageLink(projectId, key)])).trim()).catch(() => undefined);
     }
     return this.journey(userId, projectId);
   }
@@ -920,7 +920,7 @@ export class JourneyService {
     const stages = await Promise.all(ctx.route.map(async (key) => {
       const stage = this.core.stageOf(ctx, key);
       const accepted = isSatisfied(ctx.dep[key]) ? await this.core.versionContent(stage.approvedVersionId) : null;
-      return { key, title: stageDefinitions[key].title, status: stage.status, statusLabel: statusExplanations[stage.status].label, accepted };
+      return { key, title: stageTitle(key, ctx.type.key), status: stage.status, statusLabel: statusExplanations[stage.status].label, accepted };
     }));
     const get = <T>(key: StageKey) => stages.find((stage) => stage.key === key)?.accepted?.content as T | undefined;
     const brief = get<Brief>('goal');

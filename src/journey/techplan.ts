@@ -462,7 +462,7 @@ export function techPlanMarkdown(plan: TechPlan): string {
     ...(plan.components?.length ? [tr("## Из чего состоит"), '', ...items(plan.components), ''] : []),
     ...(plan.dataModel?.length ? [tr("## Данные"), '', ...plan.dataModel.flatMap((entity) => [`- **${entity.name}.** ${entity.plain}`, ...entity.fields.map((item) => `  - ${item.name}: ${item.type}`)]), ''] : []),
     ...(plan.sequences ?? []).flatMap((sequence) => [tr("## Сценарий: {0}", [sequence.title]), '', ...sequence.messages.map((message, index) => `${index + 1}. ${sequence.participants[message.from]} → ${sequence.participants[message.to]}: ${message.text}`), '']),
-    ...(plan.coverage?.length ? [tr("## Что из процесса делает сайт"), '', ...plan.coverage.map((step) => `- ${step.status === 'built' ? '✓' : step.status === 'manual' ? '·' : '✗'} ${step.scenario} — ${step.actor}: ${step.action}. ${step.how}`), ''] : []),
+    ...(plan.coverage?.length ? [plan.kind === 'app' ? tr("## Что из процесса делает приложение") : tr("## Что из процесса делает сайт"), '', ...plan.coverage.map((step) => `- ${step.status === 'built' ? '✓' : step.status === 'manual' ? '·' : '✗'} ${step.scenario} — ${step.actor}: ${step.action}. ${step.how}`), ''] : []),
     ...(plan.features.length ? [tr("## Что умеет"), '', ...items(plan.features), ''] : []),
     ...(plan.roles.length ? [tr("## Кто пользуется"), '', ...items(plan.roles), ''] : []),
     ...(plan.data.length ? [tr("## Хранение"), '', ...items(plan.data), ''] : []),
