@@ -472,11 +472,21 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
  * application that wording led the AI to pick a messenger button for a repair service whose owner spoke of requests. The
  * shape of the result stays the same, only the words and the AI's guidance change.
  */
+/** A stage's title as the project type names it («Цель приложения» for an application). */
+export function stageTitle(key: StageKey, typeKey: string | null | undefined): string {
+  return stageFor(key, typeKey).title;
+}
+
 export function stageFor(key: StageKey, typeKey: string | null | undefined): StageDefinition {
   const definition = stageDefinitions[key];
+  if (typeKey === 'web_app' && key === 'techplan') {
+    return { ...definition, purpose: 'Покажем, как будет устроено приложение: из чего состоит система, какие данные хранятся, как идёт каждый сценарий по шагам и какие шаги вашего процесса сделает приложение. Для разработчиков здесь же — точное описание (контракт API).' };
+  }
   if (typeKey === 'web_app' && key === 'process') {
     return {
       ...definition,
+      purpose: 'Опишем, как работает ваше дело: кто участвует, как заявка или заказ проходит путь от клиента до результата, какие правила действуют и какую информацию вы храните. Схемы покажут это наглядно — по ним видно, что будет делать приложение, а что останется за вами.',
+      acceptExplanation: 'Процесс станет основой ТЗ и архитектуры: по нему видно, какие шаги сделает приложение, а какие останутся ручными.',
       playbook: {
         ...definition.playbook,
         instructions: [
@@ -487,6 +497,12 @@ export function stageFor(key: StageKey, typeKey: string | null | undefined): Sta
     };
   }
   if (key !== 'goal' || typeKey !== 'web_app') return definition;
+  const appFieldWhy: Record<string, string> = {
+    businessName: 'Покажем его в приложении и во вкладке браузера.',
+    whatYouDo: 'Из этого приложение объяснит клиенту, чем вы помогаете, а ИИ поймёт, какие данные нужны.',
+    audience: 'Экраны и тексты приложения будут сделаны для этих людей и их задач.',
+    tone: 'От этого зависит стиль текстов в приложении.',
+  };
   const appActions: Partial<Record<string, { label: string; hint: string }>> = {
     form: { label: 'Оставить заявку в приложении', hint: 'Клиент создаёт заявку или заказ в приложении, вы и сотрудники ведёте её там до конца.' },
     message: { label: 'Написать вам в мессенджер', hint: 'Приложение подскажет клиенту написать в Telegram или WhatsApp.' },
@@ -497,7 +513,8 @@ export function stageFor(key: StageKey, typeKey: string | null | undefined): Sta
     title: 'Цель приложения',
     purpose: 'Поймём, кому нужно приложение и с чего клиент начинает работу с вами. От этого зависят следующие этапы: процесс, функции, экраны и код.',
     outcome: 'Короткий паспорт проекта: кто вы, кто пользуется приложением и с чего начинается работа.',
-    fields: (definition.fields ?? []).map((field) => field.key !== 'mainAction' ? field : {
+    contract: { explanation: 'Цель приложения — договорённость для всех следующих этапов: процесса, ТЗ, экранов и кода. Если позже поменять цель, каждый этап, построенный на ней, получит уведомление и решит, что делать.' },
+    fields: (definition.fields ?? []).map((field) => field.key !== 'mainAction' ? { ...field, why: appFieldWhy[field.key] ?? field.why } : {
       ...field,
       label: 'С чего клиент начинает работу с вами?',
       why: 'Это первое действие клиента в приложении. Вокруг него строятся процесс и экраны.',

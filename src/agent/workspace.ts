@@ -82,9 +82,59 @@ export class E2BWorkspaceProvider implements WorkspaceProvider {
   }
 }
 
+/**
+ * A sandbox server on this machine, for development and the browser end-to-end run (e2e/local-sandbox.mts): the agent's
+ * commands run in that separate process, never in the API. It is refused in production and accepts only a loopback address,
+ * because it is not an isolated machine.
+ */
+export class HttpWorkspaceProvider implements WorkspaceProvider {
+  readonly name = 'local-http';
+  constructor(private readonly baseUrl: string, private readonly fetchImpl: typeof fetch = fetch) {}
+
+  async open(input: { lifetimeMs: number; internet: boolean; labels: Record<string, string> }): Promise<Workspace> {
+    const call = async (path: string, init: RequestInit & { timeoutMs?: number } = {}) => {
+      try {
+        return await this.fetchImpl(`${this.baseUrl}${path}`, { ...init, signal: AbortSignal.timeout(init.timeoutMs ?? 60_000) });
+      } catch { throw new WorkspaceError('SANDBOX_FAILED'); }
+    };
+    let id: string;
+    try {
+      const response = await this.fetchImpl(`${this.baseUrl}/workspaces`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lifetimeMs: input.lifetimeMs }), signal: AbortSignal.timeout(20_000) });
+      if (!response.ok) throw new Error('start');
+      id = String(((await response.json()) as { id?: unknown }).id ?? '');
+      if (!/^[a-z0-9-]{8,64}$/.test(id)) throw new Error('id');
+    } catch { throw new WorkspaceError('SANDBOX_START_FAILED'); }
+    const files = (path: string) => `/workspaces/${id}/files?path=${encodeURIComponent(path)}`;
+    return {
+      write: async (path, content) => { const response = await call(files(path), { method: 'PUT', body: content }); if (!response.ok) throw new WorkspaceError('SANDBOX_FAILED'); },
+      read: async (path) => {
+        const response = await call(files(path));
+        if (response.status === 404) return null;
+        if (!response.ok) throw new WorkspaceError('SANDBOX_FAILED');
+        return response.text();
+      },
+      exec: async (command, timeoutMs) => {
+        const response = await call(`/workspaces/${id}/exec`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ command, timeoutMs }), timeoutMs: timeoutMs + 15_000 });
+        if (!response.ok) throw new WorkspaceError('SANDBOX_FAILED');
+        const result = await response.json() as ExecResult;
+        return { exitCode: result.exitCode, stdout: tail(result.stdout ?? ''), stderr: tail(result.stderr ?? ''), timedOut: Boolean(result.timedOut), durationMs: Number(result.durationMs) || 0 };
+      },
+      close: async () => { await call(`/workspaces/${id}`, { method: 'DELETE' }).catch(() => undefined); },
+    };
+  }
+}
+
+/** The loopback address of a local sandbox server, or null when it is not allowed (production, or not loopback). */
+export function localSandboxUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.NODE_ENV === 'production') return null;
+  const raw = (env.SANDBOX_HTTP_URL ?? '').trim().replace(/\/$/, '');
+  return /^http:\/\/(127\.0\.0\.1|localhost):\d{2,5}$/.test(raw) ? raw : null;
+}
+
 /** SANDBOX_PROVIDER=e2b with E2B_API_KEY, as for the starter checks. The agent template needs Node.js 20+ and git. */
 export function configuredWorkspace(): WorkspaceProvider | null {
   const provider = process.env.SANDBOX_PROVIDER?.trim();
+  if (provider === 'local-http') { const url = localSandboxUrl(); return url ? new HttpWorkspaceProvider(url) : null; }
   const key = process.env.E2B_API_KEY?.trim();
   if (provider !== 'e2b' || !key) return null;
   return new E2BWorkspaceProvider(key, process.env.AGENT_E2B_TEMPLATE?.trim() || process.env.E2B_TEMPLATE?.trim() || 'base');

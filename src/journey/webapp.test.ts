@@ -7,7 +7,9 @@ import { after, describe, it } from 'node:test';
 import { parse } from 'parse5';
 import type { Brief } from './artifacts.js';
 import { capabilitiesFor, normalizeProcess, processIssues, templateProcess } from './process.js';
-import { projectTypes, routeInputs, stageDefinitions, stageFor } from './catalog.js';
+import { projectTypes, routeInputs, stageDefinitions, stageFor, stageTitle } from './catalog.js';
+import { guideFor, STAGE_GUIDES } from './phases.js';
+import { codeHostingCard, recommend } from '../choices/cards.js';
 import { buildAppPlan, buildHandoff, featuresChanges, featuresIssues, normalizeFeatures, normalizeScreens, renderPrototype, screensIssues, templateFeatures, templateScreens } from './webapp.js';
 import { auditSite } from '../quality/site-audit.js';
 import { PrismaService } from '../database/prisma.service.js';
@@ -69,6 +71,16 @@ describe('web application route', () => {
     assert.deepEqual(processIssues(normalizeProcess(process)), []);
     assert.deepEqual(process.scenarios[0]!.steps.map((step) => step.capability), ['create_request', 'notify_owner', 'assign', 'change_status', 'view_info']);
     assert.ok(!JSON.stringify(process).includes('сайт'));
+    // Found by the browser run (e2e/flow.mts): the rest of the goal, the guides, the architecture and the code hosting card
+    // still spoke of a site.
+    assert.equal(stageTitle('goal', 'web_app'), 'Цель приложения');
+    assert.equal(stageTitle('goal', 'landing'), 'Цель сайта');
+    const words = JSON.stringify({ goal: { ...stageFor('goal', 'web_app'), playbook: null }, process: { purpose: stageFor('process', 'web_app').purpose, accept: stageFor('process', 'web_app').acceptExplanation }, techplan: stageFor('techplan', 'web_app').purpose, guides: ['goal', 'process', 'techplan'].map((key) => guideFor(key as never, 'web_app')) });
+    assert.doesNotMatch(words.replace(/Написать вам в мессенджер|Telegram или WhatsApp/g, ''), /сайт/i);
+    assert.equal(guideFor('goal', 'landing'), STAGE_GUIDES.goal);
+    assert.equal(recommend('code_hosting', { hasSpecialists: false, projectType: 'web_app' }).optionKey, 'github');
+    assert.equal(recommend('code_hosting', { hasSpecialists: false, projectType: 'landing' }).optionKey, 'archive');
+    assert.doesNotMatch(`${codeHostingCard('web_app').question} ${codeHostingCard('web_app').why}`, /сайт/i);
   });
 
   it('the prototype is script-free, links between screens and passes the page audit', () => {

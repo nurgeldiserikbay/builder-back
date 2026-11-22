@@ -15,7 +15,7 @@ import { appOrigin, checkAppHealth } from './app-health.js';
 import { createServer } from 'node:http';
 import { AgentRunner, AgentTasksService, buildAgentPrompt, buildChangePrompt, filesDigestOf, keepAwake, keepAwakeUrl, pullRequestText, PREVIEW_CSP, promptDigestOf, withPreviewPolicy } from './agent-tasks.js';
 import { JourneyCore } from '../journey/journey-core.js';
-import type { ExecResult, Workspace, WorkspaceProvider } from './workspace.js';
+import { HttpWorkspaceProvider, localSandboxUrl, type ExecResult, type Workspace, type WorkspaceProvider } from './workspace.js';
 
 /** Test stand-in for the sandbox: a temporary folder and a local shell. Production code never runs agent code locally. */
 async function localWorkspace(): Promise<Workspace & { dir: string }> {
@@ -344,6 +344,30 @@ describe('AI agent: the model and the prompt', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(asked.length, count, 'stops when the queue is empty');
   });
+  it('a local sandbox server is for development only and only on a loopback address', async () => {
+    assert.equal(localSandboxUrl({ SANDBOX_HTTP_URL: 'http://127.0.0.1:4570' }), 'http://127.0.0.1:4570');
+    assert.equal(localSandboxUrl({ SANDBOX_HTTP_URL: 'http://127.0.0.1:4570', NODE_ENV: 'production' }), null);
+    assert.equal(localSandboxUrl({ SANDBOX_HTTP_URL: 'http://10.0.0.5:4570' }), null);
+    assert.equal(localSandboxUrl({ SANDBOX_HTTP_URL: 'https://sandbox.example.com' }), null);
+    // The provider speaks the server's small HTTP protocol: open, files, exec, close.
+    const calls: string[] = [];
+    const fake = (async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      calls.push(`${method} ${url.replace('http://127.0.0.1:4570', '')}`);
+      if (url.endsWith('/workspaces')) return new Response(JSON.stringify({ id: '0123abcd-ef' }), { status: 201 });
+      if (url.includes('/files') && method === 'GET') return url.includes('missing') ? new Response('no', { status: 404 }) : new Response('hello');
+      if (url.endsWith('/exec')) return new Response(JSON.stringify({ exitCode: 0, stdout: 'ok', stderr: '', timedOut: false, durationMs: 5 }));
+      return new Response('{}');
+    }) as unknown as typeof fetch;
+    const workspace = await new HttpWorkspaceProvider('http://127.0.0.1:4570', fake).open({ lifetimeMs: 60_000, internet: false, labels: {} });
+    await workspace.write('src/a.js', 'x');
+    assert.equal(await workspace.read('src/a.js'), 'hello');
+    assert.equal(await workspace.read('missing.js'), null);
+    assert.equal((await workspace.exec('npm test', 1000)).stdout, 'ok');
+    await workspace.close();
+    assert.deepEqual(calls, ['POST /workspaces', 'PUT /workspaces/0123abcd-ef/files?path=src%2Fa.js', 'GET /workspaces/0123abcd-ef/files?path=src%2Fa.js', 'GET /workspaces/0123abcd-ef/files?path=missing.js', 'POST /workspaces/0123abcd-ef/exec', 'DELETE /workspaces/0123abcd-ef']);
+  });
+
   it('fixes the stack and marks the package as untrusted data', () => {
     const prompt = buildAgentPrompt({ locale: 'ru', projectName: 'Учёт заявок', inputs: { features: { roles: [{ key: 'admin' }] } }, instruction: 'Сделай тёмную тему' });
     assert.match(prompt.system, /node-react-pg@1\.3\.0/);
