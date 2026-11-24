@@ -3828,6 +3828,55 @@ paths:
         '429': { $ref: '#/components/responses/Problem' }
         '502': { $ref: '#/components/responses/Problem' }
         '503': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/ai-proposals:
+    post:
+      tags: [Journey]
+      operationId: proposeAiChange
+      summary: «Изменить через ИИ» with a preview
+      description: >-
+        Same access, limits and balance as POST …/generate, but nothing is saved: the answer is merged with the current draft
+        (locks kept unless targetKey names the locked part) and returned as a proposal with the same checks a saved version
+        gets. The person then applies or dismisses it. Counts as one AI request.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: stageKey, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [instruction]
+              properties:
+                instruction: { type: string, minLength: 2, maxLength: 1000 }
+                targetKey: { type: string, maxLength: 60 }
+      responses:
+        '200': { description: 'data — proposalId, baseVersionId, content (the stage as it would be saved), changed[] (keys), issues[] (what still blocks acceptance), findings[] (the quality review of the proposal, with autoFix where the platform can fix it itself)' }
+        '403': { description: 'EDIT_AI_FORBIDDEN or STAGE_WRITE_FORBIDDEN' }
+        '429': { description: 'AI_DAILY_LIMIT_REACHED or AI_BUDGET_EXHAUSTED' }
+        '502': { description: AI_OUTPUT_REJECTED }
+        '503': { description: 'AI_NOT_CONFIGURED or AI_FAILED' }
+  /projects/{projectId}/stages/{stageKey}/ai-proposals/{proposalId}/{action}:
+    post:
+      tags: [Journey]
+      operationId: decideAiProposal
+      summary: Apply or dismiss an AI proposal
+      description: Only the person who asked. apply saves the proposal as a new version when the stage has not changed since (409 PROPOSAL_STALE otherwise — ask again); dismiss closes it. A closed proposal answers 409 PROPOSAL_CLOSED.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: stageKey, in: path, required: true, schema: { type: string } }
+        - { name: proposalId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: action, in: path, required: true, schema: { type: string, enum: [apply, dismiss] } }
+      responses:
+        '200': { description: 'apply — data { versionId, versionNumber }; dismiss — data { dismissed: true }' }
+        '403': { description: EDIT_AI_FORBIDDEN }
+        '404': { description: PROPOSAL_NOT_FOUND }
+        '409': { description: 'PROPOSAL_STALE, PROPOSAL_CLOSED or the stage cannot be edited now' }
   /projects/{projectId}/stages/{stageKey}/generate:
     post:
       tags: [Journey]
@@ -8088,6 +8137,12 @@ components:
               fix: { type: string }
               overridden: { type: boolean }
               ownerDecides: { type: boolean, description: 'A decision about the business only the owner can make (an open «Вы это учли?» question, code PROCESS_SITUATION_OPEN, target situation:<key>); the AI is never asked to fix it.' }
+              autoFix:
+                type: object
+                description: >-
+                  A fix the editor can apply at once, without the AI (business process only). kind remove_actor { actor },
+                  remove_step { scenario, step }, remove_link { entity, to }, add_junction { a, b, name } — a record between two
+                  records that have many of each other (PROCESS_MANY_TO_MANY). The result is saved and checked like any edit.
         ai:
           description: The newest advice of the AI reviewer on this version, or null. Advice never changes the score and never blocks acceptance.
           type: [object, 'null']
@@ -8705,14 +8760,24 @@ components:
         hiddenParts: { type: array, items: { type: string, enum: [goal.contacts, offer.prices, products.prices] }, description: 'Replaced with «скрыто владельцем» for the specialist, their AI and their preview. Not for build, hand-off or tech plan stages (400 ACCESS_HIDE_NOT_FOR_BUILD), nor for parts the stage copies into its result (400 ACCESS_HIDE_USED_BY_STAGE).' }
         allowDownload: { type: boolean, description: 'Download stage files uploaded by others (own files always). Otherwise 403 DOWNLOAD_NOT_ALLOWED.' }
         readDays: { type: integer, minimum: 0, maximum: 30, description: 'Days the stage stays readable after it is accepted; 0 closes access at acceptance.' }
+        editMode:
+          type: string
+          enum: [both, ai_only, manual_only]
+          description: >-
+            How a lead changes the stage. both — by hand and through the AI; ai_only — only by instructing the AI (drafts,
+            «Изменить через ИИ», conversation, review fixes), typing into the stage, importing text and restoring versions
+            answer 403 EDIT_MANUAL_FORBIDDEN; manual_only — only by hand, every AI request answers 403 EDIT_AI_FORBIDDEN.
+            Comments, change proposals and locks stay open in every mode. manual_only is not offered for build, hand-off and
+            tech plan stages (400 ACCESS_EDIT_MODE_INVALID). Owners and project members are never limited.
     AccessScope:
       type: object
-      required: [extraReadStages, hiddenParts, allowDownload, readDays]
+      required: [extraReadStages, hiddenParts, allowDownload, readDays, editMode]
       properties:
         extraReadStages: { type: array, items: { type: string } }
         hiddenParts: { type: array, items: { type: string } }
         allowDownload: { type: boolean }
         readDays: { type: integer }
+        editMode: { type: string, enum: [both, ai_only, manual_only] }
     StageAssignment:
       type: object
       required: [id, email, role, status]

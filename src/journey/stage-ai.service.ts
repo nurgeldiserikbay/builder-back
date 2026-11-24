@@ -5,31 +5,38 @@ import { WorktimeService } from './worktime.service.js';
 import { templateProcess } from './process.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { stageFor, stageDefinitions, type StageKey } from './catalog.js';
-import { ArtifactValidationError, defaultDesign, emptyBrief, lockableKeys, mergeProposal, normalizeArtifact, normalizeContent, templateContent, type Brief, type ContentArtifact, type Offer } from './artifacts.js';
+import { ArtifactValidationError, changedKeys, completenessIssues, defaultDesign, emptyBrief, lockableKeys, mergeProposal, normalizeArtifact, normalizeContent, templateContent, type Brief, type ContentArtifact, type Offer } from './artifacts.js';
 import { templateSitemap, type Sitemap } from './sitemap.js';
 import type { BusinessProcess } from './process.js';
 import { templateFeatures, templateScreens, type AppFeatures } from './webapp.js';
 import { costOf } from '../budget/budget.js';
 import { StageAiError, buildStagePrompt } from './stage-ai.js';
 import { normalizeAiOutput } from './ai-normalize.js';
+import { reviewStage, type ReviewFinding } from './stage-review.js';
 import { canEdit, inputsSatisfied } from './stage-state.js';
 import { JourneyCore } from './journey-core.js';
 import { inProject, Access, notEditableCode } from './journey-core.js';
+
+type GenerateInput = { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram'; conversation?: Record<string, string> | null };
+export type AiProposal = { proposalId: string; baseVersionId: string | null; content: unknown; changed: string[]; issues: Array<{ key: string; message: string }>; findings: ReviewFinding[] };
 
 @Injectable()
 export class StageAiService {
   constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore, private readonly worktime: WorktimeService) {}
 
-  generate(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram'; conversation?: Record<string, string> | null }) {
+  generate(userId: string, projectId: string, key: string, input: GenerateInput) {
     // Drafts by template (no AI connected) cost nothing and need no hold.
     if (!this.core.ai()) return this.generateNow(userId, projectId, key, input);
     // Access first: the hold reports the balance and whether AI is busy, which only project people may learn.
-    return this.core.load(userId, projectId, 'write', key).then(() => this.core.oneAiRequest(projectId, () => this.generateNow(userId, projectId, key, input)));
+    return this.core.load(userId, projectId, 'write', key).then((ctx) => this.core.assertEditWay(ctx, key, 'ai')).then(() => this.core.oneAiRequest(projectId, () => this.generateNow(userId, projectId, key, input)));
   }
 
-  async generateNow(userId: string, projectId: string, key: string, input: { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram'; conversation?: Record<string, string> | null }) {
+  generateNow(userId: string, projectId: string, key: string, input: GenerateInput & { preview: true }): Promise<{ data: AiProposal }>;
+  generateNow(userId: string, projectId: string, key: string, input: GenerateInput & { preview?: false }): Promise<{ data: { versionId: string; versionNumber: number; provider: string } }>;
+  async generateNow(userId: string, projectId: string, key: string, input: GenerateInput & { preview?: boolean }): Promise<{ data: AiProposal | { versionId: string; versionNumber: number; provider: string } }> {
     const source = input.source ?? 'app';
     const ctx = await this.core.load(userId, projectId, 'write', key);
+    this.core.assertEditWay(ctx, key, 'ai');
     const assignment = this.core.assignmentFor(ctx, key);
     if (input.saveAs === 'project_rule' && assignment) throw new ForbiddenException('PROJECT_RULE_FORBIDDEN');
     const stage = this.core.stageOf(ctx, key);
@@ -47,6 +54,7 @@ export class StageAiService {
     const provider = this.core.ai();
     const started = Date.now();
 
+    if (input.preview && (!provider || !input.instruction)) throw provider ? new BadRequestException('INSTRUCTION_REQUIRED') : new ServiceUnavailableException('AI_NOT_CONFIGURED');
     if (!provider) {
       // Without AI the platform still offers a deterministic draft for stages that have one; instructions need AI.
       if (input.instruction || input.targetKey) throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
@@ -135,6 +143,25 @@ export class StageAiService {
         baseId = latest?.id ?? null;
       } catch { /* keep the answer merged on the version it was asked for */ }
     }
+    const runData = {
+      projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
+      targetKey: input.targetKey, instructionId: instruction?.id ?? null, ruleIds: rules.map((rule) => rule.id), inputVersionIds: Object.values(inputs).map((item) => item.versionId),
+      baseVersionId: baseId, status: 'succeeded' as const, durationMs: Date.now() - started, source, specialistPlaybook: playbook?.ref ?? null,
+      inputTokens: usage?.inputTokens ?? null, outputTokens: usage?.outputTokens ?? null, costTiyn: costOf(usage, pricing),
+    };
+    if (input.preview) {
+      // Nothing changes yet: the person sees the proposal on the stage and applies or dismisses it.
+      const run = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.generationRun.create({ data: { ...runData, proposal: merged as object, proposalState: 'open' }, select: { id: true } });
+        if (assignment) await tx.stageAssignment.update({ where: { id: assignment.id }, data: { aiUsed: { increment: 1 } } });
+        return created;
+      });
+      const baseContent = baseId ? (await this.core.versionContent(baseId))?.content ?? null : null;
+      const context = await this.core.checkContext(ctx, stageKey);
+      // The proposal goes through the same checks as a saved version, so the person sees what it would break before applying.
+      const findings = reviewStage(definition.artifactType, merged, { ...context, projectType: ctx.type.key }).findings;
+      return { data: { proposalId: run.id, baseVersionId: baseId, content: merged, changed: changedKeys(definition.artifactType, baseContent, merged), issues: completenessIssues(definition.artifactType, merged, context), findings } };
+    }
     const version = await this.prisma.$transaction(async (tx) => {
       const run = await tx.generationRun.create({ data: {
         projectId, stageId: stage.id, requestedByUserId: userId, provider: provider.name, model: provider.model, playbookVersion: definition.playbook.version,
@@ -153,6 +180,53 @@ export class StageAiService {
     });
     await this.worktime.recordAction(userId, projectId, key);
     return { data: { versionId: version.id, versionNumber: version.versionNumber, provider: provider.name } };
+  }
+
+  /** «Изменить через ИИ» with a preview: the AI answer comes back as a proposal; the stage stays as it is. */
+  async propose(userId: string, projectId: string, key: string, input: { instruction: string; targetKey: string | null }) {
+    if (!this.core.ai()) throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
+    return this.core.load(userId, projectId, 'write', key).then((ctx) => this.core.assertEditWay(ctx, key, 'ai'))
+      .then(() => this.core.oneAiRequest(projectId, () => this.generateNow(userId, projectId, key, { instruction: input.instruction, saveAs: 'one_off', targetKey: input.targetKey, preview: true })));
+  }
+
+  private async openProposal(userId: string, projectId: string, key: string, proposalId: string) {
+    const ctx = await this.core.load(userId, projectId, 'write', key);
+    this.core.assertEditWay(ctx, key, 'ai');
+    const stage = this.core.stageOf(ctx, key);
+    if (!/^[0-9a-f-]{36}$/i.test(proposalId)) throw new NotFoundException('PROPOSAL_NOT_FOUND');
+    const run = await this.prisma.generationRun.findFirst({ where: { id: proposalId, stageId: stage.id, requestedByUserId: userId }, select: { id: true, proposal: true, proposalState: true, baseVersionId: true, instructionId: true, provider: true, targetKey: true } });
+    if (!run || run.proposal === null) throw new NotFoundException('PROPOSAL_NOT_FOUND');
+    if (run.proposalState !== 'open') throw new ConflictException('PROPOSAL_CLOSED');
+    return { ctx, stage, run };
+  }
+
+  /** Saves the proposal as a new version, if nobody changed the stage since it was made. */
+  async applyProposal(userId: string, projectId: string, key: string, proposalId: string) {
+    const { ctx, stage, run } = await this.openProposal(userId, projectId, key, proposalId);
+    if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
+    if ((stage.currentVersionId ?? null) !== (run.baseVersionId ?? null)) throw new ConflictException('PROPOSAL_STALE');
+    const definition = stageFor(key as StageKey, ctx.type.key);
+    const instruction = run.instructionId ? await this.prisma.stageInstruction.findUnique({ where: { id: run.instructionId }, select: { text: true } }) : null;
+    const version = await this.prisma.$transaction(async (tx) => {
+      // Claimed first, so a double tap cannot save it twice.
+      const claimed = await tx.generationRun.updateMany({ where: { id: run.id, proposalState: 'open' }, data: { proposalState: 'applied' } });
+      if (claimed.count !== 1) throw new ConflictException('PROPOSAL_CLOSED');
+      const created = await this.core.createVersion(tx, {
+        projectId, stage, artifactType: definition.artifactType, content: run.proposal, origin: 'ai_generated',
+        note: instruction ? tr("ИИ: {0}", [instruction.text]) : 'ИИ: черновик', userId, generationRunId: run.id,
+      });
+      await tx.generationRun.update({ where: { id: run.id }, data: { resultVersionId: created.id } });
+      await this.core.event(tx, projectId, userId, 'stage_generated', key, { provider: run.provider, versionNumber: created.versionNumber, targetKey: run.targetKey });
+      return created;
+    });
+    await this.worktime.recordAction(userId, projectId, key);
+    return { data: { versionId: version.id, versionNumber: version.versionNumber } };
+  }
+
+  async dismissProposal(userId: string, projectId: string, key: string, proposalId: string) {
+    const { run } = await this.openProposal(userId, projectId, key, proposalId);
+    await this.prisma.generationRun.updateMany({ where: { id: run.id, proposalState: 'open' }, data: { proposalState: 'dismissed' } });
+    return { data: { dismissed: true } };
   }
 
   /**
