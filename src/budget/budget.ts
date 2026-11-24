@@ -1,5 +1,5 @@
 // Money for AI usage: cost of one request and the estimate for a project route. Amounts are in tiyn (1 ₸ = 100 tiyn).
-import type { StageKey } from '../journey/catalog.js';
+import { routeAncestors, stageDefinitions, type StageKey } from '../journey/catalog.js';
 
 export type Pricing = { inputPerMillionTiyn: number; outputPerMillionTiyn: number };
 export type Usage = { inputTokens: number | null; outputTokens: number | null } | null;
@@ -53,4 +53,18 @@ export function spendLimitState(spentTiyn: number, limitTiyn: number | null, typ
   const leftTiyn = Math.max(0, limitTiyn - spentTiyn);
   const share = limitTiyn > 0 ? spentTiyn / limitTiyn : 1;
   return { limitTiyn, leftTiyn, share, warn: share >= LIMIT_WARN_SHARE, blocked: spentTiyn + typicalTiyn > limitTiyn };
+}
+
+/**
+ * The route of a project that does not exist yet, as estimateRoute expects it: stages before the chosen start are
+ * brought by the owner (imported), so the AI does not work on them.
+ */
+export function plannedRoute(route: StageKey[], startStageKey: StageKey | null): Array<{ key: StageKey; done: boolean; aiUsed: boolean }> {
+  const before = startStageKey ? new Set(routeAncestors(route, startStageKey)) : new Set<StageKey>();
+  return route.map((key) => ({ key, done: before.has(key), aiUsed: stageDefinitions[key].ai.level !== 'none' }));
+}
+
+/** How many AI requests the stages still to do usually take. */
+export function requestRange(route: Array<{ key: StageKey; done: boolean; aiUsed: boolean }>): { min: number; max: number } {
+  return route.filter((stage) => !stage.done && stage.aiUsed).reduce((sum, stage) => ({ min: sum.min + EXPECTED_REQUESTS[stage.key][0], max: sum.max + EXPECTED_REQUESTS[stage.key][1] }), { min: 0, max: 0 });
 }

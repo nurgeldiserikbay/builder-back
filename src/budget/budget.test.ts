@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { costOf, estimateRoute, requestCost, spendLimitState, tenge } from './budget.js';
+import { costOf, estimateRoute, plannedRoute, requestCost, requestRange, spendLimitState, tenge } from './budget.js';
 
 const pricing = { inputPerMillionTiyn: 150_000, outputPerMillionTiyn: 600_000 }; // 1 500 ₸ and 6 000 ₸ per million tokens
 
@@ -33,5 +33,20 @@ describe('AI spending cap', () => {
     assert.equal(spendLimitState(8_500, 10_000, 1500).blocked, false); // exactly fits
     assert.equal(spendLimitState(8_501, 10_000, 1500).blocked, true);
     assert.equal(spendLimitState(12_000, 10_000, 1500).leftTiyn, 0);
+  });
+});
+
+
+describe('Estimate before the project exists', () => {
+  it('counts every AI stage of a route started from the beginning', () => {
+    const route = plannedRoute(['goal', 'offer', 'content', 'design', 'build'], null);
+    assert.deepEqual(route.map((stage) => stage.done), [false, false, false, false, false]);
+    assert.deepEqual(requestRange(route), { min: 2 + 1 + 3 + 1, max: 5 + 4 + 10 + 3 });
+  });
+
+  it('does not count stages the owner brings when starting later', () => {
+    const route = plannedRoute(['goal', 'offer', 'content', 'design', 'build'], 'content');
+    assert.deepEqual(route.filter((stage) => stage.done).map((stage) => stage.key), ['goal', 'offer']);
+    assert.deepEqual(requestRange(route), { min: 3 + 1, max: 10 + 3 });
   });
 });

@@ -196,11 +196,12 @@ export class WorktimeService {
   /** Planned, due and paid amounts for the project estimate. */
   async projectSummary(projectId: string) {
     const rows = await this.prisma.stageAssignment.findMany({ where: { projectId, payKind: { not: 'none' }, status: { in: ['invited', 'active', 'completed'] } }, select: { ...termsSelect, payments: { select: { amountTiyn: true, status: true } } } });
-    let planned = 0, due = 0, paid = 0;
+    let planned = 0, due = 0, paid = 0, openEnded = 0;
     for (const row of rows) {
       planned += plannedAmount(row);
+      if (row.payKind === 'hourly' && !row.hourLimit) openEnded += 1;
       for (const payment of row.payments) { if (payment.status === 'due' || payment.status === 'checkout') due += payment.amountTiyn; if (['paid_direct', 'paid', 'held', 'paid_out'].includes(payment.status)) paid += payment.amountTiyn; }
     }
-    return { specialists: rows.length, planned: tenge(planned), due: tenge(due), paid: tenge(paid) };
+    return { specialists: rows.length, planned: tenge(planned), openEnded, due: tenge(due), paid: tenge(paid) };
   }
 }

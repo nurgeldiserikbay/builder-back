@@ -2419,7 +2419,7 @@ paths:
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
-        '200': { description: 'pricingConfigured, perRequest, estimate (min, max, remainingMin, remainingMax, basedOnRequests), spent (total, requests, unpricedRequests), limit (amount, left, percent, warn from 80%, blocked when a typical request no longer fits; null without a cap), canSetLimit, stages, participants, specialists (planned, due, paid in tenge; only for the owner and managers, otherwise null), currency KZT' }
+        '200': { description: 'pricingConfigured, perRequest, estimate (min, max, remainingMin, remainingMax, basedOnRequests), spent (total, requests, unpricedRequests), limit (amount, left, percent, warn from 80%, blocked when a typical request no longer fits; null without a cap), canSetLimit, stages (key, title, done, aiUsed, spent, requests, planned, expectedRequests, specialists — count, planned, openEnded (hourly without an hour limit), due, paid on this stage for the owner and managers, otherwise null), participants, specialists (planned, openEnded — hourly without an hour limit, due, paid in tenge; only for the owner and managers, otherwise null), currency KZT' }
         '404': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/budget/limit:
     post:
@@ -2610,6 +2610,41 @@ paths:
         '400': { description: 'INVALID_KIND, INVALID_STAGE, INVALID_CURSOR, INVALID_LIMIT' }
         '401': { description: Not signed in }
         '404': { description: PROJECT_NOT_FOUND }
+  /me/work:
+    get:
+      tags: [Specialists]
+      operationId: myWork
+      summary: «Моя работа» — the specialist's stages, time, money and reviews across projects
+      description: >-
+        Only the caller's own assignments (active, and completed in the last 180 days). Per stage — role, terms, time
+        (tracked, approved, pending, disputed, last 7 days), the most the owner may pay under the terms, what the approved
+        time is worth now, payments by state. Money for the specialist: awaitingOwner (due or checkout), held (paid to
+        BuildPath, waits for payout; after the fee when known), paidOut (paid out or paid directly). recentTime — raw
+        intervals of the last 7 days for the screen to group by local day. Reviews hidden by support are not counted.
+        setup — whether payout details are saved and the catalog profile state (none, draft, published, blocked).
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'data — assignments[], totals (awaitingOwner, held, paidOut, paidOutLast30, weekMinutes, pendingMinutes), recentTime[] (startedAt, minutes), payments[] (last 20), reviews (count, average, latest[5]), setup (payoutDetails, payoutHint, profile), feePercent, currency' }
+        '401': { description: Not signed in }
+  /journey/estimate:
+    get:
+      tags: [Budget]
+      operationId: estimateRoute
+      summary: Cost of a route before the project is created
+      description: >-
+        AI requests and tenge for the stages the AI will do on the chosen project type, from the chosen start stage
+        (stages before it are brought by the owner and not counted). requests is known even without prices; cost is null
+        until staff set AI prices. Specialists are not included: they are optional and paid only for accepted work.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectType, in: query, required: true, schema: { type: string } }
+        - { name: startStageKey, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: 'data — projectType, startStageKey, requests (min, max), pricingConfigured, perRequest, cost (min, max) or null, stages[] (key, title, brought, aiUsed, requests, cost), basedOnRequests, currency' }
+        '400': { description: 'INVALID_PROJECT_TYPE, INVALID_START_STAGE' }
+        '401': { description: Not signed in }
   /admin/disputes:
     get:
       tags: [Disputes]

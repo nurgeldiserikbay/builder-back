@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Header, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { StaffAuthGuard, type StaffRequest } from '../admin/staff-auth.guard.js';
@@ -24,6 +24,20 @@ export class ProjectBudgetController {
     if (Object.keys(input).some((key) => key !== 'amount')) throw new BadRequestException('UNKNOWN_FIELD');
     if (input.amount !== null && typeof input.amount !== 'number') throw new BadRequestException('SPEND_LIMIT_INVALID');
     return this.budget.setSpendLimit(request.user.id, projectId, input.amount as number | null);
+  }
+}
+
+/** Cost of a route before the project is created (the «Новый проект» wizard). */
+@Controller('journey/estimate')
+@UseGuards(AuthGuard)
+export class RouteEstimateController {
+  constructor(private readonly budget: BudgetService) {}
+
+  @Get()
+  @Header('Cache-Control', 'no-store')
+  get(@Query('projectType') projectType: string | undefined, @Query('startStageKey') startStageKey: string | undefined) {
+    if (typeof projectType !== 'string' || !projectType) throw new BadRequestException('INVALID_PROJECT_TYPE');
+    return this.budget.routeEstimate(projectType, startStageKey ? startStageKey : null);
   }
 }
 
