@@ -6,6 +6,7 @@ import type { Brief, ContentArtifact, DesignArtifact, Offer } from './artifacts.
 import type { ArtifactType } from './catalog.js';
 import type { Catalog } from './products.js';
 import type { BusinessProcess } from './process.js';
+import { measurable, type IdeaReview } from './idea.js';
 import type { Schedule } from './schedule.js';
 import type { Sitemap } from './sitemap.js';
 import type { TechPlan } from './techplan.js';
@@ -25,6 +26,13 @@ const brief: OutputItem<Brief>[] = [
   { key: 'action', level: 'required', text: () => tr('Главное действие и контакт для него — для кнопок и формы'),
     met: (b) => Boolean(b.mainAction) && (b.mainAction === 'call' ? filled(b.phone) : b.mainAction === 'message' ? filled(b.messenger) : b.mainAction === 'email' ? filled(b.email) : b.mainAction === 'visit' ? filled(b.address) : true) },
   { key: 'city', level: 'recommended', text: () => tr('Город — чтобы вас находили рядом'), met: (b) => filled(b.city) || filled(b.address) },
+];
+
+const idea: OutputItem<IdeaReview>[] = [
+  { key: 'problem', level: 'required', text: () => tr('Проблема и для кого — из них строится бизнес-процесс'), met: (i) => filled(i.problem) && i.segments.some((segment) => filled(segment.name)) },
+  { key: 'metrics', level: 'required', text: () => tr('Измеримая цель успеха — по ней выбирают функции первой версии и аналитику'), met: (i) => i.metrics.some((metric) => measurable(metric.text)) },
+  { key: 'risks', level: 'recommended', text: () => tr('Риски с решениями — для плана работ'), met: (i) => i.risks.length > 0 && i.risks.every((risk) => risk.decision !== 'open' || risk.impact === 'low') },
+  { key: 'value', level: 'recommended', text: () => tr('Почему выберут вас — для текстов и предложений функций'), met: (i) => filled(i.value) },
 ];
 
 const offer: OutputItem<Offer>[] = [
@@ -86,7 +94,7 @@ const techplan: OutputItem<TechPlan>[] = [
 ];
 
 const OUTPUTS: Partial<Record<ArtifactType, OutputItem<never>[]>> = {
-  brief, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan,
+  brief, idea, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan,
 } as unknown as Partial<Record<ArtifactType, OutputItem<never>[]>>;
 
 export interface StageOutputItem { key: string; text: string; level: OutputLevel; met: boolean }

@@ -473,6 +473,14 @@ export class JourneyController {
     return this.journey.reopen(request.user.id, projectId, stageKey(key));
   }
 
+  /** { reason } — skip an optional stage; the stages after it go on without it. Owner or manager. */
+  @Post('projects/:projectId/stages/:stageKey/skip')
+  @HttpCode(200)
+  skip(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const reason = text(body(raw ?? {}, ['reason']).reason, 'reason', 10, 500, false)!;
+    return this.journey.skip(request.user.id, projectId, stageKey(key), reason);
+  }
+
   @Post('projects/:projectId/build')
   build(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
     return this.journey.build(request.user.id, projectId);

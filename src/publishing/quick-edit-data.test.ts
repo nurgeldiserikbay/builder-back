@@ -82,6 +82,7 @@ describe('quick edit of prices and hours (database)', async () => {
     const version = async (stageKey: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey } })).currentVersionId!;
     const step = async (stageKey: string, content: unknown) => { await journey.saveDraft(owner.id, projectId, stageKey, { content, baseVersionId: null }); await journey.accept(owner.id, projectId, stageKey, await version(stageKey)); };
     await step('goal', brief);
+    await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     // The owner answers the questions the platform asks about the business (the typical answer each time).
     await step('process', { ...templateProcess(projectType, brief), situations: situationsFor(projectType).map((item) => ({ key: item.key, answer: item.options.find((option) => option.typical)!.value })) });
     await step('features', templateFeatures(brief, templateProcess(projectType, brief), 'site'));
@@ -107,7 +108,7 @@ describe('quick edit of prices and hours (database)', async () => {
     const done = (await quick.products(owner.id, projectId, { products: [{ key: 'p1', price: 9900, available: true }, { key: 'p2', price: 3500, available: false }] })).data;
     assert.equal(done.published.products.length, 2);
     const stages = await prisma!.projectStage.findMany({ where: { projectId }, select: { stageKey: true, status: true } });
-    assert.ok(stages.every((stage) => stage.status === 'approved'), JSON.stringify(stages));
+    assert.ok(stages.every((stage) => stage.status === 'approved' || (stage.stageKey === 'idea' && stage.status === 'skipped')), JSON.stringify(stages));
     const answered = await prisma!.changeNotice.findMany({ where: { projectId, status: { not: 'open' } }, select: { status: true, targetStage: { select: { stageKey: true } } } });
     assert.ok(answered.some((notice) => notice.targetStage.stageKey === 'techplan'));
     const live = await prisma!.sitePublication.findFirstOrThrow({ where: { projectId }, select: { buildVersionId: true } });
@@ -127,7 +128,7 @@ describe('quick edit of prices and hours (database)', async () => {
     const schedule = (await prisma!.stageArtifactVersion.findUniqueOrThrow({ where: { id: await version('schedule') }, select: { content: true } })).content as unknown as Schedule;
     assert.deepEqual(schedule.masters[0]!.week[6], { from: '11:00', to: '15:00' });
     const stages = await prisma!.projectStage.findMany({ where: { projectId }, select: { stageKey: true, status: true } });
-    assert.ok(stages.every((stage) => stage.status === 'approved'), JSON.stringify(stages));
+    assert.ok(stages.every((stage) => stage.status === 'approved' || (stage.stageKey === 'idea' && stage.status === 'skipped')), JSON.stringify(stages));
     // Products are not part of this route.
     await assert.rejects(quick.products(owner.id, projectId, { products: [{ key: 'p1', price: 1, available: true }] }), /QUICK_EDIT_TARGET_INVALID/);
   });

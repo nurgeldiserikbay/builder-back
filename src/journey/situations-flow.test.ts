@@ -45,6 +45,7 @@ describe('«Вы это учли?» in a project (database)', async () => {
     const current = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId;
     await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
     await journey.accept(owner.id, projectId, 'goal', (await current('goal'))!);
+    await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
 
     // The stage page brings the questions of this kind of business.
     const detail = await journey.stage(owner.id, projectId, 'process') as unknown as { data: { options: { process: { situations: { items: Array<{ key: string }> } } } } };

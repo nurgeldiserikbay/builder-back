@@ -60,6 +60,7 @@ describe('release gate (database)', async () => {
       await journey.accept(owner.id, projectId, key, await stageVersion(key));
     };
     await step('goal', brief);
+    await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await step('process', templateProcess('landing', brief));
     await step('features', templateFeatures(brief, templateProcess('landing', brief), 'site'));
     await step('techplan', { ownerNotes: null });
@@ -152,6 +153,7 @@ describe('release gate (database)', async () => {
       const stageVersion = async (stageKey: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey } })).currentVersionId!;
       const step = async (stageKey: string, content: unknown) => { await journey.saveDraft(owner.id, projectId, stageKey, { content, baseVersionId: null }); await journey.accept(owner.id, projectId, stageKey, await stageVersion(stageKey)); };
       await step('goal', brief);
+      await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
       await step('process', templateProcess('landing', brief));
       await step('features', templateFeatures(brief, templateProcess('landing', brief), 'site'));
       await step('techplan', { ownerNotes: null });

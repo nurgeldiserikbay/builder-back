@@ -94,6 +94,10 @@ export function artifactSummary(type: string, content: unknown): string {
     const design = content as DesignArtifact;
     return tr("Цвета: {0}, шрифт: {1}", [tr(palettes.find((item) => item.id === design.palette)?.label ?? design.palette), tr(fonts.find((item) => item.id === design.font)?.label ?? design.font)]);
   }
+  if (type === 'idea') {
+    const value = content as { problem?: string; segments?: Array<{ name: string }>; metrics?: Array<{ text: string }> };
+    return [value.problem && tr("Проблема: {0}", [value.problem.slice(0, 200)]), tr("Для кого: {0}", [(value.segments ?? []).map((segment) => segment.name).join(', ')]), tr("Цели: {0}", [(value.metrics ?? []).map((metric) => metric.text).join(' · ')])].filter(Boolean).join('\n');
+  }
   if (type === 'features') {
     const value = content as { roles?: Array<{ name: string }>; features?: Array<{ title: string; priority: string }> };
     return [tr("Роли: {0}", [(value.roles ?? []).map((role) => role.name).join(', ')]), tr("Обязательные функции: {0}", [(value.features ?? []).filter((feature) => feature.priority === 'must').map((feature) => feature.title).join(' · ')])].join('\n');

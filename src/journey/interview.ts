@@ -12,8 +12,8 @@ export const INTERVIEW_VERSION = '1.0.0';
  * (the ТЗ) the result is a structure, so the conversation gathers the owner's answers by topic and the AI composes the
  * stage from them (that needs AI).
  */
-export const INTERVIEW_STAGES = ['goal', 'offer', 'process', 'features'] as const;
-export const COMPOSED_STAGES: readonly string[] = ['process', 'features'];
+export const INTERVIEW_STAGES = ['goal', 'idea', 'offer', 'process', 'features'] as const;
+export const COMPOSED_STAGES: readonly string[] = ['idea', 'process', 'features'];
 
 const topic = (key: string, label: string, required: boolean, why: string, example: string): FieldDefinition => ({ key, label, kind: 'textarea', required, maxLength: 1200, why, example });
 
@@ -227,6 +227,7 @@ export function readAiTurn(fields: FieldDefinition[], raw: unknown): { reply: st
 
 /** The first words of the conversation: the same with and without AI, so starting costs nothing. */
 export function greeting(stage: StageDefinition, ai: boolean, story: string | null): string {
+  if (stage.key === 'idea') return tr('Разберём идею. Расскажите, какую проблему вы решаете и для кого, как люди справляются с ней сейчас и почему выберут вас. Я задам уточняющие вопросы — в том числе неудобные, про риски, — а потом разложу всё по полям.');
   if (stage.key === 'process') return tr('Расскажите, как у вас всё происходит сейчас: кто участвует и как клиент проходит путь от первого обращения до результата. Можно своими словами, как рассказали бы новому сотруднику. Я задам уточняющие вопросы, а потом составлю бизнес-процесс со схемой.');
   if (stage.key === 'features') return tr('Обсудим, что должен уметь продукт. Расскажите, кто им будет пользоваться и без чего первая версия не имеет смысла. Я задам уточняющие вопросы, а потом составлю ТЗ — его можно будет поправить.');
   if (stage.key === 'offer') return ai ? tr('Расскажите, что вы продаёте или какие услуги оказываете и сколько это стоит — как рассказали бы клиенту. Я задам уточняющие вопросы.') : tr('Перечислю вопросы из формы по одному. Отвечайте коротко — потом всё можно поправить.');

@@ -105,6 +105,7 @@ describe('importing an own ТЗ into a project (database)', async () => {
     const current = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId;
     await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
     await journey.accept(owner.id, projectId, 'goal', (await current('goal'))!);
+    await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.saveDraft(owner.id, projectId, 'process', { content: templateProcess('landing', brief), baseVersionId: null });
     await journey.accept(owner.id, projectId, 'process', (await current('process'))!);
 

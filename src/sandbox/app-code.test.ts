@@ -160,6 +160,7 @@ describe('AI-written business rules (database)', async () => {
     const accept = async (key: string) => journey.accept(owner.id, projectId, key, (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId!);
     await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
     await accept('goal');
+    await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     for (const key of ['process', 'features', 'screens']) { await journey.generate(owner.id, projectId, key, { instruction: null, saveAs: 'one_off', targetKey: null }); await accept(key); }
     await journey.saveDraft(owner.id, projectId, 'techplan', { content: { ownerNotes: null }, baseVersionId: null });
     await accept('techplan');

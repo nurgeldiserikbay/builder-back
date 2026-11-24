@@ -151,6 +151,7 @@ describe('«Разговор» (database)', async () => {
     const brief = { businessName: 'Усы', whatYouDo: 'Мужские стрижки', audience: 'Мужчины', city: 'Астана', mainAction: 'message', phone: null, messenger: null, email: null, address: null, tone: 'friendly' };
     const goalVersion = await prisma!.stageArtifactVersion.create({ data: { projectId, stageId: stages.goal.id, versionNumber: 1, artifactType: 'brief', content: brief, origin: 'owner_edit', createdByUserId: owner.id } });
     await prisma!.projectStage.update({ where: { id: stages.goal.id }, data: { status: 'approved', currentVersionId: goalVersion.id, approvedVersionId: goalVersion.id } });
+    await prisma!.projectStage.update({ where: { id: stages.idea.id }, data: { status: 'skipped' } });
     await prisma!.projectStage.update({ where: { id: stages.process.id }, data: { status: 'ready' } });
     core.setProvider(null);
     assert.equal((await interviews.get(owner.id, projectId, 'process')).data.available, false);

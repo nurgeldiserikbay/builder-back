@@ -4452,6 +4452,42 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/{stageKey}/skip:
+    post:
+      tags: [Journey]
+      operationId: skipStage
+      summary: Skip an optional stage with a written reason
+      description: >-
+        Only stages marked optional (the idea review) can be skipped. The reason is stored on the stage and in the
+        activity log as stage_skipped; the stages after it open as if it were accepted. A skipped stage can be reopened.
+        400 STAGE_NOT_OPTIONAL or INVALID_REASON (10–500 characters); 409 STAGE_ALREADY_DONE or STAGE_IN_REVIEW.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/StageKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [reason]
+              properties:
+                reason: { type: string, minLength: 10, maxLength: 500 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JourneyResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/stages/{stageKey}/reopen:
     post:
       tags: [Journey]
@@ -8372,7 +8408,7 @@ components:
                         steps: { type: array, items: { type: string } }
                         checks: { type: array, items: { type: string } }
                         doneWhen: { type: string }
-                artifactType: { type: string, enum: [brief, offer, content, design, site] }
+                artifactType: { type: string, enum: [brief, idea, process, offer, catalog, schedule, sitemap, features, screens, techplan, content, design, site, handoff] }
                 status: { $ref: '#/components/schemas/StageStatus' }
                 statusLabel: { type: string }
                 statusExplanation: { type: string }
@@ -8384,7 +8420,9 @@ components:
                 acceptedVersionId: { type: [string, 'null'], format: uuid }
                 canEdit: { type: boolean }
                 canAccept: { type: boolean }
-                canReopen: { type: boolean }
+                canReopen: { type: boolean, description: 'Accepted, imported or skipped stages can be reopened by the owner.' }
+                optional: { type: [string, 'null'], description: 'For an optional stage — when it is reasonable to skip it; null for a required stage.' }
+                canSkip: { type: boolean, description: The owner or a manager may skip this optional stage with a written reason. }
                 canImport: { type: boolean }
                 inputsReady: { type: boolean }
                 canOverrideReview: { type: boolean, description: Owner or manager may explain in writing why the stage goes on despite blocking review findings. }
