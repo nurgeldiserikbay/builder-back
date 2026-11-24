@@ -1,3 +1,4 @@
+import { ideaMarkdown, importIdeaText, type IdeaReview } from './idea.js';
 import { tr } from '../i18n/i18n.js';
 import { assertBrowserGate } from '../quality/browser-gate.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
@@ -264,7 +265,9 @@ export class JourneyService {
             opens: dependents.filter((item) => item.opens).map(({ key: itemKey, title }) => ({ key: itemKey, title })),
             willNotify: stage.approvedVersionId ? dependents.filter((item) => item.hasWork).map(({ key: itemKey, title, status }) => ({ key: itemKey, title, status })) : [],
           },
-          canReopen: owner && (stage.status === 'approved' || stage.status === 'imported'),
+          canReopen: owner && (stage.status === 'approved' || stage.status === 'imported' || stage.status === 'skipped'),
+          optional: definition.optional?.why ?? null,
+          canSkip: owner && Boolean(definition.optional) && !['approved', 'imported', 'skipped', 'in_review'].includes(stage.status) && editableProject(ctx.project.status),
           canImport: Boolean(definition.importHint) && writable,
           canSubmit: (Boolean(assignment) || (policyActive && ctx.viewer.kind === 'member')) && writable && Boolean(stage.currentVersionId) && stage.status !== 'in_review' && !changesPending,
           canRequestChanges: (owner || Boolean(approval.isReviewer)) && stage.status === 'in_review' && editableProject(ctx.project.status),
@@ -304,7 +307,7 @@ export class JourneyService {
           configured: Boolean(ai), remainingToday: ai ? await this.core.remainingAiRuns(projectId) : 0,
           budget: assignment ? { limit: assignment.aiBudget, used: assignment.aiUsed } : null,
           month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null,
-          templateAvailable: !ai && (['content', 'design', 'process', 'sitemap', 'features', 'screens'] as string[]).includes(stageKey),
+          templateAvailable: !ai && (['content', 'design', 'idea', 'process', 'sitemap', 'features', 'screens'] as string[]).includes(stageKey),
         },
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
@@ -431,6 +434,7 @@ export class JourneyService {
           return parsed.content;
         }
         const text = (source as { text: string }).text;
+        if (definition.artifactType === 'idea') return importIdeaText(text);
         return definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : definition.artifactType === 'catalog' ? importCatalogText(text) : importContentText(text, sitemap);
       });
     } catch (error) { validationError(error); }
@@ -777,11 +781,33 @@ export class JourneyService {
   async reopen(userId: string, projectId: string, key: string) {
     const ctx = await this.core.load(userId, projectId, 'accept', key);
     const stage = this.core.stageOf(ctx, key);
-    if (stage.status !== 'approved' && stage.status !== 'imported') throw new ConflictException('STAGE_NOT_ACCEPTED');
-    const next = reopenStage(ctx.statuses, key as StageKey);
+    if (stage.status !== 'approved' && stage.status !== 'imported' && stage.status !== 'skipped') throw new ConflictException('STAGE_NOT_ACCEPTED');
+    // A skipped stage taken up again starts where it was left: with its draft if there is one.
+    const next = stage.status === 'skipped' ? { ...ctx.statuses, [key]: stage.currentVersionId ? 'in_progress' as const : 'ready' as const } : reopenStage(ctx.statuses, key as StageKey);
     await this.prisma.$transaction(async (tx) => {
       await this.core.writeStatuses(tx, ctx, next);
+      if (stage.status === 'skipped') await tx.projectStage.update({ where: { id: stage.id }, data: { reviewNote: null } });
       await this.core.event(tx, projectId, userId, 'stage_reopened', key, {});
+    });
+    return this.journey(userId, projectId);
+  }
+
+  /**
+   * An optional stage skipped by the owner or a manager with a written reason (kept as the stage note and in the
+   * activity log). The stages after it go on without it; it can be taken up again with reopen.
+   */
+  async skip(userId: string, projectId: string, key: string, reason: string) {
+    const ctx = await this.core.load(userId, projectId, 'accept', key);
+    const stageKey = key as StageKey;
+    if (!stageDefinitions[stageKey].optional) throw new BadRequestException('STAGE_NOT_OPTIONAL');
+    const stage = this.core.stageOf(ctx, key);
+    if (['approved', 'imported', 'skipped'].includes(stage.status)) throw new ConflictException('STAGE_ALREADY_DONE');
+    if (stage.status === 'in_review') throw new ConflictException('STAGE_IN_REVIEW');
+    const next = unlockDependents(ctx.route, { ...ctx.statuses, [stageKey]: 'skipped' });
+    await this.prisma.$transaction(async (tx) => {
+      await this.core.writeStatuses(tx, ctx, next);
+      await tx.projectStage.update({ where: { id: stage.id }, data: { reviewNote: reason } });
+      await this.core.event(tx, projectId, userId, 'stage_skipped', key, { reason });
     });
     return this.journey(userId, projectId);
   }
@@ -930,13 +956,13 @@ export class JourneyService {
     const offer = get<Offer>('offer');
     const content = get<ContentArtifact>('content');
     const site = get<SiteArtifact>('build');
-    const openItems = stages.filter((stage) => !stage.accepted).map((stage) => `Этап «${stage.title}» не принят (${stage.statusLabel.toLowerCase()}).`);
+    const openItems = stages.filter((stage) => !stage.accepted && stage.status !== 'skipped').map((stage) => `Этап «${stage.title}» не принят (${stage.statusLabel.toLowerCase()}).`);
     const technology = (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'technologies' } }, select: { optionKey: true, reason: true } }));
     const stagesInfo = stages;
     // project.md is a project file: written in the project's language, with stage names translated.
     const projectMarkdown = (): string => {
       const stages = stagesInfo.map((stage) => ({ ...stage, title: tr(stage.title), statusLabel: tr(stage.statusLabel) }));
-      const openItems = stages.filter((stage) => !stage.accepted).map((stage) => tr('Этап «{0}» не принят ({1}).', [stage.title, stage.statusLabel.toLowerCase()]));
+      const openItems = stages.filter((stage) => !stage.accepted && stage.status !== 'skipped').map((stage) => tr('Этап «{0}» не принят ({1}).', [stage.title, stage.statusLabel.toLowerCase()]));
       const technologyLabel: Record<string, string> = { buildpath: tr("технологии BuildPath"), developer: tr("свой стек у разработчика"), constructor: tr("конструктор сайтов") };
       const lines: string[] = [`# ${ctx.project.name}`, '', tr("Тип проекта: {0}", [tr(ctx.type.title)]), tr("Сформировано: {0}", [new Date().toISOString()])];
       if (technology) lines.push(tr("Технологии: {0}{1}", [technologyLabel[technology.optionKey] ?? technology.optionKey, technology.reason ? ` — ${technology.reason}` : '']));
@@ -947,6 +973,8 @@ export class JourneyService {
         if (brief.city) lines.push(tr("- Город: {0}", [brief.city]));
         for (const [label, value] of [[tr("Телефон"), brief.phone], [tr("Мессенджер"), brief.messenger], ['Email', brief.email], [tr("Адрес"), brief.address]] as const) if (value) lines.push(`- ${label}: ${value}`);
       }
+      const idea = get<IdeaReview>('idea');
+      if (idea) lines.push('', tr("## Разбор идеи"), '', ...ideaMarkdown(idea));
       if (offer) {
         lines.push('', tr("## Услуги"), '');
         for (const service of offer.services) lines.push(`- ${service.name}${service.price ? ` — ${service.price}` : ''}${service.description ? `. ${service.description}` : ''}`);

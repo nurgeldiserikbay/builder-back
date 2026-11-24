@@ -1,10 +1,10 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.9.0';
+export const ROUTE_CATALOG_VERSION = '1.10.0';
 
-export type StageKey = 'goal' | 'process' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'build' | 'handoff';
-export type ArtifactType = 'brief' | 'process' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'site' | 'handoff';
+export type StageKey = 'goal' | 'idea' | 'process' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'build' | 'handoff';
+export type ArtifactType = 'brief' | 'idea' | 'process' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'site' | 'handoff';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking' | 'web_app';
 
@@ -43,6 +43,11 @@ export interface StageDefinition {
    * a new approved version notifies every stage built on it (change notices).
    */
   contract?: { explanation: string };
+  /**
+   * The owner or a manager may skip the stage with a written reason (PRODUCT_LIFECYCLE.md §5): the stages after it then
+   * go on without it. `why` says when skipping is fine. The stage can be taken up again later.
+   */
+  optional?: { why: string };
 }
 
 export interface ProjectTypeDefinition {
@@ -109,6 +114,39 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
       ],
     },
   },
+  idea: {
+    key: 'idea',
+    version: '1.0.0',
+    title: 'Разбор идеи',
+    purpose: 'Доведём идею до ясности и найдём дыры раньше, чем на них потрачены деньги: какую проблему решаем и для кого, почему выберут вас, как люди справляются сейчас, как продукт зарабатывает, какие риски вы принимаете сознательно и как поймём, что всё работает.',
+    outcome: 'Проблема и группы пользователей, ценность, альтернативы, как продукт зарабатывает, риски с решениями, измеримые цели успеха и ограничения.',
+    artifactType: 'idea',
+    inputs: ['goal'],
+    ai: {
+      level: 'ai_full',
+      whatItDoes: 'ИИ разложит идею по полям и честно пометит, чего вы не сказали. Альтернативы, которые предложит ИИ, попадут в документы, только когда вы их подтвердите.',
+      instructionExamples: ['Главный риск — мастера не захотят работать через приложение', 'Цель: 50 заказов в месяц через полгода', 'Конкуренты — заказ по телефону и Instagram'],
+    },
+    acceptance: ['Понятно, какую проблему решаем и для кого', 'Есть измеримая цель успеха', 'По каждому важному риску принято решение'],
+    acceptExplanation: 'Разбор станет основой бизнес-процесса и ТЗ: функции будут вытекать из проблемы и целей, а риски — учитываться в плане.',
+    importHint: 'Если у вас уже есть описание идеи, бизнес-план или презентация — вставьте текст: мы разложим его по полям и покажем, чего не хватает.',
+    optional: { why: 'Можно пропустить, если идея уже проверена — например, бизнес давно работает и вы переносите его в интернет. Позже к разбору можно вернуться.' },
+    playbook: {
+      version: '1.0.0',
+      instructions: [
+        'Work only from the brief, the conversation and the user instruction, in the project language and in plain words.',
+        'Never invent facts, numbers or market data. What the user did not say stays an empty string; add it to risks as an open question when it matters.',
+        'problem: the pain of the clients in one or two sentences, not a description of the product.',
+        'segments: 1–3 groups of people who use or pay, each with what they need.',
+        'value: why these people would choose this over how they cope today.',
+        'alternatives: how people solve it now (a competitor, a phone call, Instagram, doing nothing). Ones the user named have source «owner»; ones you suggest have source «ai» and confirmed false.',
+        'revenue: how it earns (price, subscription, commission) or what it saves for an internal tool — only from what the user said.',
+        'risks: assumptions that may be wrong and things that can go wrong, with impact high/medium/low; decision «open» unless the user said how they handle it.',
+        'metrics: 1–3 measurable goals with a number and a period, only from what the user said; if none, leave empty.',
+        'constraints: deadline, budget, legal requirements and where data must be stored — only if mentioned.',
+      ],
+    },
+  },
   process: {
     key: 'process',
     version: '1.0.0',
@@ -116,7 +154,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     purpose: 'Опишем, как работает ваше дело: кто участвует, как клиент проходит путь от первого взгляда до результата, какие правила действуют и какую информацию вы храните. Схемы покажут это наглядно — по ним видно, что будет делать сайт, а что останется за вами.',
     outcome: 'Участники, сценарии по шагам со схемой по ролям, правила и схема данных.',
     artifactType: 'process',
-    inputs: ['goal'],
+    inputs: ['goal', 'idea'],
     ai: {
       level: 'ai_full',
       whatItDoes: 'ИИ опишет процесс по паспорту проекта: участников, сценарии, правила и данные. Проверьте схему — поправьте шаги, которые у вас идут иначе.',
@@ -417,7 +455,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Одна страница, которая рассказывает о вас и ведёт к одному действию: позвонить, написать или прийти.',
     goodFor: 'Мастерам, небольшим услугам, мероприятиям, запуску продукта.',
     examples: ['Мастер маникюра', 'Торты на заказ', 'Репетитор', 'Мероприятие'],
-    stages: ['goal', 'process', 'features', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'features', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница сайта в виде файла и все тексты проекта.',
   },
   company_site: {
@@ -426,7 +464,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Подробная страница компании: услуги и цены, о вас, как работаете, контакты и часы работы.',
     goodFor: 'Небольшим компаниям, салонам, студиям, сервисам.',
     examples: ['Автосервис', 'Стоматология', 'Юридическая консультация', 'Студия йоги'],
-    stages: ['goal', 'process', 'features', 'offer', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'features', 'offer', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница компании в виде файла, список услуг и все тексты проекта.',
   },
   multipage: {
@@ -435,7 +473,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Несколько страниц с меню: главная, услуги, о вас, вопросы, контакты — у каждой свой адрес и своё описание для поисковиков.',
     goodFor: 'Компаниям с несколькими направлениями услуг, клиникам, школам, сервисам, которым тесно на одной странице.',
     examples: ['Стоматология', 'Языковая школа', 'Ремонт квартир', 'Юридическая фирма'],
-    stages: ['goal', 'process', 'features', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'features', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт из нескольких страниц с меню, файлы всех страниц, карта сайта и все тексты проекта.',
   },
   store: {
@@ -444,7 +482,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Витрина с товарами, корзина и заказ без регистрации: клиент выбирает товары и способ получения, а вы получаете заказ в Telegram и видите все заказы в проекте.',
     goodFor: 'Небольшим магазинам и мастерским: до 60 товаров, самовывоз или доставка, оплата при получении или переводом.',
     examples: ['Кондитерская', 'Цветы', 'Мыло ручной работы', 'Кофе в зёрнах'],
-    stages: ['goal', 'process', 'features', 'products', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'features', 'products', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный магазин с витриной, корзиной и формой заказа, каталог и все тексты проекта. Заказы принимаются, когда сайт опубликован на BuildPath. Онлайн-оплаты пока нет.',
   },
   booking: {
@@ -453,7 +491,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Сайт с записью: клиент выбирает услугу, мастера и свободное время, а вы получаете запись в Telegram и видите все записи в проекте.',
     goodFor: 'Салонам красоты, барбершопам, массажу, тренерам, репетиторам — всем, кто работает по времени.',
     examples: ['Барбершоп', 'Маникюр', 'Массаж', 'Автомойка'],
-    stages: ['goal', 'process', 'features', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'features', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт с онлайн-записью, список услуг, расписание и все тексты проекта. Запись работает, когда сайт опубликован на BuildPath.',
   },
   web_app: {
@@ -462,7 +500,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Приложение со входом, ролями и своей логикой: кабинет клиента, учёт заявок, внутренняя система. BuildPath доведёт его до полного пакета — функции, экраны с прототипом, архитектуру и контракт API, — а ИИ-агент напишет по нему код приложения.',
     goodFor: 'Тем, кому нужен личный кабинет, учёт или внутренний сервис.',
     examples: ['Кабинет клиента сервиса', 'Учёт заявок и выездов', 'Запись на курсы с кабинетом ученика', 'Внутренняя система для сотрудников'],
-    stages: ['goal', 'process', 'features', 'screens', 'techplan', 'handoff'],
+    stages: ['goal', 'idea', 'process', 'features', 'screens', 'techplan', 'handoff'],
     resultExplanation: 'Пакет для разработки — техническое задание, права по ролям, схема данных, контракт API и кликабельный прототип — и код всего приложения, который пишет ИИ-агент и проверяет платформа. Запускаете вы: на своём Render или сервере.',
   },
 };
@@ -588,6 +626,6 @@ export const statusExplanations: Record<string, { label: string; explanation: st
   approved: { label: 'Принят', explanation: 'Результат этапа принят и передан дальше.' },
   stale: { label: 'Нужно проверить', explanation: 'Изменился предыдущий этап. Проверьте, подходит ли результат, или обновите его.' },
   imported: { label: 'Свои материалы', explanation: 'Вы принесли готовый результат. Платформа его не создавала.' },
-  skipped: { label: 'Пропущен', explanation: 'Этап необязателен и пропущен.' },
+  skipped: { label: 'Пропущен', explanation: 'Этап необязателен и пропущен — причина записана. К нему можно вернуться.' },
   blocked: { label: 'Заблокирован', explanation: 'Есть препятствие, которое нужно устранить.' },
 };

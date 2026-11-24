@@ -1,6 +1,7 @@
 // Quality review of a stage result: deterministic rules for logic gaps and weak spots that a later stage would trip over.
 // Completeness (artifacts.ts) says what is missing; the review says what does not fit together or is risky.
 // A blocking finding stops acceptance until it is fixed or the owner explains in writing why the stage goes on anyway.
+import { measurable, type IdeaReview } from './idea.js';
 import { tr } from '../i18n/i18n.js';
 import { keywords } from '../analysis/requirements-match.js';
 import { sectionTypeLabels, type Brief, type ContentArtifact, type Offer } from './artifacts.js';
@@ -69,6 +70,62 @@ function briefReview(brief: Brief, push: Push) {
     code: 'GOAL_AUDIENCE_VAGUE', severity: 'minor', category: 'clarity', target: 'audience', where: tr('Кто ваши клиенты'),
     message: tr('Клиенты описаны слишком общо — тексты получатся для всех и ни для кого.'),
     fix: tr('Уточните, кто они и с какой задачей приходят.'),
+  });
+}
+
+/**
+ * «Разбор идеи»: a risk with high impact and no decision blocks — it is the owner's call to take it, plan for it or drop
+ * the idea. The rest is advice: goals without a number, alternatives the AI suggested and nobody confirmed, a problem that
+ * describes the product instead of the pain.
+ */
+function ideaReview(idea: IdeaReview, push: Push) {
+  for (const risk of idea.risks) {
+    if (risk.impact === 'high' && risk.decision === 'open') push({
+      code: 'IDEA_RISK_HIGH_OPEN', severity: 'blocking', category: 'logic', target: risk.key, where: tr('Риски'), ownerDecides: true,
+      message: tr('Риск с высоким влиянием без решения: «{0}».', [risk.text]),
+      fix: tr('Решите: принимаете его сознательно, есть план (опишите какой) или идею нужно поменять.'),
+    });
+  }
+  for (const metric of idea.metrics) {
+    if (!measurable(metric.text)) push({
+      code: 'IDEA_METRIC_NOT_MEASURABLE', severity: 'important', category: 'clarity', target: metric.key, where: tr('Цели успеха'),
+      message: tr('Цель «{0}» нельзя измерить.', [metric.text]),
+      fix: tr('Добавьте число и срок: «50 заявок в месяц через полгода», «повторные заказы у 30% клиентов».'),
+    });
+  }
+  for (const alternative of idea.alternatives) {
+    if (alternative.source === 'ai' && !alternative.confirmed) push({
+      code: 'IDEA_ALTERNATIVE_UNCONFIRMED', severity: 'minor', category: 'clarity', target: alternative.key, where: tr('Альтернативы'), ownerDecides: true,
+      message: tr('«{0}» предложил ИИ — в документы попадёт, только если вы подтвердите.', [alternative.name]),
+      fix: tr('Отметьте «подтверждаю», если так и есть, или уберите.'),
+    });
+  }
+  if (!idea.alternatives.length) push({
+    code: 'IDEA_NO_ALTERNATIVES', severity: 'minor', category: 'logic', target: 'alternatives', where: tr('Альтернативы'),
+    message: tr('Не указано, как люди справляются сейчас.'),
+    fix: tr('Напишите хотя бы одну альтернативу: конкурент, звонок, Instagram, «терпят». Если её нет — так и напишите: это тоже важно.'),
+  });
+  if (idea.problem && /(приложени|платформ|сайт|сервис|бот)/i.test(idea.problem) && idea.problem.length < 160) push({
+    code: 'IDEA_PROBLEM_IS_PRODUCT', severity: 'minor', category: 'clarity', target: 'problem', where: tr('Проблема'),
+    message: tr('Проблема описывает продукт, а не боль клиентов.'),
+    fix: tr('Напишите, что плохо у людей сейчас: «ждут ответа часами», «не знают, свободен ли мастер».'),
+  });
+  if (!idea.revenue) push({
+    code: 'IDEA_NO_REVENUE', severity: 'minor', category: 'logic', target: 'revenue', where: tr('Как зарабатывает'),
+    message: tr('Не указано, как продукт зарабатывает или что экономит.'),
+    fix: tr('Цена, подписка, комиссия — или для внутреннего инструмента: сколько времени и денег экономит.'),
+  });
+  for (const segment of idea.segments) {
+    if (segment.name && !segment.need) push({
+      code: 'IDEA_SEGMENT_NO_NEED', severity: 'minor', category: 'clarity', target: segment.key, where: tr('Для кого'),
+      message: tr('Для группы «{0}» не указано, что ей нужно.', [segment.name]),
+      fix: tr('Одной фразой: какую задачу эти люди хотят решить.'),
+    });
+  }
+  if (!idea.risks.length) push({
+    code: 'IDEA_NO_RISKS', severity: 'minor', category: 'logic', target: 'risks', where: tr('Риски'),
+    message: tr('Нет ни одного риска или допущения.'),
+    fix: tr('Каждый продукт на чём-то держится: «клиенты готовы платить заранее», «мастера будут отмечать заказы». Запишите главное.'),
   });
 }
 
@@ -510,6 +567,7 @@ export function reviewStage(type: string, content: unknown, context: { features?
   };
   if (content && typeof content === 'object') {
     if (type === 'brief') briefReview(content as Brief, push);
+    if (type === 'idea') ideaReview(content as IdeaReview, push);
     if (type === 'process') { processReview(content as BusinessProcess, push); situationsReview(content as BusinessProcess, context.projectType, push); }
     if (type === 'features') featuresReview(content as AppFeatures, context.process ?? null, push, context.projectType && context.projectType !== 'web_app' ? 'site' : 'app');
     if (type === 'screens') screensReview(content as AppScreens, context.features ?? null, push);

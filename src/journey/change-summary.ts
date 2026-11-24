@@ -1,4 +1,5 @@
 // Deterministic, plain-language description of what changed between two accepted versions of a stage.
+import { ideaChanges, normalizeIdea } from './idea.js';
 import { processChanges, type BusinessProcess } from './process.js';
 import { sitemapChanges, type Sitemap } from './sitemap.js';
 import { catalogChanges, type Catalog } from './products.js';
@@ -99,6 +100,7 @@ export function describeChanges(key: StageKey, beforeRaw: unknown, afterRaw: unk
       : type === 'design' ? designChanges(before, after)
         : type === 'schedule' ? scheduleChanges(before, after)
           : type === 'process' ? processChanges(beforeRaw as BusinessProcess, afterRaw as BusinessProcess)
+          : type === 'idea' ? ideaChanges(normalizeIdea(beforeRaw ?? {}), normalizeIdea(afterRaw ?? {}))
           : type === 'sitemap' ? sitemapChanges(beforeRaw as Sitemap, afterRaw as Sitemap)
           : type === 'catalog' ? catalogChanges(beforeRaw as Catalog, afterRaw as Catalog)
           : type === 'features' ? featuresChanges(beforeRaw as AppFeatures, afterRaw as AppFeatures)

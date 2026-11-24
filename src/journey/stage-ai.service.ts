@@ -3,6 +3,7 @@ import { tr } from '../i18n/i18n.js';
 import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { WorktimeService } from './worktime.service.js';
 import { templateProcess } from './process.js';
+import { templateIdea } from './idea.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { stageFor, stageDefinitions, type StageKey } from './catalog.js';
 import { ArtifactValidationError, changedKeys, completenessIssues, defaultDesign, emptyBrief, lockableKeys, mergeProposal, normalizeArtifact, normalizeContent, templateContent, type Brief, type ContentArtifact, type Offer } from './artifacts.js';
@@ -63,6 +64,7 @@ export class StageAiService {
       if (stageKey === 'content') draft = inProject(ctx, () => templateContent(inputs.goal?.content as Brief ?? emptyBrief(), (inputs.offer?.content as Offer | undefined) ?? null, (inputs.sitemap?.content as Sitemap | undefined) ?? null));
       else if (stageKey === 'sitemap') draft = inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null));
       else if (stageKey === 'design') draft = defaultDesign;
+      else if (stageKey === 'idea') draft = templateIdea((inputs.goal?.content as Brief | undefined) ?? null);
       else if (stageKey === 'process') draft = inProject(ctx, () => templateProcess(ctx.type.key, (inputs.goal?.content as Brief | undefined) ?? null));
       else if (stageKey === 'features') draft = inProject(ctx, () => templateFeatures((inputs.goal?.content as Brief | undefined) ?? null, (inputs.process?.content as BusinessProcess | undefined) ?? null, ctx.type.key === 'web_app' ? 'app' : 'site'));
       else if (stageKey === 'screens') draft = inProject(ctx, () => templateScreens((inputs.features?.content as AppFeatures | undefined) ?? null));

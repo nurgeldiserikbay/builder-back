@@ -21,7 +21,7 @@ type Pending = 'instruction' | 'changes_note' | 'suggestion' | 'comment' | 'bloc
 const PENDING_KINDS: Pending[] = ['instruction', 'changes_note', 'suggestion', 'comment', 'blocker', 'reply', 'review_reason', 'interview'];
 /** «Разговор» waits longer than one request: people think between answers. */
 const INTERVIEW_TTL_MS = 60 * 60 * 1000;
-const COMPOSED_KEYS: readonly string[] = ['process', 'features'];
+const COMPOSED_KEYS: readonly string[] = ['idea', 'process', 'features'];
 /** Remarks are typed: for a reply the bot keeps the remark id in pendingText, where a voice message would keep its text. */
 const TEXT_ONLY: Pending[] = ['comment', 'blocker', 'reply', 'review_reason'];
 /** Files can be attached only to remarks. */

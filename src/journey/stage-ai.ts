@@ -104,6 +104,19 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
         },
       };
     }
+    case 'idea': {
+      const object = (required: string[], properties: Record<string, unknown>) => ({ type: 'object', additionalProperties: false, required, properties });
+      return object(['problem', 'segments', 'value', 'alternatives', 'revenue', 'risks', 'metrics', 'constraints'], {
+        problem: { type: 'string' },
+        segments: { type: 'array', items: object(['key', 'name', 'need'], { key: { type: 'string' }, name: { type: 'string' }, need: { type: 'string' } }) },
+        value: { type: 'string' },
+        alternatives: { type: 'array', items: object(['key', 'name', 'how', 'source', 'confirmed'], { key: { type: 'string' }, name: { type: 'string' }, how: { type: 'string' }, source: { type: 'string', enum: ['owner', 'ai'] }, confirmed: { type: 'boolean' } }) },
+        revenue: { type: 'string' },
+        risks: { type: 'array', items: object(['key', 'text', 'impact', 'decision', 'note'], { key: { type: 'string' }, text: { type: 'string' }, impact: { type: 'string', enum: ['high', 'medium', 'low'] }, decision: { type: 'string', enum: ['open', 'accepted', 'mitigate'] }, note: { type: 'string' } }) },
+        metrics: { type: 'array', items: object(['key', 'text'], { key: { type: 'string' }, text: { type: 'string' } }) },
+        constraints: object(['deadline', 'budget', 'legal', 'dataLocation'], { deadline: { type: 'string' }, budget: { type: 'string' }, legal: { type: 'string' }, dataLocation: { type: 'string' } }),
+      });
+    }
     case 'features': {
       const strings = { type: 'array', items: { type: 'string' } };
       return {
