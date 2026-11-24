@@ -102,7 +102,7 @@ export class RequestsService {
     await this.prisma.stageRequestResponse.updateMany({ where: { requestId: request.id, status: 'sent' }, data: { status: 'declined' } });
     await this.prisma.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'stage_request_cancelled', stageKey: request.stage.stageKey, details: { requestId } } });
     for (const response of request.responses.filter((item) => item.status === 'sent')) {
-      await this.core.notifyUser(response.specialistUserId, () => tr("Заявку на этап «{0}» закрыли без выбора исполнителя. Спасибо за отклик.", [tr(stageTitle(request.stage.stageKey))])).catch(() => undefined);
+      await this.core.notifyUser(response.specialistUserId, () => tr("Заявку на этап «{0}» закрыли без выбора исполнителя. Спасибо за отклик.", [tr(stageTitle(request.stage.stageKey))]), 'team').catch(() => undefined);
     }
     return this.forStage(userId, projectId, request.stage.stageKey);
   }
@@ -143,9 +143,9 @@ export class RequestsService {
       return created;
     });
     const title = stageTitle(request.stage.stageKey);
-    await this.core.notifyUser(response.specialistUserId, () => tr("Вас выбрали исполнителем этапа «{0}» в проекте «{1}». Этап уже открыт: {2}", [tr(title), request.project.name, this.core.stageLink(projectId, request.stage.stageKey)]).trim()).catch(() => undefined);
+    await this.core.notifyUser(response.specialistUserId, () => tr("Вас выбрали исполнителем этапа «{0}» в проекте «{1}». Этап уже открыт: {2}", [tr(title), request.project.name, this.core.stageLink(projectId, request.stage.stageKey)]).trim(), 'team').catch(() => undefined);
     for (const other of request.responses.filter((item) => item.status === 'sent' && item.id !== response.id)) {
-      await this.core.notifyUser(other.specialistUserId, () => tr("По заявке на этап «{0}» владелец выбрал другого специалиста. Спасибо за отклик.", [tr(title)])).catch(() => undefined);
+      await this.core.notifyUser(other.specialistUserId, () => tr("По заявке на этап «{0}» владелец выбрал другого специалиста. Спасибо за отклик.", [tr(title)]), 'team').catch(() => undefined);
     }
     return { data: { assignmentId: assignment.id, ...(await this.forStage(userId, projectId, request.stage.stageKey)).data } };
   }
@@ -156,7 +156,7 @@ export class RequestsService {
     const updated = await this.prisma.stageRequestResponse.updateMany({ where: { id: responseId, requestId: request.id, status: 'sent' }, data: { status: 'declined' } });
     if (updated.count !== 1) throw new NotFoundException('RESPONSE_NOT_FOUND');
     const response = request.responses.find((item) => item.id === responseId);
-    if (response) await this.core.notifyUser(response.specialistUserId, () => tr("Владелец отклонил ваш отклик на этап «{0}».", [tr(stageTitle(request.stage.stageKey))])).catch(() => undefined);
+    if (response) await this.core.notifyUser(response.specialistUserId, () => tr("Владелец отклонил ваш отклик на этап «{0}».", [tr(stageTitle(request.stage.stageKey))]), 'team').catch(() => undefined);
     return this.forStage(userId, projectId, request.stage.stageKey);
   }
 
@@ -240,7 +240,7 @@ export class RequestsService {
       // The project log shows that a response came, never who sent it or the terms: those are on the stage for deciders.
       await this.prisma.projectEvent.create({ data: { projectId: request.projectId, type: 'stage_request_response', stageKey: request.stage.stageKey, details: { requestId } } });
       for (const manager of request.project.members) {
-        await this.core.notifyUser(manager.userId, () => tr("Новый отклик на заявку по этапу «{0}» в проекте «{1}»: {2}", [tr(stageTitle(request.stage.stageKey)), request.project.name, this.core.stageLink(request.projectId, request.stage.stageKey)]).trim()).catch(() => undefined);
+        await this.core.notifyUser(manager.userId, () => tr("Новый отклик на заявку по этапу «{0}» в проекте «{1}»: {2}", [tr(stageTitle(request.stage.stageKey)), request.project.name, this.core.stageLink(request.projectId, request.stage.stageKey)]).trim(), 'team').catch(() => undefined);
       }
     }
     return this.board(userId, { mine: true });

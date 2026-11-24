@@ -48,7 +48,7 @@ export class DisputesService {
    * without Telegram still learns about them. Replies between the sides go to Telegram only, to keep mail quiet.
    */
   private notify(userId: string | null, text: Message, byEmail = true) {
-    return notifyUser(this.prisma, userId, byEmail ? { text, emailSubject: () => tr('BuildPath: спор по работе специалиста'), link: { path: '/account/disputes', label: () => tr('Открыть споры') } } : { text });
+    return notifyUser(this.prisma, userId, byEmail ? { category: 'money', text, emailSubject: () => tr('BuildPath: спор по работе специалиста'), link: { path: '/account/disputes', label: () => tr('Открыть споры') } } : { category: 'money', text, telegramOnly: true });
   }
 
   /** The other side: the specialist, or the project owner. */

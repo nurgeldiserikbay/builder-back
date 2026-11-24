@@ -194,7 +194,7 @@ export class CatalogService {
       await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: state.mode === 'create' ? 'specialist_reviewed' : 'specialist_review_changed', stageKey: assignment.stage.stageKey, details: { assignmentId, rating: checked.rating } } });
     });
     if (state.mode === 'create') {
-      await notifyUser(this.prisma, assignment.userId, {
+      await notifyUser(this.prisma, assignment.userId, { category: 'team',
         text: () => tr('Новый отзыв о вашей работе на этапе «{0}»: {1} из 5. Ответить можно в карточке специалиста.', [tr(stageTitle(assignment.stage.stageKey)), checked.rating]),
         emailSubject: () => tr('BuildPath: новый отзыв о вашей работе'), link: { path: '/account/specialist', label: () => tr('Открыть карточку') },
       });
@@ -246,11 +246,11 @@ export class CatalogService {
       await tx.projectEvent.create({ data: { projectId: review.assignment.projectId, type: hidden ? 'specialist_review_hidden' : 'specialist_review_kept', stageKey: review.stageKey, details: { reviewId } } });
     });
     const title = stageTitle(review.stageKey);
-    await notifyUser(this.prisma, review.specialistUserId, {
+    await notifyUser(this.prisma, review.specialistUserId, { category: 'team',
       text: hidden ? () => tr('Поддержка BuildPath скрыла отзыв о вашей работе на этапе «{0}»: {1}', [tr(title), checked.note]) : () => tr('Поддержка BuildPath проверила отзыв о вашей работе на этапе «{0}» и оставила его: {1}', [tr(title), checked.note]),
       emailSubject: () => tr('BuildPath: решение по отзыву'),
     });
-    if (hidden) await notifyUser(this.prisma, review.authorUserId, { text: () => tr('Поддержка BuildPath скрыла ваш отзыв о специалисте на этапе «{0}»: {1}', [tr(title), checked.note]), emailSubject: () => tr('BuildPath: решение по отзыву') });
+    if (hidden) await notifyUser(this.prisma, review.authorUserId, { category: 'team', text: () => tr('Поддержка BuildPath скрыла ваш отзыв о специалисте на этапе «{0}»: {1}', [tr(title), checked.note]), emailSubject: () => tr('BuildPath: решение по отзыву') });
     return this.staffReports('pending');
   }
 
@@ -316,12 +316,12 @@ export class CatalogService {
       await tx.adminAuditEvent.create({ data: { staffId, eventType: `specialist_profile_report.${status}`, targetType: 'specialist_profile', targetId: report.profile.id, details: { reportId, note: checked.note, removed } } });
     });
     if (checked.decision === 'remove_work' && removed) {
-      await notifyUser(this.prisma, report.profile.userId, { text: () => tr('Поддержка BuildPath убрала из вашей карточки работу «{0}»: {1}', [report.workTitle ?? '', checked.note]), emailSubject: () => tr('BuildPath: изменение в карточке специалиста'), link: { path: '/account/specialist', label: () => tr('Открыть карточку') } }).catch(() => undefined);
+      await notifyUser(this.prisma, report.profile.userId, { category: 'team', text: () => tr('Поддержка BuildPath убрала из вашей карточки работу «{0}»: {1}', [report.workTitle ?? '', checked.note]), emailSubject: () => tr('BuildPath: изменение в карточке специалиста'), link: { path: '/account/specialist', label: () => tr('Открыть карточку') } }).catch(() => undefined);
     }
     if (checked.decision === 'hide_card') {
-      await notifyUser(this.prisma, report.profile.userId, { text: () => tr('Поддержка BuildPath скрыла вашу карточку из каталога: {0}. Вы можете её исправить; если не согласны с решением — напишите в поддержку.', [checked.note]), emailSubject: () => tr('BuildPath: карточка скрыта из каталога'), link: { path: '/account/specialist', label: () => tr('Открыть карточку') } }).catch(() => undefined);
+      await notifyUser(this.prisma, report.profile.userId, { category: 'team', text: () => tr('Поддержка BuildPath скрыла вашу карточку из каталога: {0}. Вы можете её исправить; если не согласны с решением — напишите в поддержку.', [checked.note]), emailSubject: () => tr('BuildPath: карточка скрыта из каталога'), link: { path: '/account/specialist', label: () => tr('Открыть карточку') } }).catch(() => undefined);
     }
-    await notifyUser(this.prisma, report.reporterUserId, {
+    await notifyUser(this.prisma, report.reporterUserId, { category: 'team',
       text: checked.decision === 'dismiss' ? () => tr('Поддержка BuildPath проверила вашу жалобу на карточку специалиста и ничего не изменила: {0}', [checked.note]) : () => tr('Поддержка BuildPath проверила вашу жалобу на карточку специалиста и приняла меры: {0}', [checked.note]),
       emailSubject: () => tr('BuildPath: решение по жалобе'),
     }).catch(() => undefined);
@@ -340,7 +340,7 @@ export class CatalogService {
       this.prisma.specialistProfile.update({ where: { id: profileId }, data: { blockedAt: null, blockedReason: null } }),
       this.prisma.adminAuditEvent.create({ data: { staffId, eventType: 'specialist_profile.unblocked', targetType: 'specialist_profile', targetId: profileId, details: { note: value } } }),
     ]);
-    await notifyUser(this.prisma, profile.userId, { text: () => tr('Поддержка BuildPath вернула возможность публиковать вашу карточку: {0}', [value]), emailSubject: () => tr('BuildPath: карточку снова можно опубликовать'), link: { path: '/account/specialist', label: () => tr('Открыть карточку') } }).catch(() => undefined);
+    await notifyUser(this.prisma, profile.userId, { category: 'team', text: () => tr('Поддержка BuildPath вернула возможность публиковать вашу карточку: {0}', [value]), emailSubject: () => tr('BuildPath: карточку снова можно опубликовать'), link: { path: '/account/specialist', label: () => tr('Открыть карточку') } }).catch(() => undefined);
     return { data: { blocked: false } };
   }
 

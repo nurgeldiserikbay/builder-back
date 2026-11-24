@@ -403,6 +403,36 @@ paths:
           $ref: '#/components/responses/Problem'
         '429':
           $ref: '#/components/responses/Problem'
+  /auth/login/two-step:
+    post:
+      tags: [Authentication]
+      operationId: loginSecondStep
+      summary: Finish a password sign-in with a code from the authenticator app or a recovery code
+      description: >-
+        When the account has two-step sign-in, POST /auth/login answers { data: { twoStepRequired: true, challenge, expiresAt } }
+        instead of a session. The challenge lives 5 minutes and allows 5 wrong codes. A code is accepted one 30-second step either
+        side and only once; a recovery code works once and is removed. Wrong codes are recorded in the sign-in history.
+      x-implementation-status: implemented
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challenge, code]
+              properties:
+                challenge: { type: string, minLength: 20, maxLength: 100 }
+                code: { type: string, minLength: 6, maxLength: 12, description: '6 digits, or a recovery code XXXX-XXXX' }
+      responses:
+        '200':
+          description: 'Session cookie set; data — the current user and recoveryCodesLeft.'
+          headers:
+            Set-Cookie: { schema: { type: string }, description: 'Secure, HTTP-only, SameSite cookie.' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { description: 'TWO_STEP_CODE_INVALID or TWO_STEP_EXPIRED' }
+        '429': { $ref: '#/components/responses/Problem' }
   /auth/logout:
     post:
       tags: [Authentication]
@@ -2559,6 +2589,143 @@ paths:
       security: [{ sessionCookie: [] }]
       responses:
         '200': { description: 'disputes[] (id, status, kind, outcome, createdAt, projectId, projectName, stageKey, stageTitle, side); withoutStageAccess[] (assignmentId, projectName, stageTitle, status) — the specialist''s assignments of the last 30 days whose stage page is closed to them and where a dispute can still be opened' }
+  /me/security:
+    get:
+      tags: [Account]
+      operationId: mySecurity
+      summary: «Безопасность» — two-step sign-in, active sessions and the sign-in history of the last 90 days
+      description: >-
+        Devices are named from the browser string («Chrome · macOS»); network addresses are shown only as a hint
+        (the first two parts of IPv4 or the IPv6 prefix), never in full. A sign-in from a device not seen in 90 days
+        is announced by Telegram and e-mail whatever the notification settings.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'data — twoStep { enabled, enabledAt, recoveryCodesLeft, available }, hasPassword, sessions[] (id, current, device, ipHint, method: password|two_step|google|telegram, createdAt, lastSeenAt), signIns[] (id, at, method, outcome: success|recovery_code|wrong_password|wrong_code, device, ipHint)' }
+        '401': { description: Not signed in }
+  /me/sessions/{sessionId}/revoke:
+    post:
+      tags: [Account]
+      operationId: revokeMySession
+      summary: End one of the other sessions
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: sessionId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'The same data as GET /me/security' }
+        '400': { description: 'USE_SIGN_OUT — the current session ends with POST /auth/logout' }
+        '404': { description: SESSION_NOT_FOUND }
+  /me/sessions/revoke-others:
+    post:
+      tags: [Account]
+      operationId: revokeMyOtherSessions
+      summary: Sign out on every other device
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'The same data as GET /me/security' }
+        '401': { description: Not signed in }
+  /me/two-step/setup:
+    post:
+      tags: [Account]
+      operationId: startTwoStep
+      summary: Start switching on two-step sign-in
+      description: 'Needs the password (or a sign-in within the last 10 minutes for accounts without one). Returns a new secret to add to an authenticator app; nothing changes until POST /me/two-step/enable confirms a code. 503 TWO_STEP_UNAVAILABLE when the server has no encryption key.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { password: { type: string, maxLength: 128 } } }
+      responses:
+        '200': { description: 'data — secret (base32), otpauthUri' }
+        '400': { description: 'TWO_STEP_ALREADY_ON, or TWO_STEP_NEEDS_PASSWORD for accounts that sign in only with Google or Telegram' }
+        '401': { description: 'INVALID_PASSWORD or REAUTH_REQUIRED' }
+        '429': { description: LOGIN_RATE_LIMITED }
+        '503': { description: TWO_STEP_UNAVAILABLE }
+  /me/two-step/enable:
+    post:
+      tags: [Account]
+      operationId: enableTwoStep
+      summary: Confirm the first code and switch two-step sign-in on
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [code], properties: { code: { type: string, minLength: 6, maxLength: 12 } } }
+      responses:
+        '200': { description: 'data — recoveryCodes[] (10, shown once; only their hashes are kept) and the same fields as GET /me/security' }
+        '400': { description: 'TWO_STEP_NOT_STARTED or TWO_STEP_CODE_INVALID' }
+  /me/two-step/disable:
+    post:
+      tags: [Account]
+      operationId: disableTwoStep
+      summary: Switch two-step sign-in off
+      description: Needs both the password and a current code or a recovery code. Announced by Telegram and e-mail.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, required: [code], properties: { password: { type: string, maxLength: 128 }, code: { type: string, minLength: 6, maxLength: 12 } } }
+      responses:
+        '200': { description: 'The same data as GET /me/security' }
+        '400': { description: 'TWO_STEP_ALREADY_OFF or TWO_STEP_CODE_INVALID' }
+        '401': { description: 'INVALID_PASSWORD or REAUTH_REQUIRED' }
+  /me/two-step/recovery-codes:
+    post:
+      tags: [Account]
+      operationId: regenerateRecoveryCodes
+      summary: Replace the recovery codes; the old ones stop working
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { password: { type: string, maxLength: 128 } } }
+      responses:
+        '200': { description: 'data — recoveryCodes[]' }
+        '400': { description: TWO_STEP_ALREADY_OFF }
+        '401': { description: 'INVALID_PASSWORD or REAUTH_REQUIRED' }
+  /me/notifications:
+    get:
+      tags: [Account]
+      operationId: myNotificationSettings
+      summary: Where notices go, by kind of event
+      description: >-
+        Categories: stages (progress, reviews, returns), team (invitations, requests, assignments, ownership), money
+        (payments, disputes), site (monitoring and incidents). Each has telegram and email switches. «Входящие» always show
+        everything; security notices always go to both channels and cannot be switched off.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'data — prefs { stages|team|money|site: { telegram, email } }, telegramLinked, email' }
+        '401': { description: Not signed in }
+    put:
+      tags: [Account]
+      operationId: setMyNotificationSettings
+      summary: Change where notices go
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                stages: { $ref: '#/components/schemas/NotifyChannels' }
+                team: { $ref: '#/components/schemas/NotifyChannels' }
+                money: { $ref: '#/components/schemas/NotifyChannels' }
+                site: { $ref: '#/components/schemas/NotifyChannels' }
+      responses:
+        '200': { description: 'The same data as GET /me/notifications' }
+        '400': { description: 'UNKNOWN_FIELD or INVALID_CHANNELS' }
   /me/inbox:
     get:
       tags: [Inbox]
@@ -6576,6 +6743,12 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
   schemas:
+    NotifyChannels:
+      type: object
+      additionalProperties: false
+      properties:
+        telegram: { type: boolean }
+        email: { type: boolean }
     HistoryPerson:
       type: object
       required: [id, name, kind]

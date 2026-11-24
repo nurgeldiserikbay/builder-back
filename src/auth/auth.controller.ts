@@ -18,10 +18,11 @@ import { AuthService, SafeUser } from './auth.service.js';
 import { GoogleAuthError } from './google-oauth.js';
 
 type HttpResponse = { setHeader(name: string, value: string): void };
-type ClientRequest = { ip?: string; headers?: { cookie?: string } };
+type ClientRequest = { ip?: string; headers?: { cookie?: string; 'user-agent'?: string } };
 type RedirectResponse = HttpResponse & { redirect(status: number, url: string): void };
 const GOOGLE_COOKIE = 'buildpath_google';
 const ipOf = (request: ClientRequest) => request.ip ?? '';
+const agentOf = (request: ClientRequest) => (typeof request.headers?.['user-agent'] === 'string' ? request.headers['user-agent'].slice(0, 300) : null);
 const locales = ['en', 'ru', 'kk'] as const;
 
 function objectBody(body: unknown): Record<string, unknown> {
@@ -116,16 +117,29 @@ export class AuthController {
     rejectUnknown(body, ['email', 'password']);
     const email = emailField(textField(body, 'email', 3, 254));
     const password = textField(body, 'password', 1, 128);
-    const result = await this.auth.login(email, password, ipOf(request));
+    const result = await this.auth.login(email, password, ipOf(request), agentOf(request));
+    // Two-step sign-in: no session yet, only a challenge for POST auth/login/two-step.
+    if ('twoStep' in result) return { data: { twoStepRequired: true, challenge: result.twoStep.challenge, expiresAt: result.twoStep.expiresAt } };
     response.setHeader('Set-Cookie', cookie(result.token, 30 * 24 * 60 * 60));
     return { data: result.user };
   }
 
+  /** Second step: { challenge, code } — six digits from the authenticator app or a recovery code. */
+  @Post('auth/login/two-step')
+  @HttpCode(200)
+  async loginTwoStep(@Body() raw: unknown, @Req() request: ClientRequest, @Res({ passthrough: true }) response: HttpResponse) {
+    const body = objectBody(raw);
+    rejectUnknown(body, ['challenge', 'code']);
+    const result = await this.auth.loginSecondStep(textField(body, 'challenge', 20, 100), textField(body, 'code', 6, 12), ipOf(request), agentOf(request));
+    response.setHeader('Set-Cookie', cookie(result.token, 30 * 24 * 60 * 60));
+    return { data: { ...result.user, recoveryCodesLeft: result.recoveryCodesLeft } };
+  }
+
   @Post('auth/telegram-webapp')
-  async telegramWebApp(@Body() raw: unknown, @Res({ passthrough: true }) response: HttpResponse) {
+  async telegramWebApp(@Body() raw: unknown, @Req() request: ClientRequest, @Res({ passthrough: true }) response: HttpResponse) {
     const body = objectBody(raw);
     rejectUnknown(body, ['initData']);
-    const result = await this.auth.loginWithTelegramWebApp(textField(body, 'initData', 10, 4096));
+    const result = await this.auth.loginWithTelegramWebApp(textField(body, 'initData', 10, 4096), { ip: ipOf(request), userAgent: agentOf(request) });
     response.setHeader('Set-Cookie', cookie(result.token, 30 * 24 * 60 * 60));
     return { data: result.user };
   }
@@ -159,7 +173,7 @@ export class AuthController {
       const result = await this.auth.finishGoogle({
         code: queryText(query.code, 2048), state: queryText(query.state, 100), error: queryText(query.error, 100),
         binding: cookieValue(request, GOOGLE_COOKIE),
-      }, ipOf(request));
+      }, ipOf(request), fetch, agentOf(request));
       response.setHeader('Set-Cookie', [cookie(result.token, 30 * 24 * 60 * 60), clear] as unknown as string);
       response.redirect(302, appPath(result.next));
     } catch (error) {
