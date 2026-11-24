@@ -177,6 +177,8 @@ model User {
   deletionRequestedAt      DateTime?                 @map("deletion_requested_at") @db.Timestamptz(3)
   /// The person allowed sending voice messages to the speech recognition provider (asked in the bot before the first one).
   voiceConsentAt           DateTime?                 @map("voice_consent_at") @db.Timestamptz(3)
+  /// «Входящие»: when the person last opened the updates feed; later events by others count as new.
+  inboxSeenAt              DateTime?                 @map("inbox_seen_at") @db.Timestamptz(3)
   createdAt                DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt                DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
   sessions                 UserSession[]

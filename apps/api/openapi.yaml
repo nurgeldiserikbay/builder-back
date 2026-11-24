@@ -24,6 +24,7 @@ tags:
   - name: Telegram
   - name: Specialists
   - name: Disputes
+  - name: Inbox
   - name: Plans
 paths:
   /admin/auth/login:
@@ -2558,6 +2559,57 @@ paths:
       security: [{ sessionCookie: [] }]
       responses:
         '200': { description: 'disputes[] (id, status, kind, outcome, createdAt, projectId, projectName, stageKey, stageTitle, side); withoutStageAccess[] (assignmentId, projectName, stageTitle, status) — the specialist''s assignments of the last 30 days whose stage page is closed to them and where a dispute can still be opened' }
+  /me/inbox:
+    get:
+      tags: [Inbox]
+      operationId: myInbox
+      summary: «Входящие» — what waits for this person across projects, and recent updates by others
+      description: >-
+        Computed from the current state on every request, so an item disappears as soon as it is handled.
+        waiting[] — stages in review the person has not approved yet (owner/manager), returned stages (their lead, or the owner
+        when nobody leads), undecided change notices (target stage lead, or owner/managers), open change proposals and hours
+        waiting for approval younger than 3 days (owner/manager), open disputes opened by the other side, unresolved mentions
+        of the last 30 days. Ordered overdue first, then by deadline, urgency and age. updates[] — up to 60 events by other
+        people in the last 14 days with the same access rules as the project log; unread — after the person's last
+        POST /me/inbox/seen. People are named by their account name only, never by e-mail.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'data — waiting[] (id, kind: stage_review|stage_changes|change_notice|change_proposal|time_entries|dispute|mention, projectId, projectName, projectType, stageKey, since, dueAt, count, who, text), updates[] (id, projectId, projectName, projectType, type, kind, stageKey, createdAt, details, actor { id, name, isMe } or null, unread), unreadUpdates, seenAt' }
+        '401': { description: Not signed in }
+  /me/inbox/seen:
+    post:
+      tags: [Inbox]
+      operationId: markInboxSeen
+      summary: Mark the updates feed as seen
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'data — seenAt' }
+        '401': { description: Not signed in }
+  /projects/{projectId}/activity:
+    get:
+      tags: [Inbox]
+      operationId: projectActivity
+      summary: The project's activity log («Журнал»), newest first
+      description: >-
+        Events from the project's event table with the viewer's access applied: owners and managers see everything; other
+        members do not see money; a contributor limited to stages sees those stages and project-wide events; a specialist sees
+        only their stages (including payments for their own work, never the project's wallet). Details are limited to short
+        scalar facts (version number, role, rating, amount, status, outcome); free text, contacts and files never appear.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: kind, in: query, required: false, schema: { type: string, enum: [stage, ai, changes, team, money, site, other] } }
+        - { name: stageKey, in: query, required: false, schema: { type: string } }
+        - { name: cursor, in: query, required: false, description: createdAt of the last item of the previous page, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 100, default: 50 } }
+      responses:
+        '200': { description: 'data[] (id, type, kind, stageKey, createdAt, details, actor { id, name, isMe } or null); meta.nextCursor' }
+        '400': { description: 'INVALID_KIND, INVALID_STAGE, INVALID_CURSOR, INVALID_LIMIT' }
+        '401': { description: Not signed in }
+        '404': { description: PROJECT_NOT_FOUND }
   /admin/disputes:
     get:
       tags: [Disputes]
