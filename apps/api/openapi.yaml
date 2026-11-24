@@ -2640,7 +2640,7 @@ paths:
             schema: { type: object, additionalProperties: false, properties: { password: { type: string, maxLength: 128 } } }
       responses:
         '200': { description: 'data — secret (base32), otpauthUri' }
-        '400': { description: TWO_STEP_ALREADY_ON }
+        '400': { description: 'TWO_STEP_ALREADY_ON, or TWO_STEP_NEEDS_PASSWORD for accounts that sign in only with Google or Telegram' }
         '401': { description: 'INVALID_PASSWORD or REAUTH_REQUIRED' }
         '429': { description: LOGIN_RATE_LIMITED }
         '503': { description: TWO_STEP_UNAVAILABLE }

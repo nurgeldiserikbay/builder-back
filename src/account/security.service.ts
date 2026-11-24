@@ -81,8 +81,10 @@ export class SecurityService {
   async setup(userId: string, sessionId: string, password: string | null) {
     const key = this.key();
     await this.confirm(userId, sessionId, password);
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true, totpEnabledAt: true } });
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true, totpEnabledAt: true, passwordHash: true } });
     if (!user) throw new NotFoundException('ACCOUNT_NOT_FOUND');
+    // The code is asked after the password; accounts that sign in with Google or Telegram are protected there.
+    if (user.passwordHash === NO_PASSWORD) throw new BadRequestException('TWO_STEP_NEEDS_PASSWORD');
     if (user.totpEnabledAt) throw new BadRequestException('TWO_STEP_ALREADY_ON');
     const secret = newSecret();
     await this.prisma.user.update({ where: { id: userId }, data: { totpPendingSecret: sealSecret(secret, key) } });
