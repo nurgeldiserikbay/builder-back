@@ -3854,7 +3854,7 @@ paths:
                 instruction: { type: string, minLength: 2, maxLength: 1000 }
                 targetKey: { type: string, maxLength: 60 }
       responses:
-        '200': { description: 'data — proposalId, baseVersionId, content (the stage as it would be saved), changed[] (keys), issues[] (what still blocks acceptance), findings[] (the quality review of the proposal, with autoFix where the platform can fix it itself)' }
+        '200': { description: 'data — proposalId, baseVersionId, content (the stage as it would be saved), changed[] (keys), issues[] (what still blocks acceptance), findings[] (the quality review of the proposal, with autoFix where the platform can fix it itself), blockedByLocks[] (protected parts the AI wanted to change and could not: unlock them with POST …/locks and ask again)' }
         '403': { description: 'EDIT_AI_FORBIDDEN or STAGE_WRITE_FORBIDDEN' }
         '429': { description: 'AI_DAILY_LIMIT_REACHED or AI_BUDGET_EXHAUSTED' }
         '502': { description: AI_OUTPUT_REJECTED }

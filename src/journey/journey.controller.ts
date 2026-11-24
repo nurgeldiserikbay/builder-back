@@ -171,7 +171,7 @@ export class JourneyController {
     return this.specialists.invite(request.user.id, projectId, stageKey(key), { email, role: input.role, aiBudget: aiBudget as number | null, terms: termsInput(input), access: input.access });
   }
 
-  /** What the specialist can see and do: { extraReadStages?, hiddenParts?, allowDownload?, readDays? }; applies at once. */
+  /** What the specialist can see and do: { extraReadStages?, hiddenParts?, allowDownload?, readDays?, editMode? }; applies at once. */
   @Put('projects/:projectId/assignments/:assignmentId/access')
   updateAccess(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('assignmentId') assignmentId: string, @Body() raw: unknown) {
     return this.specialists.updateAccess(request.user.id, projectId, assignmentId, raw);

@@ -18,7 +18,7 @@ import { JourneyCore } from './journey-core.js';
 import { inProject, Access, notEditableCode } from './journey-core.js';
 
 type GenerateInput = { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram'; conversation?: Record<string, string> | null };
-export type AiProposal = { proposalId: string; baseVersionId: string | null; content: unknown; changed: string[]; issues: Array<{ key: string; message: string }>; findings: ReviewFinding[] };
+export type AiProposal = { proposalId: string; baseVersionId: string | null; content: unknown; changed: string[]; issues: Array<{ key: string; message: string }>; findings: ReviewFinding[]; blockedByLocks: string[] };
 
 @Injectable()
 export class StageAiService {
@@ -36,7 +36,6 @@ export class StageAiService {
   async generateNow(userId: string, projectId: string, key: string, input: GenerateInput & { preview?: boolean }): Promise<{ data: AiProposal | { versionId: string; versionNumber: number; provider: string } }> {
     const source = input.source ?? 'app';
     const ctx = await this.core.load(userId, projectId, 'write', key);
-    this.core.assertEditWay(ctx, key, 'ai');
     const assignment = this.core.assignmentFor(ctx, key);
     if (input.saveAs === 'project_rule' && assignment) throw new ForbiddenException('PROJECT_RULE_FORBIDDEN');
     const stage = this.core.stageOf(ctx, key);
@@ -53,6 +52,8 @@ export class StageAiService {
     const extras = await this.core.extraReads(ctx, stageKey);
     const provider = this.core.ai();
     const started = Date.now();
+    // A draft by template is not the AI: it is open in every mode. Requests to the AI follow the owner's choice.
+    if (provider) this.core.assertEditWay(ctx, key, 'ai');
 
     if (input.preview && (!provider || !input.instruction)) throw provider ? new BadRequestException('INSTRUCTION_REQUIRED') : new ServiceUnavailableException('AI_NOT_CONFIGURED');
     if (!provider) {
@@ -158,9 +159,17 @@ export class StageAiService {
       });
       const baseContent = baseId ? (await this.core.versionContent(baseId))?.content ?? null : null;
       const context = await this.core.checkContext(ctx, stageKey);
+      // Parts the person protected from the AI stay as they were; say which ones the AI wanted to change, so the
+      // preview does not quietly look smaller than the answer.
+      let blockedByLocks: string[] = [];
+      try {
+        const unlocked = inProject(ctx, () => normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, baseContent, proposal, [], input.targetKey)));
+        const locked = new Set(stage.lockedKeys);
+        blockedByLocks = changedKeys(definition.artifactType, merged, unlocked).filter((key) => locked.has(key));
+      } catch { /* the answer does not fit without locks either: nothing to report */ }
       // The proposal goes through the same checks as a saved version, so the person sees what it would break before applying.
       const findings = reviewStage(definition.artifactType, merged, { ...context, projectType: ctx.type.key }).findings;
-      return { data: { proposalId: run.id, baseVersionId: baseId, content: merged, changed: changedKeys(definition.artifactType, baseContent, merged), issues: completenessIssues(definition.artifactType, merged, context), findings } };
+      return { data: { proposalId: run.id, baseVersionId: baseId, content: merged, changed: changedKeys(definition.artifactType, baseContent, merged), issues: completenessIssues(definition.artifactType, merged, context), findings, blockedByLocks } };
     }
     const version = await this.prisma.$transaction(async (tx) => {
       const run = await tx.generationRun.create({ data: {

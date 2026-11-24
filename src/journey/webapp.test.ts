@@ -324,6 +324,7 @@ describe('web application route (database)', async () => {
     assert.ok((proposal.content as { actors: Array<{ name: string }> }).actors.some((actor) => actor.name === 'Бухгалтер'));
     // The proposal is checked like a saved version: the new participant does nothing, and the platform can remove him.
     assert.deepEqual(proposal.findings.find((finding) => finding.code === 'PROCESS_ACTOR_IDLE')?.autoFix, { kind: 'remove_actor', actor: 'acc' });
+    assert.deepEqual(proposal.blockedByLocks, []);
     const applied = (await journey.applyProposal(owner.id, projectId, 'process', proposal.proposalId)).data;
     assert.equal(await versionOf('process'), applied.versionId);
     await assert.rejects(journey.applyProposal(owner.id, projectId, 'process', proposal.proposalId), /PROPOSAL_CLOSED/);
@@ -332,6 +333,11 @@ describe('web application route (database)', async () => {
     const current = (await journey.stage(owner.id, projectId, 'process')).data.current!.content;
     await journey.saveDraft(owner.id, projectId, 'process', { content: { ...(current as object), rules: [...(current as { rules: string[] }).rules, 'Отвечаем в течение часа.'] }, baseVersionId: applied.versionId });
     await assert.rejects(journey.applyProposal(owner.id, projectId, 'process', stale.proposalId), /PROPOSAL_STALE/);
+    // Participants protected from the AI: the preview says the AI wanted to change them and was held back.
+    await journey.setLock(owner.id, projectId, 'process', 'actors', true);
+    const held = (await journey.proposeChange(owner.id, projectId, 'process', { instruction: 'Добавь кассира', targetKey: null })).data;
+    assert.deepEqual(held.blockedByLocks, ['actors']);
+    await journey.dismissProposal(owner.id, projectId, 'process', held.proposalId);
     await journey.dismissProposal(owner.id, projectId, 'process', stale.proposalId);
     await assert.rejects(journey.dismissProposal(owner.id, projectId, 'process', stale.proposalId), /PROPOSAL_CLOSED/);
   });

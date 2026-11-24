@@ -26,6 +26,31 @@ function brief(app: boolean): Brief {
   } as unknown as Brief;
 }
 
+/**
+ * «Изменить через ИИ» on the process: what a model would do for «add cancelling by the client» — a new scenario, a new
+ * participant with a step, a status on the request and a link — so the preview has added and changed places to show.
+ */
+function changedProcess(draft: Json): unknown {
+  const process = draft as { actors: Json[]; scenarios: Array<Json & { steps: Json[] }>; rules: string[]; data: Array<Json & { fields: string[]; links: Json[] }> };
+  const client = (process.actors.find((actor) => actor.kind === 'client')?.key as string | undefined) ?? 'client';
+  const system = (process.actors.find((actor) => actor.kind === 'system')?.key as string | undefined) ?? client;
+  const request = process.data[1] ?? process.data[0];
+  return {
+    ...process,
+    actors: [...process.actors, { key: 'dispatcher', name: 'Диспетчер', kind: 'staff' }],
+    scenarios: [
+      ...process.scenarios.map((scenario, index) => (index === 0 ? { ...scenario, steps: [...scenario.steps.slice(0, 2), { key: 'p_check', actor: 'dispatcher', action: 'Проверяет заявку и уточняет адрес', capability: 'change_status' }, ...scenario.steps.slice(2)] } : scenario)),
+      { key: 'cancel', title: 'Отмена заявки', goal: 'Клиент отменяет заявку, пока мастер не выехал.', steps: [
+        { key: 'c1', actor: client, action: 'Открывает заявку и нажимает «Отменить»', capability: 'cancel_order' },
+        { key: 'c2', actor: system, action: 'Сообщает диспетчеру об отмене', capability: 'notify_owner' },
+        { key: 'c3', actor: 'dispatcher', action: 'Снимает мастера с заявки', capability: 'assign' },
+      ] },
+    ],
+    rules: [...process.rules, 'Заявку можно отменить, пока мастер не выехал.'],
+    data: process.data.map((entity) => (entity === request ? { ...entity, fields: [...entity.fields, 'Причина отмены'] } : entity)),
+  };
+}
+
 /** Fills any schema with plain values: the fallback for answers the run does not script. */
 function fill(schema: Json, label = 'Текст'): unknown {
   if (Array.isArray(schema.type)) return null;
@@ -50,7 +75,7 @@ function stageAnswer(name: string, system: string, user: Json, schema: Json): un
   const confirmedBrief = (inputs.goal ?? null) as Brief | null;
   switch (name) {
     case 'buildpath_brief': return brief(appGuidance);
-    case 'buildpath_process': return templateProcess('web_app', confirmedBrief ?? brief(true));
+    case 'buildpath_process': return user.instruction && user.currentDraft ? changedProcess(user.currentDraft as Json) : templateProcess('web_app', confirmedBrief ?? brief(true));
     case 'buildpath_features': return templateFeatures(confirmedBrief ?? brief(true), (inputs.process ?? null) as never);
     case 'buildpath_screens': return templateScreens((inputs.features ?? null) as never);
     case 'buildpath_interview': return interview(user, schema);
