@@ -76,6 +76,17 @@ function stageAnswer(name: string, system: string, user: Json, schema: Json): un
   switch (name) {
     case 'buildpath_brief': return brief(appGuidance);
     case 'buildpath_process': return user.instruction && user.currentDraft ? changedProcess(user.currentDraft as Json) : templateProcess('web_app', confirmedBrief ?? brief(true));
+    // An idea review as a careful model gives it: the owner's facts, one alternative it suggests (to confirm), a strong open risk, a metric without a number.
+    case 'buildpath_idea': return {
+      problem: 'Мастера на дом ищут через знакомых и ждут ответа часами.',
+      segments: [{ key: 'seg1', name: confirmedBrief?.audience || 'Жители города', need: 'Быстро вызвать мастера с понятной ценой' }, { key: 'seg2', name: 'Мастера', need: 'Стабильный поток заказов' }],
+      value: 'Мастер приезжает в тот же день, цена известна до выезда.',
+      alternatives: [{ key: 'alt1', name: 'Группы в WhatsApp', how: 'Пишут в общий чат и ждут, кто откликнется', source: 'ai', confirmed: false }],
+      revenue: '',
+      risks: [{ key: 'risk1', text: 'Мастеров будет мало в первые месяцы', impact: 'high', decision: 'open', note: '' }],
+      metrics: [{ key: 'm1', text: 'Клиенты довольны' }],
+      constraints: { deadline: '', budget: '', legal: '', dataLocation: '' },
+    };
     case 'buildpath_features': return templateFeatures(confirmedBrief ?? brief(true), (inputs.process ?? null) as never);
     case 'buildpath_screens': return templateScreens((inputs.features ?? null) as never);
     case 'buildpath_interview': return interview(user, schema);
