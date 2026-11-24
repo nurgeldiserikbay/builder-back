@@ -28,12 +28,24 @@ export class ProjectsService {
         projectType: true,
         createdAt: true,
         updatedAt: true,
+        stages: { select: { stageKey: true, status: true, updatedAt: true }, orderBy: { position: 'asc' } },
+        publication: { select: { slug: true, status: true, monitorStatus: true } },
+        _count: {
+          select: {
+            members: { where: { status: 'active' } },
+            assignments: { where: { status: 'active' } },
+            changeNotices: { where: { status: { in: ['open', 'discussing'] } } },
+          },
+        },
       },
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
     const hasMore = rows.length > limit;
-    const data = rows.slice(0, limit);
+    const data = rows.slice(0, limit).map(({ stages, publication, _count, ...project }) => ({
+      ...project,
+      overview: projectOverview(stages, publication, _count),
+    }));
     return {
       data,
       meta: { nextCursor: hasMore ? data[data.length - 1]?.id ?? null : null },
@@ -167,4 +179,31 @@ export class ProjectsService {
   private isUuid(value: string): boolean {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
   }
+}
+
+const doneStatuses = new Set(['approved', 'imported', 'skipped']);
+const waitingStatuses = new Set(['in_review', 'changes_requested', 'stale', 'blocked']);
+
+/**
+ * What a projects table needs without opening each project: progress, the stage being worked on now,
+ * how many things wait for a decision, the team size and the publication state. Read-only, derived from stored state.
+ */
+export function projectOverview(
+  stages: Array<{ stageKey: string; status: string; updatedAt: Date }>,
+  publication: { slug: string; status: string; monitorStatus: string } | null,
+  counts: { members: number; assignments: number; changeNotices: number },
+) {
+  const accepted = stages.filter((stage) => doneStatuses.has(stage.status)).length;
+  const current = stages.find((stage) => !doneStatuses.has(stage.status) && stage.status !== 'locked') ?? null;
+  const lastActivity = stages.reduce<Date | null>((latest, stage) => (!latest || stage.updatedAt > latest ? stage.updatedAt : latest), null);
+  return {
+    stagesTotal: stages.length,
+    stagesAccepted: accepted,
+    currentStage: current ? { key: current.stageKey, status: current.status } : null,
+    waiting: stages.filter((stage) => waitingStatuses.has(stage.status)).length + counts.changeNotices,
+    openChanges: counts.changeNotices,
+    people: counts.members + counts.assignments,
+    publication: publication ? { slug: publication.slug, status: publication.status, monitor: publication.monitorStatus } : null,
+    lastActivityAt: lastActivity,
+  };
 }

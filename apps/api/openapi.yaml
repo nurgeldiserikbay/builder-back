@@ -7440,6 +7440,38 @@ components:
       required: [data]
       properties:
         data: { $ref: '#/components/schemas/Project' }
+    ProjectOverview:
+      type: object
+      description: Read-only summary for the projects table, derived from stored stage, notice, team and publication state.
+      additionalProperties: false
+      required: [stagesTotal, stagesAccepted, currentStage, waiting, openChanges, people, publication, lastActivityAt]
+      properties:
+        stagesTotal: { type: integer, minimum: 0 }
+        stagesAccepted: { type: integer, minimum: 0, description: 'Accepted, imported or skipped stages.' }
+        currentStage:
+          description: First stage that is open and not yet accepted; null when the route is finished or not started.
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: false
+              required: [key, status]
+              properties:
+                key: { type: string }
+                status: { type: string }
+        waiting: { type: integer, minimum: 0, description: 'Stages in review, returned, outdated or blocked plus open change notices.' }
+        openChanges: { type: integer, minimum: 0 }
+        people: { type: integer, minimum: 0, description: Active project members and active stage specialists. }
+        publication:
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: false
+              required: [slug, status, monitor]
+              properties:
+                slug: { type: string }
+                status: { type: string }
+                monitor: { type: string, enum: [unknown, up, down] }
+        lastActivityAt: { type: [string, 'null'], format: date-time }
     ProjectListResponse:
       type: object
       additionalProperties: false
@@ -7447,7 +7479,13 @@ components:
       properties:
         data:
           type: array
-          items: { $ref: '#/components/schemas/Project' }
+          items:
+            allOf:
+              - $ref: '#/components/schemas/Project'
+              - type: object
+                required: [overview]
+                properties:
+                  overview: { $ref: '#/components/schemas/ProjectOverview' }
         meta:
           type: object
           additionalProperties: false
