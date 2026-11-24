@@ -206,6 +206,7 @@ model User {
   accountPlan               AccountPlan?
   consents                  UserConsent[]
 
+  stageRequestResponses    StageRequestResponse[]    @relation("StageRequestResponses")
   @@index([createdAt], map: "users_created_idx")
   @@index([deletionRequestedAt], map: "users_deletion_requested_idx")
   @@map("users")
@@ -360,6 +361,7 @@ model Project {
   visitCounts      SiteVisitCount[]
   invitations      ProjectInvitation[]
 
+  stageRequests             StageRequest[]
   @@index([workspaceId, status, createdAt(sort: Desc)], map: "projects_workspace_status_created_idx")
   @@index([ownerUserId, createdAt(sort: Desc)], map: "projects_owner_created_idx")
   @@map("projects")
@@ -877,6 +879,7 @@ model ProjectStage {
   /// Bumped whenever the policy changes or changes are requested: earlier approvals stop counting.
   approvalRound     Int                @default(0) @map("approval_round")
 
+  stageRequests     StageRequest[]
   @@unique([projectId, stageKey], map: "project_stages_project_key_key")
   @@index([projectId, position], map: "project_stages_project_position_idx")
   @@map("project_stages")
@@ -2221,4 +2224,57 @@ model SandboxRun {
   @@index([projectId, kind, createdAt], map: "sandbox_runs_project_kind_created_idx")
   @@index([sourceVersionId], map: "sandbox_runs_source_version_idx")
   @@map("sandbox_runs")
+}
+
+/// «Заявка на этап»: the owner describes the work on a stage; specialists from the catalog respond with a price and a term.
+model StageRequest {
+  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String                 @map("project_id") @db.Uuid
+  stageId         String                 @map("stage_id") @db.Uuid
+  createdByUserId String                 @map("created_by_user_id") @db.Uuid
+  role            StageAssignmentRole
+  description     String                 @db.VarChar(2000)
+  /// fixed | hourly | any — how the owner prefers to pay.
+  payKind         String                 @map("pay_kind") @db.VarChar(10)
+  /// The most the owner plans to pay for the stage, optional.
+  budgetTiyn      Int?                   @map("budget_tiyn")
+  /// How many days the owner gives for the work.
+  days            Int
+  /// open → filled (a response was chosen) | cancelled. Past closesAt an open request is shown as closed.
+  status          String                 @default("open") @db.VarChar(12)
+  closesAt        DateTime               @map("closes_at") @db.Timestamptz(3)
+  chosenResponseId String?               @map("chosen_response_id") @db.Uuid
+  createdAt       DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project         Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  stage           ProjectStage           @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  responses       StageRequestResponse[]
+
+  @@index([status, closesAt], map: "stage_requests_open_idx")
+  @@index([projectId], map: "stage_requests_project_idx")
+  @@map("stage_requests")
+}
+
+/// A specialist's response to a stage request: their terms, term in days and a short message.
+model StageRequestResponse {
+  id               String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestId        String       @map("request_id") @db.Uuid
+  specialistUserId String       @map("specialist_user_id") @db.Uuid
+  message          String       @db.VarChar(1000)
+  payKind          String       @map("pay_kind") @db.VarChar(10)
+  fixedAmountTiyn  Int?         @map("fixed_amount_tiyn")
+  hourlyRateTiyn   Int?         @map("hourly_rate_tiyn")
+  hourLimit        Int?         @map("hour_limit")
+  days             Int
+  /// sent → chosen | declined | withdrawn
+  status           String       @default("sent") @db.VarChar(12)
+  assignmentId     String?      @map("assignment_id") @db.Uuid
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  request          StageRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  specialist       User         @relation("StageRequestResponses", fields: [specialistUserId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, specialistUserId], map: "stage_request_responses_once_key")
+  @@index([specialistUserId], map: "stage_request_responses_specialist_idx")
+  @@map("stage_request_responses")
 }

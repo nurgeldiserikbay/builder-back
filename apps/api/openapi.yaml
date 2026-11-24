@@ -2575,7 +2575,7 @@ paths:
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       responses:
-        '200': { description: 'data — waiting[] (id, kind: stage_review|stage_changes|change_notice|change_proposal|time_entries|dispute|mention, projectId, projectName, projectType, stageKey, since, dueAt, count, who, text), updates[] (id, projectId, projectName, projectType, type, kind, stageKey, createdAt, details, actor { id, name, isMe } or null, unread), unreadUpdates, seenAt' }
+        '200': { description: 'data — waiting[] (id, kind: stage_review|stage_changes|change_notice|change_proposal|time_entries|dispute|mention|request_responses, projectId, projectName, projectType, stageKey, since, dueAt, count, who, text), updates[] (id, projectId, projectName, projectType, type, kind, stageKey, createdAt, details, actor { id, name, isMe } or null, unread), unreadUpdates, seenAt' }
         '401': { description: Not signed in }
   /me/inbox/seen:
     post:
@@ -2645,6 +2645,158 @@ paths:
         '200': { description: 'data — projectType, startStageKey, requests (min, max), pricingConfigured, perRequest, cost (min, max) or null, stages[] (key, title, brought, aiUsed, requests, cost), basedOnRequests, currency' }
         '400': { description: 'INVALID_PROJECT_TYPE, INVALID_START_STAGE' }
         '401': { description: Not signed in }
+  /projects/{projectId}/stages/{stageKey}/requests:
+    get:
+      tags: [Specialists]
+      operationId: listStageRequests
+      summary: Stage requests with responses and the responders' catalog cards (owner or manager)
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: stageKey, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: 'data — createdId, requests[] (id, role, roleTitle, description, payKind, budget, days, status open|expired|filled|cancelled, closesAt, createdAt, responses[] (id, message, days, status, createdAt, terms (payKind, fixedAmount, hourlyRate, hourLimit, total), overBudget, specialist (profileId, name, headline, city, rating, reviews, finishedStages)))' }
+        '403': { description: REQUESTS_FORBIDDEN }
+        '404': { description: 'PROJECT_NOT_FOUND, STAGE_NOT_FOUND' }
+    post:
+      tags: [Specialists]
+      operationId: createStageRequest
+      summary: Publish a request for a stage («Заявка на этап»)
+      description: >-
+        Owner or manager. Shown on the board to every signed-in person for 14 days with the project type, the stage and the
+        description only — never the project's name or data. One open request per stage and role, at most 10 open per
+        project; a lead request needs a stage without a lead. Needs a plan that allows specialists.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: stageKey, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role, description, days]
+              properties:
+                role: { type: string, enum: [lead, consultant] }
+                description: { type: string, minLength: 30, maxLength: 2000 }
+                payKind: { type: string, enum: [fixed, hourly, any], default: any }
+                budget: { type: [integer, 'null'], minimum: 1000, maximum: 100000000, description: 'The most the owner plans to pay, tenge' }
+                days: { type: integer, minimum: 1, maximum: 180 }
+      responses:
+        '201': { description: 'Same as GET, with createdId' }
+        '400': { description: 'INVALID_ROLE, INVALID_DESCRIPTION, INVALID_PAYKIND, INVALID_BUDGET, INVALID_DAYS, UNKNOWN_FIELD' }
+        '402': { description: PLAN_NO_SPECIALISTS }
+        '409': { description: 'PROJECT_NOT_ACTIVE, STAGE_ACCEPTED_REOPEN_FIRST, LEAD_ALREADY_ASSIGNED, REQUEST_ALREADY_OPEN, TOO_MANY_OPEN_REQUESTS' }
+  /projects/{projectId}/requests/{requestId}/cancel:
+    post:
+      tags: [Specialists]
+      operationId: cancelStageRequest
+      summary: Close a request without choosing; open responses are declined and responders told
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: requestId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The stage's requests }
+        '409': { description: REQUEST_CLOSED }
+  /projects/{projectId}/requests/{requestId}/responses/{responseId}/choose:
+    post:
+      tags: [Specialists]
+      operationId: chooseStageRequestResponse
+      summary: Choose a response — the specialist joins the stage at once with the terms they offered
+      description: The request becomes filled, other responses declined and their authors told. The new assignment is active (the specialist agreed to the terms by responding) with default access; the owner can change access afterwards.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: requestId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: responseId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'data — assignmentId and the stage''s requests' }
+        '404': { description: RESPONSE_NOT_FOUND }
+        '409': { description: 'REQUEST_CLOSED, ALREADY_PROJECT_MEMBER, ALREADY_INVITED, LEAD_ALREADY_ASSIGNED, SPECIALIST_UNAVAILABLE' }
+  /projects/{projectId}/requests/{requestId}/responses/{responseId}/decline:
+    post:
+      tags: [Specialists]
+      operationId: declineStageRequestResponse
+      summary: Turn down one response; the request stays open
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: requestId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: responseId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The stage's requests }
+        '404': { description: RESPONSE_NOT_FOUND }
+  /stage-requests:
+    get:
+      tags: [Specialists]
+      operationId: stageRequestBoard
+      summary: Open stage requests for specialists
+      description: Project type, stage, role, description, payment kind, budget, days, closing time and number of responses; whether the caller can respond (a published, not blocked catalog card; not in the project; not already on the stage) and their own response.
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: stageKey, in: query, required: false, schema: { type: string } }
+        - { name: mine, in: query, required: false, schema: { type: string, enum: ['1'] } }
+      responses:
+        '200': { description: 'data — profile (none|draft|published|blocked), requests[] (id, projectType, projectTypeTitle, stageKey, stageTitle, stagePurpose, role, roleTitle, roleExplanation, can[], description, payKind, budget, days, closesAt, createdAt, responses, matchesProfile, canRespond, cannotRespond, mine)' }
+  /stage-requests/{requestId}/responses:
+    post:
+      tags: [Specialists]
+      operationId: respondToStageRequest
+      summary: Send or change the caller's response while the request is open
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: requestId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [message, payKind, days]
+              properties:
+                message: { type: string, minLength: 20, maxLength: 1000 }
+                payKind: { type: string, enum: [fixed, hourly] }
+                fixedAmount: { type: integer, minimum: 1000, maximum: 100000000 }
+                hourlyRate: { type: integer, minimum: 500, maximum: 1000000 }
+                hourLimit: { type: integer, minimum: 1, maximum: 1000 }
+                days: { type: integer, minimum: 1, maximum: 180 }
+      responses:
+        '200': { description: The caller's responses on the board }
+        '400': { description: 'INVALID_MESSAGE, INVALID_PAYKIND, PAYKIND_NOT_ASKED, INVALID_FIXEDAMOUNT, INVALID_HOURLYRATE, INVALID_HOURLIMIT, INVALID_DAYS' }
+        '403': { description: 'PROFILE_NOT_PUBLISHED, PROFILE_BLOCKED, OWN_PROJECT, ALREADY_ON_STAGE' }
+        '409': { description: 'REQUEST_CLOSED, RESPONSE_DECIDED' }
+  /stage-requests/{requestId}/responses/withdraw:
+    post:
+      tags: [Specialists]
+      operationId: withdrawStageRequestResponse
+      summary: Withdraw the caller's response
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - { name: requestId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The caller's responses on the board }
+        '404': { description: RESPONSE_NOT_FOUND }
+  /me/stage-responses:
+    get:
+      tags: [Specialists]
+      operationId: myStageResponses
+      summary: The caller's responses of the last 90 days with their outcome
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      responses:
+        '200': { description: 'data[] (id, requestId, status sent|chosen|declined|withdrawn, requestStatus, stageKey, stageTitle, projectTypeTitle, role, days, terms, createdAt, projectId when chosen)' }
   /admin/disputes:
     get:
       tags: [Disputes]
