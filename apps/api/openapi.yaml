@@ -8361,6 +8361,17 @@ components:
                     next: { type: string }
                     example: { type: string }
                     terms: { type: array, items: { type: object, properties: { term: { type: string }, meaning: { type: string } } } }
+                    passport:
+                      type: object
+                      description: >-
+                        The stage passport (builder-docs PRODUCT_LIFECYCLE.md §2), the same for every stage — steps: how
+                        the stage goes; checks: what the platform checks in the result; doneWhen: one sentence of «done»
+                        shared by the owner, the specialist and the AI. Purpose, inputs, result, acceptance and what goes on
+                        come from the other fields of this response.
+                      properties:
+                        steps: { type: array, items: { type: string } }
+                        checks: { type: array, items: { type: string } }
+                        doneWhen: { type: string }
                 artifactType: { type: string, enum: [brief, offer, content, design, site] }
                 status: { $ref: '#/components/schemas/StageStatus' }
                 statusLabel: { type: string }

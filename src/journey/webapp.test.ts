@@ -8,7 +8,7 @@ import { parse } from 'parse5';
 import type { Brief } from './artifacts.js';
 import { capabilitiesFor, normalizeProcess, processIssues, templateProcess } from './process.js';
 import { projectTypes, routeInputs, stageDefinitions, stageFor, stageTitle } from './catalog.js';
-import { guideFor, STAGE_GUIDES } from './phases.js';
+import { guideFor, STAGE_GUIDES, STAGE_PASSPORTS } from './phases.js';
 import { codeHostingCard, recommend } from '../choices/cards.js';
 import { buildAppPlan, buildHandoff, featuresChanges, featuresIssues, normalizeFeatures, normalizeScreens, renderPrototype, screensIssues, templateFeatures, templateScreens } from './webapp.js';
 import { auditSite } from '../quality/site-audit.js';
@@ -77,7 +77,7 @@ describe('web application route', () => {
     assert.equal(stageTitle('goal', 'landing'), 'Цель сайта');
     const words = JSON.stringify({ goal: { ...stageFor('goal', 'web_app'), playbook: null }, process: { purpose: stageFor('process', 'web_app').purpose, accept: stageFor('process', 'web_app').acceptExplanation }, techplan: stageFor('techplan', 'web_app').purpose, guides: ['goal', 'process', 'techplan'].map((key) => guideFor(key as never, 'web_app')) });
     assert.doesNotMatch(words.replace(/Написать вам в мессенджер|Telegram или WhatsApp/g, ''), /сайт/i);
-    assert.equal(guideFor('goal', 'landing'), STAGE_GUIDES.goal);
+    assert.deepEqual(guideFor('goal', 'landing'), { ...STAGE_GUIDES.goal, passport: STAGE_PASSPORTS.goal });
     assert.equal(recommend('code_hosting', { hasSpecialists: false, projectType: 'web_app' }).optionKey, 'github');
     assert.equal(recommend('code_hosting', { hasSpecialists: false, projectType: 'landing' }).optionKey, 'archive');
     assert.doesNotMatch(`${codeHostingCard('web_app').question} ${codeHostingCard('web_app').why}`, /сайт/i);

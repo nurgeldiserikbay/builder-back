@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { en } from '../i18n/en.js';
 import { projectTypes, stageDefinitions, type StageKey } from './catalog.js';
-import { PHASES, STAGE_GUIDES, STAGE_PHASE, phasesOf } from './phases.js';
+import { PHASES, STAGE_GUIDES, STAGE_PASSPORTS, STAGE_PHASE, phasesOf } from './phases.js';
 
 const route = (type: keyof typeof projectTypes, done: StageKey[] = []) => projectTypes[type].stages.map((key) => ({ key, done: done.includes(key) }));
 
@@ -14,6 +14,14 @@ describe('phases of the common path', () => {
       for (const text of [guide.why, guide.next, guide.example, ...guide.terms.flatMap((term) => [term.term, term.meaning])]) assert.ok(en[text], `${key}: «${text}»`);
     }
     for (const phase of PHASES) assert.ok(en[phase.title] && en[phase.short], phase.key);
+  });
+
+  it('every stage has a passport: how it goes, what is checked and one «done when», all translated', () => {
+    for (const key of Object.keys(stageDefinitions) as StageKey[]) {
+      const passport = STAGE_PASSPORTS[key];
+      assert.ok(passport.steps.length >= 2 && passport.checks.length >= 1 && passport.doneWhen.length > 20, key);
+      for (const text of [...passport.steps, ...passport.checks, passport.doneWhen]) assert.ok(en[text], `${key}: «${text}»`);
+    }
   });
 
   it('a website goes idea → … → build → launch → after launch, and the stages keep the route order', () => {
