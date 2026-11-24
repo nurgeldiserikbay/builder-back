@@ -2912,4 +2912,9 @@ export const en: Record<string, string> = {
   "Где будет лежать код вашего приложения?": "Where will your app's code live?",
   "Код приложения пишет ИИ-агент, а запускаете его вы — на Render или своём сервере. Они берут код из репозитория, поэтому без него приложение не запустить; архив подойдёт только чтобы посмотреть код.": "The AI agent writes the app's code and you run it — on Render or your own server. They take the code from a repository, so without one the app cannot run; an archive is only for looking at the code.",
   "Код приложения нужно где-то хранить, чтобы его запустить: Render берёт его из GitHub, а агент отправляет туда каждую версию отдельной веткой. GitHub бесплатен и для закрытых репозиториев.": "The app's code has to live somewhere to run: Render takes it from GitHub, and the agent sends each version there as a separate branch. GitHub is free for private repositories too.",
+  "Заявку на этап «{0}» закрыли без выбора исполнителя. Спасибо за отклик.": "The request for stage «{0}» was closed without choosing anyone. Thank you for responding.",
+  "Вас выбрали исполнителем этапа «{0}» в проекте «{1}». Этап уже открыт: {2}": "You were chosen to do stage «{0}» in project «{1}». The stage is already open: {2}",
+  "По заявке на этап «{0}» владелец выбрал другого специалиста. Спасибо за отклик.": "For the request on stage «{0}» the owner chose another specialist. Thank you for responding.",
+  "Владелец отклонил ваш отклик на этап «{0}».": "The owner declined your response to stage «{0}».",
+  "Новый отклик на заявку по этапу «{0}» в проекте «{1}»: {2}": "A new response to the request for stage «{0}» in project «{1}»: {2}",
 };
