@@ -15,7 +15,8 @@ import { type ImageInfo } from './site-renderer.js';
 import { type Sitemap } from './sitemap.js';
 import { type Catalog } from './products.js';
 import { configuredStageProvider, type StageAiProvider } from './stage-ai.js';
-import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
+import { notifyUser } from '../notifications/user-notifier.js';
+import type { NotifyCategory } from '../account/notification-prefs.js';
 import { BillingService } from '../billing/billing.service.js';
 import { effectiveStatuses, isSatisfied, type StageStatus, type StatusMap } from './stage-state.js';
 import { redact, scopeOf, type AccessScope, type HiddenPart } from './access-scope.js';
@@ -383,12 +384,12 @@ export class JourneyCore {
     };
   }
 
-  /** Best-effort Telegram notice to a linked account, in that account's language; the workflow never depends on it. */
-  async notifyUser(userId: string, text: Message): Promise<void> {
-    const config = telegramConfig();
-    if (!config) return;
-    const identity = await this.prisma.externalIdentity.findUnique({ where: { userId_provider: { userId, provider: 'telegram' } }, select: { chatId: true, user: { select: { locale: true } } } });
-    if (identity) await sendTelegramMessage(config, identity.chatId, inLocale(identity.user.locale, text));
+  /**
+   * Best-effort notice in the account's language: Telegram and/or e-mail as the person set for this category
+   * (stage work by default; «Входящие» show it anyway). The workflow never depends on it.
+   */
+  async notifyUser(userId: string, text: Message, category: NotifyCategory = 'stages'): Promise<void> {
+    await notifyUser(this.prisma, userId, { text, category });
   }
 
 

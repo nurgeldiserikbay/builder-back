@@ -179,6 +179,17 @@ model User {
   voiceConsentAt           DateTime?                 @map("voice_consent_at") @db.Timestamptz(3)
   /// «Входящие»: when the person last opened the updates feed; later events by others count as new.
   inboxSeenAt              DateTime?                 @map("inbox_seen_at") @db.Timestamptz(3)
+  /// Telegram and e-mail per notice category (account/notification-prefs.ts); empty means the defaults.
+  notificationPrefs        Json                      @default("{}") @map("notification_prefs")
+  /// Two-step sign-in: the authenticator secret, sealed with secret-box; set when switched on.
+  totpSecret               String?                   @map("totp_secret")
+  /// A secret shown for scanning but not yet confirmed with a code.
+  totpPendingSecret        String?                   @map("totp_pending_secret")
+  totpEnabledAt            DateTime?                 @map("totp_enabled_at") @db.Timestamptz(3)
+  /// The last accepted time step: the same code cannot be used twice.
+  totpLastStep             Int?                      @map("totp_last_step")
+  /// SHA-256 of unused one-time recovery codes.
+  recoveryCodes            String[]                  @default([]) @map("recovery_codes")
   createdAt                DateTime                  @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt                DateTime                  @updatedAt @map("updated_at") @db.Timestamptz(3)
   sessions                 UserSession[]
@@ -219,6 +230,8 @@ model User {
   proposalsDecided  ChangeProposal[] @relation("ProposalDecider")
   playbooks         SpecialistPlaybook[] @relation("PlaybookOwner")
   playbooksAttached StagePlaybook[]      @relation("PlaybookAttacher")
+  loginChallenges          LoginChallenge[]
+  loginEvents              LoginEvent[]
 }
 
 model UserSession {
@@ -228,6 +241,11 @@ model UserSession {
   expiresAt   DateTime  @map("expires_at") @db.Timestamptz(3)
   revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(3)
   lastSeenAt  DateTime? @map("last_seen_at") @db.Timestamptz(3)
+  /// How the session started: password, two_step, google, telegram.
+  method      String    @default("password") @db.VarChar(12)
+  userAgent   String?   @map("user_agent") @db.VarChar(300)
+  /// Coarse network hint (security/device.ts), never the full address.
+  ipHint      String?   @map("ip_hint") @db.VarChar(64)
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -2277,4 +2295,34 @@ model StageRequestResponse {
   @@unique([requestId, specialistUserId], map: "stage_request_responses_once_key")
   @@index([specialistUserId], map: "stage_request_responses_specialist_idx")
   @@map("stage_request_responses")
+}
+
+/// The second step of a password sign-in: a short-lived token between «password correct» and «code correct».
+model LoginChallenge {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  tokenHash String   @unique @map("token_hash") @db.Char(64)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(3)
+  attempts  Int      @default(0)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("login_challenges")
+}
+
+/// Sign-ins and failed attempts on an existing account, for «История входов». Kept 90 days.
+model LoginEvent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  method    String   @db.VarChar(12)
+  /// success | wrong_password | wrong_code | recovery_code
+  outcome   String   @db.VarChar(16)
+  userAgent String?  @map("user_agent") @db.VarChar(300)
+  ipHint    String?  @map("ip_hint") @db.VarChar(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)], map: "login_events_user_created_idx")
+  @@map("login_events")
 }

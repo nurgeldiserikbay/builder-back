@@ -116,7 +116,7 @@ export class OwnershipService {
       throw error;
     }
     const from = await this.prisma.user.findUnique({ where: { id: fromUserId }, select: { name: true, email: true } });
-    await notifyUser(this.prisma, toUserId, {
+    await notifyUser(this.prisma, toUserId, { category: 'team',
       text: () => tr('{0} предлагает передать вам проект «{1}». Посмотрите условия и примите или откажитесь во вкладке «Команда» в течение 7 дней.', [from?.name || from?.email || '', projectName]),
       // In Telegram the offer can be read and answered right in the chat.
       telegramKeyboard: () => [[{ text: tr('📦 Посмотреть предложение'), callback_data: `OT:${projectId}` }]],
@@ -160,7 +160,7 @@ export class OwnershipService {
     }
     const person = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
     const why = reason && blockerTexts[reason] ? tr(blockerTexts[reason]) : tr('Уже открыто другое предложение или владелец сменился.');
-    await notifyUser(this.prisma, project.ownerUserId, { text: () => tr('{0} вошёл в команду проекта «{1}», но предложение передать проект не отправлено: {2} Предложите передачу во вкладке «Команда», когда это решится.', [person?.name || person?.email || '', project.name, why]) }).catch(() => undefined);
+    await notifyUser(this.prisma, project.ownerUserId, { category: 'team', text: () => tr('{0} вошёл в команду проекта «{1}», но предложение передать проект не отправлено: {2} Предложите передачу во вкладке «Команда», когда это решится.', [person?.name || person?.email || '', project.name, why]) }).catch(() => undefined);
     return false;
   }
 
@@ -186,7 +186,7 @@ export class OwnershipService {
       if (done.count !== 1) throw new GoneException('OWNERSHIP_OFFER_NOT_FOUND');
       await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'ownership_declined', details: { transferId: offer.id } } });
     });
-    await notifyUser(this.prisma, offer.fromUserId, { text: () => tr('Передача проекта «{0}» отклонена.', [project.name]) }).catch(() => undefined);
+    await notifyUser(this.prisma, offer.fromUserId, { category: 'team', text: () => tr('Передача проекта «{0}» отклонена.', [project.name]) }).catch(() => undefined);
     return { data: { declined: true } };
   }
 
@@ -217,7 +217,7 @@ export class OwnershipService {
       await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'ownership_transferred', details: { transferId: offer.id, fromUserId: offer.fromUserId, toUserId: userId, keepAccess: offer.keepAccess } } });
     });
     const to = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
-    await notifyUser(this.prisma, offer.fromUserId, { text: () => (offer.keepAccess
+    await notifyUser(this.prisma, offer.fromUserId, { category: 'team', text: () => (offer.keepAccess
       ? tr('{0} принял(а) проект «{1}». Теперь вы администратор этого проекта.', [to?.name || to?.email || '', project.name])
       : tr('{0} принял(а) проект «{1}». У вас больше нет доступа к нему.', [to?.name || to?.email || '', project.name])) }).catch(() => undefined);
     return { data: { projectId } };

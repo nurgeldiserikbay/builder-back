@@ -2917,4 +2917,13 @@ export const en: Record<string, string> = {
   "По заявке на этап «{0}» владелец выбрал другого специалиста. Спасибо за отклик.": "For the request on stage «{0}» the owner chose another specialist. Thank you for responding.",
   "Владелец отклонил ваш отклик на этап «{0}».": "The owner declined your response to stage «{0}».",
   "Новый отклик на заявку по этапу «{0}» в проекте «{1}»: {2}": "A new response to the request for stage «{0}» in project «{1}»: {2}",
+  "В вашем аккаунте BuildPath включён вход с кодом из приложения. Если это были не вы — сразу напишите в поддержку.": "Sign-in with a code from an app was switched on for your BuildPath account. If this was not you, contact support right away.",
+  "В вашем аккаунте BuildPath выключен вход с кодом из приложения. Если это были не вы — смените пароль и завершите чужие сеансы.": "Sign-in with a code from an app was switched off for your BuildPath account. If this was not you, change your password and end sessions you do not recognise.",
+  "BuildPath: изменение защиты аккаунта": "BuildPath: account protection changed",
+  "Открыть настройки безопасности": "Open security settings",
+  "Новый вход в BuildPath: {0}{1}. Если это были не вы — смените пароль и завершите чужие сеансы в настройках безопасности.": "New sign-in to BuildPath: {0}{1}. If this was not you, change your password and end sessions you do not recognise in the security settings.",
+  "BuildPath: новый вход в аккаунт": "BuildPath: new sign-in to your account",
+  "Открыть входящие": "Open inbox",
+  "BuildPath: новое в ваших проектах": "BuildPath: news in your projects",
+  "Настроить уведомления": "Notification settings",
 };

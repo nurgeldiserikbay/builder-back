@@ -191,7 +191,7 @@ export class TeamService {
       await tx.projectEvent.create({ data: { projectId: row.projectId, actorUserId: userId, type: 'team_joined', details: { invitationId: row.id, role: row.role } } });
     });
     const joined = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true, email: true } });
-    await notifyUser(this.prisma, row.invitedByUserId, { text: () => tr('{0} присоединился к команде проекта «{1}» как {2}.', [joined?.name || joined?.email || '', row.project.name, tr(roleInfo[row.role as ProjectRole].title).toLowerCase()]) });
+    await notifyUser(this.prisma, row.invitedByUserId, { category: 'team', text: () => tr('{0} присоединился к команде проекта «{1}» как {2}.', [joined?.name || joined?.email || '', row.project.name, tr(roleInfo[row.role as ProjectRole].title).toLowerCase()]) });
     // `joined` tells the caller to follow up a hand-over invitation with the transfer offer.
     return { data: { projectId: row.projectId }, joined: row.ownershipKeepAccess === null ? null : { invitationId: row.id, invitedByUserId: row.invitedByUserId, keepAccess: row.ownershipKeepAccess } };
   }
@@ -206,7 +206,7 @@ export class TeamService {
       await tx.projectMember.update({ where: { id: member.id }, data: { role: nextRole as InvitableRole, ...(nextRole === 'contributor' ? {} : { stageKeys: [] }) } });
       await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'team_role_changed', details: { memberUserId: member.userId, from: member.role, to: nextRole } } });
     });
-    await notifyUser(this.prisma, member.userId, { text: () => tr('Ваша роль в проекте «{0}» теперь: {1}.', [project.name, tr(roleInfo[nextRole as ProjectRole].title).toLowerCase()]) });
+    await notifyUser(this.prisma, member.userId, { category: 'team', text: () => tr('Ваша роль в проекте «{0}» теперь: {1}.', [project.name, tr(roleInfo[nextRole as ProjectRole].title).toLowerCase()]) });
     return this.list(userId, projectId);
   }
 
@@ -220,7 +220,7 @@ export class TeamService {
       await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'team_stages_changed', details: { memberUserId: member.userId, stageKeys } } });
     });
     const titles = stageKeys.map((key) => stageDefinitions[key as StageKey].title);
-    await notifyUser(this.prisma, member.userId, { text: () => (titles.length ? tr('В проекте «{0}» вы теперь работаете на этапах: {1}.', [project.name, titles.map((title) => tr(title)).join(', ')]) : tr('В проекте «{0}» вы теперь можете работать на всех этапах.', [project.name])) });
+    await notifyUser(this.prisma, member.userId, { category: 'team', text: () => (titles.length ? tr('В проекте «{0}» вы теперь работаете на этапах: {1}.', [project.name, titles.map((title) => tr(title)).join(', ')]) : tr('В проекте «{0}» вы теперь можете работать на всех этапах.', [project.name])) });
     return this.list(userId, projectId);
   }
 
@@ -232,7 +232,7 @@ export class TeamService {
       await tx.projectMember.update({ where: { id: member.id }, data: { status: 'revoked' } });
       await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'team_member_removed', details: { memberUserId: member.userId, role: member.role } } });
     });
-    await notifyUser(this.prisma, member.userId, { text: () => tr('У вас больше нет доступа к проекту «{0}».', [project.name]) });
+    await notifyUser(this.prisma, member.userId, { category: 'team', text: () => tr('У вас больше нет доступа к проекту «{0}».', [project.name]) });
     const stages = await this.prisma.projectStage.findMany({ where: { projectId }, select: { stageKey: true, approvalPolicy: true } });
     const affected = stages.filter((stage) => readPolicy(stage.approvalPolicy)?.reviewers.includes(member.userId)).map((stage) => stage.stageKey);
     const list = await this.list(userId, projectId);

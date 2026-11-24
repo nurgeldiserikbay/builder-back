@@ -14,6 +14,12 @@ import { emailConfig, sendEmail, type EmailConfig } from '../notifications/email
 import { LEGAL_VERSIONS } from '../legal/documents.js';
 import { RateLimiter, authLimits } from '../security/rate-limit.js';
 import { GoogleAuthError, authorizeUrl, exchangeCode, googleConfig, randomToken, safeNextPath, sha256, type GoogleIdentity } from './google-oauth.js';
+import { describeDevice, ipHint } from '../security/device.js';
+import { findRecoveryCode, verifyCode } from '../security/totp.js';
+import { openSecret } from '../common/secret-box.js';
+import { accountSecretKey } from '../security/account-key.js';
+import { notifyUser } from '../notifications/user-notifier.js';
+import { tr } from '../i18n/i18n.js';
 
 const scrypt = (password: string, salt: Buffer, length: number, options: { N: number; r: number; p: number; maxmem: number }): Promise<Buffer> =>
   new Promise((resolve, reject) => {
@@ -27,9 +33,16 @@ const VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
 const RESET_TTL_MS = 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 /** Stored for accounts made with Google: never matches a password; «forgot password» can set a real one. */
-const NO_PASSWORD = '!external';
+export const NO_PASSWORD = '!external';
 /** How recent a sign-in must be to confirm a sensitive action on an account without a password. */
 const REAUTH_WINDOW_MS = 15 * 60 * 1000;
+/** The second step of a sign-in must follow the password within five minutes and five tries. */
+const CHALLENGE_TTL_MS = 5 * 60 * 1000;
+const CHALLENGE_ATTEMPTS = 5;
+/** «Last seen» of a session is written at most this often, not on every request. */
+const SEEN_EVERY_MS = 10 * 60 * 1000;
+export type ClientInfo = { ip?: string; userAgent?: string | null };
+export type LoginResult = { token: string; user: SafeUser } | { twoStep: { challenge: string; expiresAt: Date } };
 
 export interface SafeUser {
   id: string;
@@ -207,7 +220,7 @@ export class AuthService {
     ]);
   }
 
-  async login(email: string, password: string, ip = ''): Promise<{ token: string; user: SafeUser }> {
+  async login(email: string, password: string, ip = '', userAgent: string | null = null): Promise<LoginResult> {
     const normalized = email.trim().toLowerCase();
     await this.limits.take('login-ip', ip, authLimits.loginPerIp, 'LOGIN_RATE_LIMITED');
     if (!await this.limits.allowed('login-fail', normalized, authLimits.loginFailuresPerEmail)) throw new HttpException('LOGIN_RATE_LIMITED', HttpStatus.TOO_MANY_REQUESTS);
@@ -217,6 +230,7 @@ export class AuthService {
     });
     if (!user || !(await this.verifyPassword(password, user.passwordHash))) {
       await this.limits.hit('login-fail', normalized, authLimits.loginFailuresPerEmail);
+      if (user) await this.loginEvent(user.id, 'password', 'wrong_password', { ip, userAgent });
       throw new UnauthorizedException('INVALID_CREDENTIALS');
     }
     await this.limits.clear('login-fail', normalized);
@@ -224,19 +238,77 @@ export class AuthService {
     if (user.deletionRequestedAt) throw new ForbiddenException('ACCOUNT_DELETED');
     if (!user.emailVerifiedAt) throw new UnauthorizedException('EMAIL_NOT_VERIFIED');
 
-    const token = randomBytes(32).toString('base64url');
-    await this.prisma.userSession.create({
-      data: {
-        userId: user.id,
-        tokenHash: this.digest(token),
-        expiresAt: new Date(Date.now() + SESSION_TTL_MS),
-      },
-    });
+    // Two-step sign-in: the password alone gives a short-lived challenge, not a session.
+    if (user.totpEnabledAt) {
+      const challenge = randomBytes(32).toString('base64url');
+      const expiresAt = new Date(Date.now() + CHALLENGE_TTL_MS);
+      await this.prisma.loginChallenge.create({ data: { userId: user.id, tokenHash: this.digest(challenge), expiresAt } });
+      return { twoStep: { challenge, expiresAt } };
+    }
+    const token = await this.startSession(user.id, 'password', { ip, userAgent });
     return { token, user: this.toSafeUser(user) };
   }
 
+  /** The second step: a code from the authenticator app, or one of the recovery codes. */
+  async loginSecondStep(challenge: string, code: string, ip = '', userAgent: string | null = null): Promise<{ token: string; user: SafeUser; recoveryCodesLeft: number | null }> {
+    await this.limits.take('login-ip', ip, authLimits.loginPerIp, 'LOGIN_RATE_LIMITED');
+    const row = await this.prisma.loginChallenge.findUnique({ where: { tokenHash: this.digest(challenge) }, include: { user: { include: { consents: latestConsent } } } });
+    if (!row || row.usedAt || row.expiresAt <= new Date() || row.attempts >= CHALLENGE_ATTEMPTS) throw new UnauthorizedException('TWO_STEP_EXPIRED');
+    const user = row.user;
+    const key = accountSecretKey();
+    const secret = user.totpSecret && key ? openSecret(user.totpSecret, key) : null;
+    if (!user.totpEnabledAt || !secret) throw new UnauthorizedException('TWO_STEP_EXPIRED');
+    const step = verifyCode(secret, code, new Date(), user.totpLastStep);
+    const recovery = step === null ? findRecoveryCode(code, user.recoveryCodes) : -1;
+    if (step === null && recovery < 0) {
+      await this.prisma.loginChallenge.update({ where: { id: row.id }, data: { attempts: { increment: 1 } } });
+      await this.loginEvent(user.id, 'two_step', 'wrong_code', { ip, userAgent });
+      throw new UnauthorizedException('TWO_STEP_CODE_INVALID');
+    }
+    // Used once: the challenge, the time step or the recovery code.
+    const claimed = await this.prisma.loginChallenge.updateMany({ where: { id: row.id, usedAt: null }, data: { usedAt: new Date() } });
+    if (claimed.count !== 1) throw new UnauthorizedException('TWO_STEP_EXPIRED');
+    const recoveryCodes = recovery >= 0 ? user.recoveryCodes.filter((_, index) => index !== recovery) : user.recoveryCodes;
+    await this.prisma.user.update({ where: { id: user.id }, data: step !== null ? { totpLastStep: step } : { recoveryCodes } });
+    const token = await this.startSession(user.id, 'two_step', { ip, userAgent }, recovery >= 0 ? 'recovery_code' : 'success');
+    return { token, user: this.toSafeUser(user), recoveryCodesLeft: recovery >= 0 ? recoveryCodes.length : null };
+  }
+
+  /**
+   * A new session with what its owner needs to recognise it later (device, network hint, how it started), a line in the
+   * sign-in history and — for a device not seen in this account before — a security notice by Telegram and e-mail.
+   */
+  private async startSession(userId: string, method: string, client: ClientInfo, outcome = 'success'): Promise<string> {
+    const token = randomBytes(32).toString('base64url');
+    const userAgent = client.userAgent?.slice(0, 300) ?? null;
+    const hint = ipHint(client.ip);
+    const device = describeDevice(userAgent);
+    let known: Array<{ userAgent: string | null }> = [];
+    try {
+      known = await this.prisma.loginEvent.findMany({
+        where: { userId, outcome: { in: ['success', 'recovery_code'] }, createdAt: { gte: new Date(Date.now() - 90 * 86_400_000) } },
+        select: { userAgent: true }, take: 50, orderBy: { createdAt: 'desc' },
+      });
+    } catch { /* without history no «new device» notice */ }
+    await this.prisma.userSession.create({ data: { userId, tokenHash: this.digest(token), expiresAt: new Date(Date.now() + SESSION_TTL_MS), method, userAgent, ipHint: hint } });
+    await this.loginEvent(userId, method, outcome, client);
+    if (known.length > 0 && !known.some((item) => describeDevice(item.userAgent) === device)) {
+      await notifyUser(this.prisma, userId, {
+        category: 'security',
+        text: () => tr('Новый вход в BuildPath: {0}{1}. Если это были не вы — смените пароль и завершите чужие сеансы в настройках безопасности.', [tr(device), hint ? `, ${hint}` : '']),
+        emailSubject: () => tr('BuildPath: новый вход в аккаунт'),
+        link: { path: '/account/security', label: () => tr('Открыть настройки безопасности') },
+      });
+    }
+    return token;
+  }
+
+  private async loginEvent(userId: string, method: string, outcome: string, client: ClientInfo): Promise<void> {
+    try { await this.prisma.loginEvent.create({ data: { userId, method, outcome, userAgent: client.userAgent?.slice(0, 300) ?? null, ipHint: ipHint(client.ip) } }); } catch { /* history is best-effort */ }
+  }
+
   /** Session for a Telegram Mini App user whose Telegram account is already linked to a verified BuildPath account. */
-  async loginWithTelegramWebApp(initData: string): Promise<{ token: string; user: SafeUser }> {
+  async loginWithTelegramWebApp(initData: string, client: ClientInfo = {}): Promise<{ token: string; user: SafeUser }> {
     const config = telegramConfig();
     if (!config) throw new UnauthorizedException('TELEGRAM_NOT_CONFIGURED');
     const verified = verifyWebAppInitData(initData, config.token);
@@ -246,8 +318,7 @@ export class AuthService {
       include: { user: { include: { consents: latestConsent } } },
     });
     if (!identity || !identity.user.emailVerifiedAt || identity.user.deletionRequestedAt) throw new UnauthorizedException('TELEGRAM_NOT_LINKED');
-    const token = randomBytes(32).toString('base64url');
-    await this.prisma.userSession.create({ data: { userId: identity.userId, tokenHash: this.digest(token), expiresAt: new Date(Date.now() + SESSION_TTL_MS) } });
+    const token = await this.startSession(identity.userId, 'telegram', client);
     return { token, user: this.toSafeUser(identity.user) };
   }
 
@@ -281,7 +352,7 @@ export class AuthService {
    * Finishes the sign-in Google redirected back with. Throws GoogleAuthError with a safe code; the caller turns any error
    * into a redirect to the sign-in page.
    */
-  async finishGoogle(input: { code: string | null; state: string | null; binding: string | null; error: string | null }, ip = '', fetchImpl: typeof fetch = fetch): Promise<{ token: string; next: string; created: boolean }> {
+  async finishGoogle(input: { code: string | null; state: string | null; binding: string | null; error: string | null }, ip = '', fetchImpl: typeof fetch = fetch, userAgent: string | null = null): Promise<{ token: string; next: string; created: boolean }> {
     const config = googleConfig();
     if (!config) throw new GoogleAuthError('GOOGLE_NOT_CONFIGURED');
     if (!await this.limits.allowed('oauth-ip', ip, authLimits.oauthPerIp)) throw new GoogleAuthError('LOGIN_RATE_LIMITED');
@@ -298,8 +369,7 @@ export class AuthService {
     if (!input.code || input.code.length > 2048) throw new GoogleAuthError('GOOGLE_FAILED');
     const identity = await exchangeCode(config, { code: input.code, codeVerifier: row.codeVerifier, nonce: row.nonce }, fetchImpl);
     const { userId, created } = await this.userForGoogle(identity, row.locale);
-    const token = randomBytes(32).toString('base64url');
-    await this.prisma.userSession.create({ data: { userId, tokenHash: this.digest(token), expiresAt: new Date(Date.now() + SESSION_TTL_MS) } });
+    const token = await this.startSession(userId, 'google', { ip, userAgent });
     return { token, next: row.nextPath, created };
   }
 
@@ -355,6 +425,9 @@ export class AuthService {
     });
     if (!session || session.revokedAt || session.expiresAt <= new Date() || !session.user.emailVerifiedAt || session.user.deletionRequestedAt) {
       throw new UnauthorizedException('SESSION_INVALID');
+    }
+    if (!session.lastSeenAt || Date.now() - session.lastSeenAt.getTime() > SEEN_EVERY_MS) {
+      try { await this.prisma.userSession.update({ where: { id: session.id }, data: { lastSeenAt: new Date() } }); } catch { /* «last seen» is a convenience; never fail a request over it */ }
     }
     return { user: this.toSafeUser(session.user), sessionId: session.id };
   }

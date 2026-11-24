@@ -97,13 +97,13 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
     if (!step.alert) return 0;
     const link = { path: `/projects/${site.projectId}#publish`, label: () => tr('Открыть проект') };
     if (step.alert === 'down') {
-      await notifyUser(this.prisma, site.project.ownerUserId, {
+      await notifyUser(this.prisma, site.project.ownerUserId, { category: 'site',
         text: () => tr('Сайт «{0}» не открывается ({1}). Проверяем каждые 10 минут и напишем, когда он снова заработает. {2}', [site.project.name, causeText(probe.error), url]),
         emailSubject: () => tr('BuildPath: сайт «{0}» не открывается', [site.project.name]), link,
       });
     } else {
       const down = duration(now.getTime() - (site.monitorDownSince ?? now).getTime());
-      await notifyUser(this.prisma, site.project.ownerUserId, {
+      await notifyUser(this.prisma, site.project.ownerUserId, { category: 'site',
         text: () => tr('Сайт «{0}» снова открывается. Не работал примерно {1} ч {2} мин.', [site.project.name, down.hours, down.minutes]),
         emailSubject: () => tr('BuildPath: сайт «{0}» снова работает', [site.project.name]), link,
       });
@@ -144,7 +144,7 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
         tr('Заявок: {0}', [leads]) + (bookings ? tr(', записей: {0}', [bookings]) : '') + (orders ? tr(', заказов: {0}', [orders]) : ''),
         incidents.length ? tr('Сайт не открывался {0} раз, всего около {1} ч {2} мин.', [incidents.length, down.hours, down.minutes]) : tr('Сайт открывался всю неделю без сбоев.'),
       ].join('\n');
-      await notifyUser(this.prisma, site.project.ownerUserId, {
+      await notifyUser(this.prisma, site.project.ownerUserId, { category: 'site',
         text: lines, emailSubject: () => tr('BuildPath: неделя сайта «{0}»', [site.project.name]),
         link: { path: `/projects/${site.projectId}#publish`, label: () => tr('Подробнее в проекте') },
       });
@@ -189,7 +189,7 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
       await this.prisma.sitePublication.updateMany({ where: { id: site.id }, data: { liveCheck: result as never, liveCheckedAt: now } });
       if (!worse.length) continue;
       alerts += 1;
-      await notifyUser(this.prisma, site.project.ownerUserId, {
+      await notifyUser(this.prisma, site.project.ownerUserId, { category: 'site',
         text: () => tr('На сайте «{0}» что-то испортилось с прошлой проверки: {1}. Подробности — в карточке «Работает ли сайт».', [site.project.name, worse.map((id) => tr(liveTexts[id]?.title ?? id)).join('; ')]),
         emailSubject: () => tr('BuildPath: сайт «{0}» — проверьте защиту адреса', [site.project.name]), link: { path: `/projects/${site.projectId}#publish`, label: () => tr('Открыть проект') },
       }).catch(() => undefined);
