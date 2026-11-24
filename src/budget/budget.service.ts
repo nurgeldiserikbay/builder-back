@@ -2,8 +2,9 @@ import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/com
 import { PrismaService } from '../database/prisma.service.js';
 import { WorktimeService } from '../journey/worktime.service.js';
 import { JourneyService } from '../journey/journey.service.js';
-import { stageDefinitions, type StageKey } from '../journey/catalog.js';
-import { DEFAULT_TOKENS, MAX_LIMIT_TENGE, estimateRoute, requestCost, spendLimitState, tenge } from './budget.js';
+import { projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { DEFAULT_TOKENS, MAX_LIMIT_TENGE, EXPECTED_REQUESTS, estimateRoute, plannedRoute, requestCost, requestRange, spendLimitState, tenge } from './budget.js';
+import { plannedAmount } from '../journey/worktime.js';
 
 const MAX_PRICE_TENGE = 1_000_000;
 
@@ -52,6 +53,58 @@ export class BudgetService {
     return { input: Math.round(recent._avg.inputTokens ?? DEFAULT_TOKENS.input), output: Math.round(recent._avg.outputTokens ?? DEFAULT_TOKENS.output), basedOn: recent._count._all };
   }
 
+  /** Specialists' terms (most the owner may pay) and payments, per stage. */
+  private async specialistsByStage(projectId: string) {
+    const rows = await this.prisma.stageAssignment.findMany({
+      where: { projectId, payKind: { not: 'none' }, status: { in: ['invited', 'active', 'completed'] } },
+      select: { stageId: true, payKind: true, fixedAmountTiyn: true, hourlyRateTiyn: true, hourLimit: true, onlyResultTime: true, payments: { select: { amountTiyn: true, status: true } } },
+    });
+    const out = new Map<string, { count: number; planned: number; due: number; paid: number; openEnded: number }>();
+    for (const row of rows) {
+      const item = out.get(row.stageId) ?? { count: 0, planned: 0, due: 0, paid: 0, openEnded: 0 };
+      item.count += 1;
+      // Hourly work without an hour limit has no upper bound to plan with.
+      if (row.payKind === 'hourly' && !row.hourLimit) item.openEnded += 1;
+      item.planned += plannedAmount(row);
+      for (const payment of row.payments) {
+        if (payment.status === 'due' || payment.status === 'checkout') item.due += payment.amountTiyn;
+        if (['paid_direct', 'paid', 'held', 'paid_out'].includes(payment.status)) item.paid += payment.amountTiyn;
+      }
+      out.set(row.stageId, item);
+    }
+    return out;
+  }
+
+  /**
+   * What a route costs before the project exists: AI requests and tenge for the stages the AI will do, from the chosen
+   * start. Specialists are not included — they are optional and paid only for accepted work on their own terms.
+   */
+  async routeEstimate(projectType: string, startStageKey: string | null) {
+    const type = projectTypeOf(projectType);
+    if (!type) throw new BadRequestException('INVALID_PROJECT_TYPE');
+    if (startStageKey !== null && !type.stages.includes(startStageKey as StageKey)) throw new BadRequestException('INVALID_START_STAGE');
+    const route = plannedRoute(type.stages, startStageKey as StageKey | null);
+    const [row, tokens] = await Promise.all([this.prisma.aiPricing.findUnique({ where: { id: 1 } }), this.typicalTokens()]);
+    const estimate = row ? estimateRoute(route, tokens, row) : null;
+    const requests = requestRange(route);
+    return {
+      data: {
+        projectType: type.key, startStageKey,
+        requests,
+        pricingConfigured: Boolean(row),
+        perRequest: estimate ? tenge(estimate.perRequest) : null,
+        cost: estimate ? { min: tenge(estimate.remaining.min), max: tenge(estimate.remaining.max) } : null,
+        stages: route.map((stage) => {
+          const [min, max] = stage.aiUsed && !stage.done ? EXPECTED_REQUESTS[stage.key] : [0, 0];
+          const planned = estimate?.perStage.find((item) => item.key === stage.key);
+          return { key: stage.key, title: stageDefinitions[stage.key].title, brought: stage.done, aiUsed: stage.aiUsed, requests: { min, max }, cost: planned && !stage.done ? { min: tenge(planned.cost.min), max: tenge(planned.cost.max) } : null };
+        }),
+        basedOnRequests: tokens.basedOn,
+        currency: 'KZT',
+      },
+    };
+  }
+
   /** Owner or manager sets or removes the project's cap on AI spending (tenge, whole number). Logged in the project history. */
   async setSpendLimit(userId: string, projectId: string, amount: number | null) {
     const access = await this.journey.projectAccess(userId, projectId);
@@ -79,6 +132,7 @@ export class BudgetService {
       this.prisma.project.findUnique({ where: { id: projectId }, select: { aiSpendLimitTiyn: true } }),
     ]);
     const unpriced = await this.prisma.generationRun.count({ where: { projectId, provider: { not: 'template' }, costTiyn: null } });
+    const byStage = access.canDecide ? await this.specialistsByStage(projectId) : null;
     const tokens = await this.typicalTokens();
     const route = stages.filter((stage) => stage.stageKey in stageDefinitions).map((stage) => ({
       id: stage.id, key: stage.stageKey as StageKey, done: ['approved', 'imported', 'skipped'].includes(stage.status), aiUsed: stageDefinitions[stage.stageKey as StageKey].ai.level !== 'none',
@@ -99,10 +153,15 @@ export class BudgetService {
         stages: route.map((stage) => {
           const used = runs.find((item) => item.stageId === stage.id);
           const planned = estimate?.perStage.find((item) => item.key === stage.key);
+          const [requestsMin, requestsMax] = stage.aiUsed ? EXPECTED_REQUESTS[stage.key] : [0, 0];
+          const people = byStage?.get(stage.id) ?? null;
           return {
             key: stage.key, title: stageDefinitions[stage.key].title, done: stage.done, aiUsed: stage.aiUsed,
             spent: tenge(used?._sum.costTiyn ?? 0), requests: used?._count._all ?? 0,
             planned: planned ? { requestsMin: planned.requests.min, requestsMax: planned.requests.max, min: tenge(planned.cost.min), max: tenge(planned.cost.max) } : null,
+            expectedRequests: { min: requestsMin, max: requestsMax },
+            // Specialists' terms and money on this stage: only for those who decide on the project.
+            specialists: access.canDecide ? (people ? { count: people.count, planned: tenge(people.planned), openEnded: people.openEnded, due: tenge(people.due), paid: tenge(people.paid) } : { count: 0, planned: 0, openEnded: 0, due: 0, paid: 0 }) : null,
           };
         }),
         participants: byAuthor.map((item) => {
