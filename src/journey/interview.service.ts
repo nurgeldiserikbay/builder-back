@@ -75,6 +75,7 @@ export class InterviewService {
   async voice(userId: string, projectId: string, key: string, file: { buffer: Buffer; mimetype: string; size: number } | undefined, consent: boolean) {
     const stageKey = this.stageKeyOf(key);
     const ctx = await this.core.load(userId, projectId, 'write', key);
+    this.core.assertEditWay(ctx, key, 'ai');
     const stage = this.core.stageOf(ctx, key);
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     const config = transcribeConfig();
@@ -106,7 +107,7 @@ export class InterviewService {
     this.stageKeyOf(key);
     const ai = this.core.ai();
     if (ai && input.message !== null) {
-      await this.core.load(userId, projectId, 'write', key);
+      this.core.assertEditWay(await this.core.load(userId, projectId, 'write', key), key, 'ai');
       return this.core.oneAiRequest(projectId, () => this.sayNow(userId, projectId, key, input));
     }
     return this.sayNow(userId, projectId, key, input);
@@ -115,6 +116,7 @@ export class InterviewService {
   private async sayNow(userId: string, projectId: string, key: string, input: { message: string | null; restart: boolean }) {
     const stageKey = this.stageKeyOf(key);
     const ctx = await this.core.load(userId, projectId, 'write', key);
+    this.core.assertEditWay(ctx, key, 'ai');
     const stage = this.core.stageOf(ctx, key);
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     const definition = stageFor(stageKey as StageKey, ctx.type.key);
@@ -203,6 +205,7 @@ export class InterviewService {
   async apply(userId: string, projectId: string, key: string) {
     const stageKey = this.stageKeyOf(key);
     const ctx = await this.core.load(userId, projectId, 'write', key);
+    this.core.assertEditWay(ctx, key, 'ai');
     const stage = this.core.stageOf(ctx, key);
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     const row = await this.prisma.stageInterview.findUnique({ where: { stageId: stage.id } });

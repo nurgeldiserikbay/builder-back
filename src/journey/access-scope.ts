@@ -5,7 +5,9 @@
 // - extraReadStages: more accepted results to read (read-only, accepted version only; drafts and discussions stay closed);
 // - hiddenParts: parts of what the specialist sees that are replaced with «скрыто владельцем» for them and their AI;
 // - allowDownload: whether the specialist may download stage files other people uploaded;
-// - readDays: how long the specialist can still look at the stage after it is accepted (0–30 days).
+// - readDays: how long the specialist can still look at the stage after it is accepted (0–30 days);
+// - editMode: how the lead changes the stage — by hand and through the AI (both), only by instructing the AI (ai_only),
+//   or only by hand (manual_only). Comments and change proposals stay open in every mode.
 // The scope is checked on the server on every request; the AI receives exactly what the specialist sees.
 
 import { BadRequestException } from '@nestjs/common';
@@ -27,8 +29,16 @@ export const HIDEABLE_PARTS = {
 } as const satisfies Record<string, { stage: StageKey; title: string }>;
 export type HiddenPart = keyof typeof HIDEABLE_PARTS;
 
-export interface AccessScope { extraReadStages: StageKey[]; hiddenParts: HiddenPart[]; allowDownload: boolean; readDays: number }
-export const DEFAULT_SCOPE: AccessScope = { extraReadStages: [], hiddenParts: [], allowDownload: false, readDays: READ_DAYS_DEFAULT };
+export const EDIT_MODES = ['both', 'ai_only', 'manual_only'] as const;
+export type EditMode = typeof EDIT_MODES[number];
+export interface AccessScope { extraReadStages: StageKey[]; hiddenParts: HiddenPart[]; allowDownload: boolean; readDays: number; editMode: EditMode }
+export const DEFAULT_SCOPE: AccessScope = { extraReadStages: [], hiddenParts: [], allowDownload: false, readDays: READ_DAYS_DEFAULT, editMode: 'both' };
+
+/** Which way of changing a stage an action uses: typing into the stage, or asking the AI. */
+export type EditWay = 'manual' | 'ai';
+export function editAllowed(mode: EditMode, way: EditWay): boolean {
+  return mode === 'both' || (way === 'manual' ? mode === 'manual_only' : mode === 'ai_only');
+}
 
 /**
  * Parts a stage copies into its own result, so it has to see them as they are:
@@ -46,7 +56,7 @@ export function parseScope(raw: unknown, ctx: { route: StageKey[]; stageKey: Sta
   if (raw === undefined || raw === null) return base;
   if (typeof raw !== 'object' || Array.isArray(raw)) throw new BadRequestException('ACCESS_SCOPE_INVALID');
   const input = raw as Record<string, unknown>;
-  for (const key of Object.keys(input)) if (!['extraReadStages', 'hiddenParts', 'allowDownload', 'readDays'].includes(key)) throw new BadRequestException('ACCESS_SCOPE_INVALID');
+  for (const key of Object.keys(input)) if (!['extraReadStages', 'hiddenParts', 'allowDownload', 'readDays', 'editMode'].includes(key)) throw new BadRequestException('ACCESS_SCOPE_INVALID');
 
   let extraReadStages = base.extraReadStages;
   if (input.extraReadStages !== undefined) {
@@ -78,12 +88,20 @@ export function parseScope(raw: unknown, ctx: { route: StageKey[]; stageKey: Sta
     if (!Number.isInteger(input.readDays) || (input.readDays as number) < 0 || (input.readDays as number) > READ_DAYS_MAX) throw new BadRequestException('ACCESS_READ_DAYS_INVALID');
     readDays = input.readDays as number;
   }
-  return { extraReadStages, hiddenParts, allowDownload, readDays };
+  let editMode = base.editMode;
+  if (input.editMode !== undefined) {
+    if (typeof input.editMode !== 'string' || !(EDIT_MODES as readonly string[]).includes(input.editMode)) throw new BadRequestException('ACCESS_EDIT_MODE_INVALID');
+    // Builds and the hand-off are made by the platform, and the technical plan is computed; there is nothing to type by hand.
+    if (input.editMode === 'manual_only' && NEEDS_EVERYTHING.has(stageDefinitions[ctx.stageKey].artifactType)) throw new BadRequestException('ACCESS_EDIT_MODE_INVALID');
+    editMode = input.editMode as EditMode;
+  }
+  return { extraReadStages, hiddenParts, allowDownload, readDays, editMode };
 }
 
 /** The scope stored on an assignment row. */
-export function scopeOf(row: { extraReadStages: string[]; hiddenParts: string[]; allowDownload: boolean; readDays: number }): AccessScope {
+export function scopeOf(row: { extraReadStages: string[]; hiddenParts: string[]; allowDownload: boolean; readDays: number; editMode?: string | null }): AccessScope {
   return {
+    editMode: (EDIT_MODES as readonly string[]).includes(row.editMode ?? '') ? row.editMode as EditMode : 'both',
     extraReadStages: row.extraReadStages.filter((key): key is StageKey => key in stageDefinitions),
     hiddenParts: row.hiddenParts.filter((part): part is HiddenPart => part in HIDEABLE_PARTS),
     allowDownload: row.allowDownload, readDays: row.readDays,
@@ -111,6 +129,11 @@ export function redact(stageKey: string, content: unknown, hidden: readonly Hidd
   return content;
 }
 
+/** Ways of changing the stage the owner can choose for a lead here: builds and the hand-off have nothing to type. */
+export function editModesFor(stageKey: StageKey): EditMode[] {
+  return NEEDS_EVERYTHING.has(stageDefinitions[stageKey].artifactType) ? ['both', 'ai_only'] : [...EDIT_MODES];
+}
+
 /** Parts the owner may hide for an assignment on `stageKey` (for the invitation form). */
 export function hideableFor(stageKey: StageKey, visible: StageKey[]): HiddenPart[] {
   if (NEEDS_EVERYTHING.has(stageDefinitions[stageKey].artifactType)) return [];
@@ -124,6 +147,8 @@ export function scopeLines(scope: AccessScope): { can: string[]; cannot: string[
   if (scope.extraReadStages.length) can.push(tr('Читать принятые результаты: {0}', [scope.extraReadStages.map((key) => `«${tr(stageDefinitions[key].title)}»`).join(', ')]));
   for (const part of scope.hiddenParts) cannot.push(tr('Видеть: {0} — вместо них «{1}»', [tr(HIDEABLE_PARTS[part].title).toLowerCase(), tr(HIDDEN_MARK)]));
   (scope.allowDownload ? can : cannot).push(tr('Скачивать файлы этапа, загруженные другими'));
+  if (scope.editMode === 'ai_only') { can.push(tr('Менять этап через ИИ: давать задания и принимать предложения')); cannot.push(tr('Править этап вручную')); }
+  if (scope.editMode === 'manual_only') { can.push(tr('Править этап вручную')); cannot.push(tr('Запускать ИИ на этапе')); }
   const afterAcceptance = scope.readDays === 0
     ? tr('Когда этап примут, доступ закроется сразу.')
     : tr('Когда этап примут, менять его будет нельзя; смотреть можно ещё {0} дн.', [scope.readDays]);

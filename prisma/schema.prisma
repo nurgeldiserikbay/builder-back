@@ -971,6 +971,10 @@ model GenerationRun {
   outputTokens      Int?                @map("output_tokens")
   /// Price for the customer at the time of the request, in tiyn (1/100 ₸); null when tokens or prices were unknown.
   costTiyn          Int?                @map("cost_tiyn")
+  /// A change the AI proposed and the person has not applied yet («Изменить через ИИ» with a preview); the whole merged
+  /// artifact as it would be saved. proposalState: open, applied or dismissed; null for requests saved at once.
+  proposal          Json?
+  proposalState     String?             @map("proposal_state") @db.VarChar(10)
   createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
   project           Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
   stage             ProjectStage        @relation(fields: [stageId], references: [id], onDelete: Cascade)
@@ -1143,6 +1147,8 @@ model StageAssignment {
   hiddenParts     String[]              @default([]) @map("hidden_parts") @db.VarChar(40)
   allowDownload   Boolean               @default(false) @map("allow_download")
   readDays        Int                   @default(7) @map("read_days")
+  /// How the lead may change the stage: both (by hand and through the AI), ai_only, manual_only.
+  editMode        String                @default("both") @map("edit_mode") @db.VarChar(12)
   timeEntries     TimeEntry[]
   payments        StagePayment[]
   disputes        Dispute[]

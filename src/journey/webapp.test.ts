@@ -290,4 +290,55 @@ describe('web application route (database)', async () => {
     // The advice belongs to the version it was given on; the new version shows none until asked again.
     assert.equal((await journey.stage(owner.id, projectId, 'process')).data.review!.ai, null);
   });
+
+  it('«Изменить через ИИ» shows the proposal first and saves it only when applied', { skip }, async () => {
+    const billing = new BillingService(prisma!);
+    const core = new JourneyCore(prisma!, billing);
+    core.provider = null;
+    const worktime = new WorktimeService(prisma!);
+    const stageAi = new StageAiService(prisma!, core, worktime);
+    const journey = new JourneyService(prisma!, billing, worktime, core, stageAi, new ChangeNoticesService(prisma!, core), new StageReviewService(prisma!, core, stageAi));
+    const email = `proposal-${randomUUID()}@test.local`;
+    const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), name: 'Owner' } });
+    users.push(owner.id);
+    const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
+    await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
+    const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Предложение', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
+    const versionOf = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId;
+    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'goal', (await versionOf('goal'))!);
+    await journey.generate(owner.id, projectId, 'process', { instruction: null, saveAs: 'one_off', targetKey: null });
+    const before = await versionOf('process');
+    // Without AI there is nothing to propose.
+    await assert.rejects(journey.proposeChange(owner.id, projectId, 'process', { instruction: 'Добавь бухгалтера', targetKey: null }), /AI_NOT_CONFIGURED/);
+    core.provider = {
+      name: 'fake', model: 'fake-1',
+      async generate(request) {
+        const draft = JSON.parse(request.user).currentDraft as { actors: Array<{ key: string; name: string; kind: string }> };
+        return { ...draft, actors: [...draft.actors, { key: 'acc', name: 'Бухгалтер', kind: 'staff' }] };
+      },
+    };
+    const proposal = (await journey.proposeChange(owner.id, projectId, 'process', { instruction: 'Добавь бухгалтера', targetKey: null })).data;
+    assert.equal(await versionOf('process'), before, 'nothing is saved before applying');
+    assert.deepEqual(proposal.changed, ['actors']);
+    assert.ok((proposal.content as { actors: Array<{ name: string }> }).actors.some((actor) => actor.name === 'Бухгалтер'));
+    // The proposal is checked like a saved version: the new participant does nothing, and the platform can remove him.
+    assert.deepEqual(proposal.findings.find((finding) => finding.code === 'PROCESS_ACTOR_IDLE')?.autoFix, { kind: 'remove_actor', actor: 'acc' });
+    assert.deepEqual(proposal.blockedByLocks, []);
+    const applied = (await journey.applyProposal(owner.id, projectId, 'process', proposal.proposalId)).data;
+    assert.equal(await versionOf('process'), applied.versionId);
+    await assert.rejects(journey.applyProposal(owner.id, projectId, 'process', proposal.proposalId), /PROPOSAL_CLOSED/);
+    // A proposal made before someone saved the stage is not applied over that save.
+    const stale = (await journey.proposeChange(owner.id, projectId, 'process', { instruction: 'Ещё раз', targetKey: null })).data;
+    const current = (await journey.stage(owner.id, projectId, 'process')).data.current!.content;
+    await journey.saveDraft(owner.id, projectId, 'process', { content: { ...(current as object), rules: [...(current as { rules: string[] }).rules, 'Отвечаем в течение часа.'] }, baseVersionId: applied.versionId });
+    await assert.rejects(journey.applyProposal(owner.id, projectId, 'process', stale.proposalId), /PROPOSAL_STALE/);
+    // Participants protected from the AI: the preview says the AI wanted to change them and was held back.
+    await journey.setLock(owner.id, projectId, 'process', 'actors', true);
+    const held = (await journey.proposeChange(owner.id, projectId, 'process', { instruction: 'Добавь кассира', targetKey: null })).data;
+    assert.deepEqual(held.blockedByLocks, ['actors']);
+    await journey.dismissProposal(owner.id, projectId, 'process', held.proposalId);
+    await journey.dismissProposal(owner.id, projectId, 'process', stale.proposalId);
+    await assert.rejects(journey.dismissProposal(owner.id, projectId, 'process', stale.proposalId), /PROPOSAL_CLOSED/);
+  });
 });

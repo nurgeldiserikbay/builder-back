@@ -49,6 +49,41 @@ describe('stage review', () => {
     assert.ok(!fixed.findings.some((finding) => finding.code === 'PROCESS_PERSONAL_DATA_NO_RULE'));
   });
 
+  it('finds repeats, «Другое», one-actor scenarios and many-to-many data, with one-tap fixes', () => {
+    const process: BusinessProcess = {
+      actors: [{ key: 'client', name: 'Клиент', kind: 'client' }, { key: 'owner', name: 'клиент', kind: 'business' }, { key: 'idle', name: 'Бухгалтер', kind: 'staff' }],
+      scenarios: [
+        { key: 's1', title: 'Заказ', goal: 'Заказ оформлен', steps: [
+          { key: 'p1', actor: 'client', action: 'Выбирает товары', capability: 'choose_products' },
+          { key: 'p2', actor: 'client', action: 'выбирает товары', capability: 'choose_products' },
+          { key: 'p3', actor: 'owner', action: 'Что-то делает', capability: 'other' },
+        ] },
+        { key: 's2', title: 'Заказ', goal: 'Готово', steps: [
+          { key: 'q1', actor: 'client', action: 'Пишет', capability: 'contact' },
+          { key: 'q2', actor: 'client', action: 'Ждёт', capability: 'view_info' },
+        ] },
+      ],
+      rules: ['Контакты храним с согласия и удаляем по просьбе.'],
+      data: [
+        { key: 'order', name: 'Заказ', fields: ['Номер'], links: [{ to: 'product', kind: 'many', label: '' }, { to: 'product', kind: 'many', label: '' }] },
+        { key: 'product', name: 'Товар', fields: ['Цена'], links: [{ to: 'order', kind: 'many', label: '' }] },
+      ],
+    };
+    const findings = reviewStage('process', process).findings;
+    const by = (code: string) => findings.filter((finding) => finding.code === code);
+    assert.deepEqual(by('PROCESS_ACTOR_IDLE')[0]!.autoFix, { kind: 'remove_actor', actor: 'idle' });
+    assert.deepEqual(by('PROCESS_STEP_REPEATED')[0]!.autoFix, { kind: 'remove_step', scenario: 's1', step: 'p2' });
+    assert.equal(by('PROCESS_STEP_OTHER')[0]!.target, 'p3');
+    assert.equal(by('PROCESS_SCENARIO_ONE_ACTOR')[0]!.target, 's2');
+    assert.equal(by('PROCESS_ACTOR_DUPLICATE').length, 2);
+    assert.equal(by('PROCESS_SCENARIO_DUPLICATE').length, 2);
+    assert.deepEqual(by('PROCESS_LINK_DUPLICATE')[0]!.autoFix, { kind: 'remove_link', entity: 'order', to: 'product' });
+    // Reported once per pair, on the record that comes first.
+    assert.equal(by('PROCESS_MANY_TO_MANY').length, 1);
+    assert.deepEqual(by('PROCESS_MANY_TO_MANY')[0]!.autoFix, { kind: 'add_junction', a: 'order', b: 'product', name: 'Заказ — Товар' });
+    assert.ok(findings.every((finding) => finding.severity !== 'blocking'), 'advice never stops acceptance by itself');
+  });
+
   it('asks for payment confirmation when there is online payment', () => {
     const process = templateProcess('store', brief);
     const paying = { ...process, rules: ['Контакты храним с согласия клиента'], scenarios: [{ key: 'pay', title: 'Оплата', goal: 'Заказ оплачен', steps: [{ key: 'a', actor: 'client', action: 'Платит картой', capability: 'pay_online' as const }, { key: 'b', actor: 'client', action: 'Ждёт', capability: 'other' as const }] }] };

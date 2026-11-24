@@ -1,6 +1,6 @@
 import { CommentsService } from './comments.service.js';
 import { StageReviewService } from './stage-review.service.js';
-import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Put, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, NotFoundException, Body, Controller, Get, Header, HttpCode, Param, Post, Put, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { VOICE_LIMITS } from '../telegram-bot/transcribe.js';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
@@ -171,7 +171,7 @@ export class JourneyController {
     return this.specialists.invite(request.user.id, projectId, stageKey(key), { email, role: input.role, aiBudget: aiBudget as number | null, terms: termsInput(input), access: input.access });
   }
 
-  /** What the specialist can see and do: { extraReadStages?, hiddenParts?, allowDownload?, readDays? }; applies at once. */
+  /** What the specialist can see and do: { extraReadStages?, hiddenParts?, allowDownload?, readDays?, editMode? }; applies at once. */
   @Put('projects/:projectId/assignments/:assignmentId/access')
   updateAccess(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('assignmentId') assignmentId: string, @Body() raw: unknown) {
     return this.specialists.updateAccess(request.user.id, projectId, assignmentId, raw);
@@ -341,6 +341,23 @@ export class JourneyController {
     return this.journey.generate(request.user.id, projectId, stageKey(key), {
       instruction, saveAs: saveAs as 'one_off' | 'stage_rule' | 'project_rule', targetKey: text(input.targetKey, 'targetKey', 1, 60, true),
     });
+  }
+
+  /** «Изменить через ИИ» with a preview: { instruction, targetKey? } → the proposed stage, what changed and what is still missing. */
+  @Post('projects/:projectId/stages/:stageKey/ai-proposals')
+  @HttpCode(200)
+  proposeAiChange(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
+    const input = body(raw ?? {}, ['instruction', 'targetKey']);
+    const instruction = text(input.instruction, 'instruction', 2, 1000, false)!;
+    return this.journey.proposeChange(request.user.id, projectId, stageKey(key), { instruction, targetKey: text(input.targetKey, 'targetKey', 1, 60, true) });
+  }
+
+  @Post('projects/:projectId/stages/:stageKey/ai-proposals/:proposalId/:action')
+  @HttpCode(200)
+  decideAiProposal(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Param('proposalId') proposalId: string, @Param('action') action: string) {
+    if (action === 'apply') return this.journey.applyProposal(request.user.id, projectId, stageKey(key), proposalId);
+    if (action === 'dismiss') return this.journey.dismissProposal(request.user.id, projectId, stageKey(key), proposalId);
+    throw new NotFoundException('NOT_FOUND');
   }
 
   @Get('projects/:projectId/stages/:stageKey/interview')

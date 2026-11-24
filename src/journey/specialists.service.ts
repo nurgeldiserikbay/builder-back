@@ -5,7 +5,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { emailConfig, sendEmail } from '../notifications/email.js';
 import { escapeHtml } from './site-renderer.js';
 import { routeInputs, stageDefinitions, type StageKey } from './catalog.js';
-import { DEFAULT_SCOPE, HIDEABLE_PARTS, hideableFor, parseScope, scopeLines, scopeOf, type AccessScope } from './access-scope.js';
+import { DEFAULT_SCOPE, HIDEABLE_PARTS, editModesFor, hideableFor, parseScope, scopeLines, scopeOf, type AccessScope } from './access-scope.js';
 import { BillingService } from '../billing/billing.service.js';
 import { reviewState } from '../catalog/catalog-rules.js';
 
@@ -128,6 +128,7 @@ export class SpecialistsService {
       extraStages: extra.map((key) => ({ key, title: stageDefinitions[key].title })),
       hideable: hideableFor(ctx.stageKey, ctx.route).map((part) => ({ key: part, title: HIDEABLE_PARTS[part].title, stageKey: HIDEABLE_PARTS[part].stage })),
       readDaysMax: 30,
+      editModes: editModesFor(ctx.stageKey),
     };
   }
 
@@ -137,7 +138,7 @@ export class SpecialistsService {
     if (!isUuid(assignmentId)) throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
     const row = await this.prisma.stageAssignment.findFirst({
       where: { id: assignmentId, projectId, status: { in: ['invited', 'active', 'completed'] } },
-      select: { id: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, completedAt: true, status: true, stage: { select: { stageKey: true } } },
+      select: { id: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, editMode: true, completedAt: true, status: true, stage: { select: { stageKey: true } } },
     });
     if (!row) throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
     const scope = parseScope(raw, this.scopeContext(project, row.stage.stageKey), scopeOf(row));
@@ -154,12 +155,12 @@ export class SpecialistsService {
     const { project, stage } = await this.manager(userId, projectId, stageKey);
     const rows = await this.prisma.stageAssignment.findMany({
       where: { stageId: stage!.id, status: { not: 'revoked' } }, orderBy: { createdAt: 'desc' },
-      select: { id: true, userId: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, user: { select: { name: true, specialistProfile: { select: { id: true, displayName: true, published: true } } } }, review: { select: { rating: true, text: true, reply: true, createdAt: true, authorUserId: true, hiddenAt: true, moderationNote: true } }, ...termsSelect },
+      select: { id: true, userId: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, editMode: true, user: { select: { name: true, specialistProfile: { select: { id: true, displayName: true, published: true } } } }, review: { select: { rating: true, text: true, reply: true, createdAt: true, authorUserId: true, hiddenAt: true, moderationNote: true } }, ...termsSelect },
     });
     return {
       data: {
-        assignments: rows.map(({ user, review, userId: specialistId, payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime, extraReadStages, hiddenParts, allowDownload, readDays, ...row }) => {
-          const access = scopeOf({ extraReadStages, hiddenParts, allowDownload, readDays });
+        assignments: rows.map(({ user, review, userId: specialistId, payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime, extraReadStages, hiddenParts, allowDownload, readDays, editMode, ...row }) => {
+          const access = scopeOf({ extraReadStages, hiddenParts, allowDownload, readDays, editMode });
           const terms = termsView({ payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime });
           const profile = user?.specialistProfile?.published ? user.specialistProfile : null;
           return {
@@ -225,7 +226,7 @@ export class SpecialistsService {
     const assignment = await this.prisma.stageAssignment.findUnique({
       where: { inviteTokenHash: digest(token) },
       select: {
-        id: true, email: true, role: true, status: true, aiBudget: true, inviteExpiresAt: true, userId: true, projectId: true, stageId: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, ...termsSelect,
+        id: true, email: true, role: true, status: true, aiBudget: true, inviteExpiresAt: true, userId: true, projectId: true, stageId: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, editMode: true, ...termsSelect,
         stage: { select: { stageKey: true, status: true } },
         project: { select: { name: true, owner: { select: { name: true, email: true } } } },
       },

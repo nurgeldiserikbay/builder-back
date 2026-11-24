@@ -281,7 +281,7 @@ export class JourneyService {
         })),
         // Results the owner opened to this specialist beyond the stage's inputs (read-only).
         extraReads: Object.entries(extras).map(([extraKey, value]) => ({ key: extraKey, title: stageTitle(extraKey as StageKey, ctx.type.key), versionNumber: value.versionNumber, content: value.content })),
-        access: assignment ? { hiddenParts: assignment.scope.hiddenParts, allowDownload: assignment.scope.allowDownload, readDays: assignment.scope.readDays } : null,
+        access: assignment ? { hiddenParts: assignment.scope.hiddenParts, allowDownload: assignment.scope.allowDownload, readDays: assignment.scope.readDays, editMode: assignment.scope.editMode } : null,
         current: current ? {
           id: current.id, versionNumber: current.versionNumber, origin: current.origin, note: current.note, createdAt: current.createdAt,
           content: site ? { checks: site.checks, quality: site.quality ?? null, compiledAt: site.compiledAt, sourceVersionIds: site.sourceVersionIds }
@@ -326,6 +326,7 @@ export class JourneyService {
 
   async saveDraft(userId: string, projectId: string, key: string, input: { content: unknown; baseVersionId: string | null }) {
     const ctx = await this.core.load(userId, projectId, 'write', key);
+    this.core.assertEditWay(ctx, key, 'manual');
     const stage = this.core.stageOf(ctx, key);
     const definition = stageDefinitions[key as StageKey];
     if (definition.artifactType === 'site' || definition.artifactType === 'handoff') throw new BadRequestException('STAGE_NOT_EDITABLE');
@@ -392,6 +393,7 @@ export class JourneyService {
 
   async restore(userId: string, projectId: string, key: string, versionId: string) {
     const ctx = await this.core.load(userId, projectId, 'write', key);
+    this.core.assertEditWay(ctx, key, 'manual');
     const stage = this.core.stageOf(ctx, key);
     const definition = stageDefinitions[key as StageKey];
     if (definition.artifactType === 'site' || definition.artifactType === 'handoff') throw new BadRequestException('STAGE_NOT_EDITABLE');
@@ -409,6 +411,7 @@ export class JourneyService {
 
   async importText(userId: string, projectId: string, key: string, source: { text: string } | { fileId: string }) {
     const ctx = await this.core.load(userId, projectId, 'write', key);
+    this.core.assertEditWay(ctx, key, 'manual');
     const stage = this.core.stageOf(ctx, key);
     const stageKey = key as StageKey;
     const definition = stageDefinitions[stageKey];
@@ -1013,6 +1016,9 @@ export class JourneyService {
   setProvider(provider: StageAiProvider | null): void { this.core.setProvider(provider); }
   aiConfigured(): boolean { return Boolean(this.core.ai()); }
   generate(...args: Parameters<StageAiService['generate']>) { return this.stageAi.generate(...args); }
+  proposeChange(...args: Parameters<StageAiService['propose']>) { return this.stageAi.propose(...args); }
+  applyProposal(...args: Parameters<StageAiService['applyProposal']>) { return this.stageAi.applyProposal(...args); }
+  dismissProposal(...args: Parameters<StageAiService['dismissProposal']>) { return this.stageAi.dismissProposal(...args); }
   aiHistory(...args: Parameters<StageAiService['aiHistory']>) { return this.stageAi.aiHistory(...args); }
   changeNotices(...args: Parameters<ChangeNoticesService['changeNotices']>) { return this.changes.changeNotices(...args); }
   explainChange(...args: Parameters<ChangeNoticesService['explainChange']>) { return this.changes.explainChange(...args); }

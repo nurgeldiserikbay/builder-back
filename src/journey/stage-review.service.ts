@@ -61,7 +61,7 @@ export class StageReviewService {
    */
   async aiReview(userId: string, projectId: string, key: string) {
     const provider = this.core.ai();
-    await this.core.load(userId, projectId, 'write', key);
+    this.core.assertEditWay(await this.core.load(userId, projectId, 'write', key), key, 'ai');
     if (!provider) throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
     return this.core.oneAiRequest(projectId, () => this.aiReviewNow(userId, projectId, key));
   }
@@ -145,6 +145,7 @@ export class StageReviewService {
   /** «Let the AI fix these»: the instruction is made from the chosen findings' own texts, and the new version is reviewed again. */
   async fix(userId: string, projectId: string, key: string, input: { findingIds: string[] }) {
     const ctx = await this.core.load(userId, projectId, 'write', key);
+    this.core.assertEditWay(ctx, key, 'ai');
     const stage = this.core.stageOf(ctx, key);
     const version = await this.core.versionContent(stage.currentVersionId);
     if (!version) throw new ConflictException('NOTHING_TO_FIX');

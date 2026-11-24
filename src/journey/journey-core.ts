@@ -19,7 +19,7 @@ import { notifyUser } from '../notifications/user-notifier.js';
 import type { NotifyCategory } from '../account/notification-prefs.js';
 import { BillingService } from '../billing/billing.service.js';
 import { effectiveStatuses, isSatisfied, type StageStatus, type StatusMap } from './stage-state.js';
-import { redact, scopeOf, type AccessScope, type HiddenPart } from './access-scope.js';
+import { editAllowed, redact, scopeOf, type AccessScope, type EditWay, type HiddenPart } from './access-scope.js';
 
 /** Templates, imports and the architecture are project content: written in the project's language. */
 export const inProject = <T>(ctx: { project: { locale: string } }, work: () => T): T => runWithLocale(contentLocale(ctx.project.locale), work);
@@ -87,7 +87,7 @@ export class JourneyCore {
       select: {
         id: true, name: true, status: true, locale: true, projectType: true, startStageKey: true, routeVersion: true, ownerUserId: true, changeResponseDays: true,
         members: { where: { userId, status: 'active' }, select: { role: true, stageKeys: true } },
-        assignments: { where: { userId, status: { in: ['active', 'completed'] } }, select: { id: true, stageId: true, role: true, status: true, aiBudget: true, aiUsed: true, readUntil: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true } },
+        assignments: { where: { userId, status: { in: ['active', 'completed'] } }, select: { id: true, stageId: true, role: true, status: true, aiBudget: true, aiUsed: true, readUntil: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, editMode: true } },
         stages: { orderBy: { position: 'asc' }, select: { id: true, stageKey: true, position: true, status: true, currentVersionId: true, approvedVersionId: true, lockedKeys: true, approvedAt: true, updatedAt: true, definitionVersion: true, reviewNote: true } },
       },
     });
@@ -99,7 +99,7 @@ export class JourneyCore {
     const now = Date.now();
     const assignments: AssignmentRow[] = project.assignments
       .filter((item) => item.status === 'active' || (item.readUntil && item.readUntil.getTime() > now))
-      .map(({ extraReadStages, hiddenParts, allowDownload, readDays, ...item }) => ({ ...item, scope: scopeOf({ extraReadStages, hiddenParts, allowDownload, readDays }), stageKey: stages.find((stage) => stage.id === item.stageId)?.stageKey ?? '' }));
+      .map(({ extraReadStages, hiddenParts, allowDownload, readDays, editMode, ...item }) => ({ ...item, scope: scopeOf({ extraReadStages, hiddenParts, allowDownload, readDays, editMode }), stageKey: stages.find((stage) => stage.id === item.stageId)?.stageKey ?? '' }));
     const viewer: Viewer = member ? { kind: 'member', role: member.role, stageKeys: member.role === 'contributor' ? member.stageKeys : [] } : { kind: 'specialist', assignments };
     if (viewer.kind === 'specialist' && assignments.length === 0) throw new NotFoundException('PROJECT_NOT_FOUND');
     const role = member?.role ?? 'specialist';
@@ -142,6 +142,15 @@ export class JourneyCore {
         stageKey: item.stageKey, role: item.role, status: item.status, aiBudget: item.aiBudget, aiUsed: item.aiUsed, readUntil: item.readUntil,
       })),
     };
+  }
+
+  /**
+   * The owner decides how a lead specialist changes the stage: by hand, through the AI, or both. Members are not limited.
+   * Checked on every action that changes the stage, so a hidden button is never the only guard.
+   */
+  assertEditWay(ctx: { viewer: Viewer }, key: string, way: EditWay): void {
+    const assignment = this.assignmentFor(ctx, key);
+    if (assignment && !editAllowed(assignment.scope.editMode, way)) throw new ForbiddenException(way === 'manual' ? 'EDIT_MANUAL_FORBIDDEN' : 'EDIT_AI_FORBIDDEN');
   }
 
   canWrite(ctx: { viewer: Viewer }, key: string): boolean {

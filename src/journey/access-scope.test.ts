@@ -7,7 +7,7 @@ import { BillingService } from '../billing/billing.service.js';
 import { JourneyCore } from './journey-core.js';
 import { SpecialistsService } from './specialists.service.js';
 import { StageFilesService } from '../analysis/stage-files.service.js';
-import { DEFAULT_SCOPE, hideableFor, parseScope, redact, scopeLines } from './access-scope.js';
+import { DEFAULT_SCOPE, editAllowed, hideableFor, parseScope, redact, scopeLines } from './access-scope.js';
 import type { StageKey } from './catalog.js';
 
 const route: StageKey[] = ['goal', 'offer', 'process', 'techplan', 'content', 'design', 'build'];
@@ -18,7 +18,7 @@ describe('specialist access scope: rules', () => {
     assert.deepEqual(parseScope(undefined, ctx('design', ['goal'])), DEFAULT_SCOPE);
     const scope = parseScope({ extraReadStages: ['process', 'goal', 'process'], hiddenParts: ['goal.contacts', 'offer.prices'], allowDownload: true, readDays: 0 }, ctx('design', ['goal']));
     // goal is an input anyway; offer is neither an input nor opened, so hiding its prices is dropped.
-    assert.deepEqual(scope, { extraReadStages: ['process'], hiddenParts: ['goal.contacts'], allowDownload: true, readDays: 0 });
+    assert.deepEqual(scope, { extraReadStages: ['process'], hiddenParts: ['goal.contacts'], allowDownload: true, readDays: 0, editMode: 'both' });
     assert.throws(() => parseScope({ extraReadStages: ['design'] }, ctx('design', ['goal'])), /ACCESS_EXTRA_STAGES_INVALID/);
     assert.throws(() => parseScope({ extraReadStages: ['schedule'] }, ctx('design', ['goal'])), /ACCESS_EXTRA_STAGES_INVALID/);
     assert.throws(() => parseScope({ hiddenParts: ['goal.secret'] }, ctx('design', ['goal'])), /ACCESS_HIDDEN_PARTS_INVALID/);
@@ -33,6 +33,18 @@ describe('specialist access scope: rules', () => {
     assert.deepEqual(parseScope({ allowDownload: false }, ctx('design', ['goal']), scope), { ...scope, allowDownload: false });
   });
 
+  it('limits how the lead changes the stage: by hand, through the AI, or both', () => {
+    assert.equal(parseScope({ editMode: 'ai_only' }, ctx('design', ['goal'])).editMode, 'ai_only');
+    assert.throws(() => parseScope({ editMode: 'read' }, ctx('design', ['goal'])), /ACCESS_EDIT_MODE_INVALID/);
+    // A build is made by the platform: there is nothing to type, so «only by hand» makes no sense there.
+    assert.throws(() => parseScope({ editMode: 'manual_only' }, ctx('build', ['goal', 'content', 'design'])), /ACCESS_EDIT_MODE_INVALID/);
+    assert.ok(editAllowed('both', 'manual') && editAllowed('both', 'ai'));
+    assert.ok(editAllowed('ai_only', 'ai') && !editAllowed('ai_only', 'manual'));
+    assert.ok(editAllowed('manual_only', 'manual') && !editAllowed('manual_only', 'ai'));
+    const lines = scopeLines({ ...DEFAULT_SCOPE, editMode: 'ai_only' });
+    assert.ok(lines.cannot.includes('Править этап вручную'));
+  });
+
   it('replaces hidden parts without changing the original', () => {
     const brief = { businessName: 'Торты', phone: '+7 700 000 00 00', messenger: null, email: 'a@b.kz', address: 'Алматы' };
     const seen = redact('goal', brief, ['goal.contacts']) as typeof brief;
@@ -43,7 +55,7 @@ describe('specialist access scope: rules', () => {
     const offer = { services: [{ name: 'Торт', description: null, price: '5000 ₸' }, { name: 'Пирог', description: null, price: null }], hours: null };
     assert.deepEqual((redact('offer', offer, ['offer.prices']) as typeof offer).services.map((item) => item.price), ['скрыто владельцем', null]);
     assert.equal(redact('goal', brief, []), brief);
-    const lines = scopeLines({ extraReadStages: ['process'], hiddenParts: ['goal.contacts'], allowDownload: false, readDays: 0 });
+    const lines = scopeLines({ extraReadStages: ['process'], hiddenParts: ['goal.contacts'], allowDownload: false, readDays: 0, editMode: 'both' });
     assert.equal(lines.can.length, 1);
     assert.equal(lines.cannot.length, 2);
     assert.match(lines.afterAcceptance, /закроется сразу/);
@@ -133,5 +145,16 @@ describe('specialist access scope (database)', async () => {
     const list = (await specialists.list(owner.id, project.id, 'design')).data;
     assert.deepEqual(list.accessOptions.extraStages.map((item) => item.key), ['process', 'techplan', 'content', 'build']);
     assert.equal(list.assignments[0]!.access.allowDownload, true);
+
+    // Only through the AI: typing into the stage is refused on the server; the owner is never limited.
+    await specialists.updateAccess(owner.id, project.id, assignmentId, { editMode: 'ai_only' });
+    const aiOnly = await core.load(designer.id, project.id, 'write', 'design');
+    assert.throws(() => core.assertEditWay(aiOnly, 'design', 'manual'), /EDIT_MANUAL_FORBIDDEN/);
+    core.assertEditWay(aiOnly, 'design', 'ai');
+    core.assertEditWay(await core.load(owner.id, project.id, 'write', 'design'), 'design', 'manual');
+    await specialists.updateAccess(owner.id, project.id, assignmentId, { editMode: 'manual_only' });
+    const manualOnly = await core.load(designer.id, project.id, 'write', 'design');
+    assert.throws(() => core.assertEditWay(manualOnly, 'design', 'ai'), /EDIT_AI_FORBIDDEN/);
+    assert.equal((await specialists.list(owner.id, project.id, 'design')).data.assignments[0]!.access.editMode, 'manual_only');
   });
 });

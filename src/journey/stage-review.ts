@@ -31,7 +31,20 @@ export interface ReviewFinding {
   fix: string;
   /** Only the owner can settle it (a decision about the business): «let the AI fix it» does not apply. */
   ownerDecides?: boolean;
+  /** A change the editor can make at once when the person presses «Исправить», without the AI. */
+  autoFix?: AutoFix;
 }
+
+/**
+ * One-tap fixes for «Бизнес-процесс»: remove a participant who does nothing, a repeated step or a repeated link, or add
+ * the record between two records that have many of each other. The editor applies them to the draft; the result is
+ * checked again on save like any edit.
+ */
+export type AutoFix =
+  | { kind: 'remove_actor'; actor: string }
+  | { kind: 'remove_step'; scenario: string; step: string }
+  | { kind: 'remove_link'; entity: string; to: string }
+  | { kind: 'add_junction'; a: string; b: string; name: string };
 export interface StageReview { rulesVersion: string; score: number; findings: ReviewFinding[]; blocking: number }
 
 /** Words that show a field or rule keeps or protects personal data. Stems, matched against the keyword stems of a text. */
@@ -75,6 +88,7 @@ function processReview(process: BusinessProcess, push: Push) {
       code: 'PROCESS_ACTOR_IDLE', severity: 'important', category: 'logic', target: actor.key, where: tr('Участник «{0}»', [actor.name]),
       message: tr('Участник ни в одном сценарии ничего не делает.'),
       fix: tr('Добавьте его шаги в сценарий или уберите участника.'),
+      ...(process.scenarios.length ? { autoFix: { kind: 'remove_actor' as const, actor: actor.key } } : {}),
     });
   }
   for (const scenario of process.scenarios) {
@@ -83,11 +97,65 @@ function processReview(process: BusinessProcess, push: Push) {
       message: tr('Не сказано, чем сценарий заканчивается — непонятно, когда он выполнен.'),
       fix: tr('Опишите результат: что получает клиент или бизнес в конце.'),
     });
+    scenario.steps.forEach((step, index) => {
+      const previous = scenario.steps[index - 1];
+      if (previous && step.action.trim() && previous.actor === step.actor && previous.action.trim().toLowerCase() === step.action.trim().toLowerCase()) push({
+        code: 'PROCESS_STEP_REPEATED', severity: 'minor', category: 'clarity', target: step.key, where: tr('Сценарий «{0}»', [scenario.title]),
+        message: tr('Шаг «{0}» идёт дважды подряд.', [step.action]),
+        fix: tr('Уберите повтор или опишите, чем второй шаг отличается.'),
+        autoFix: { kind: 'remove_step', scenario: scenario.key, step: step.key },
+      });
+      if (step.capability === 'other' && step.action.trim()) push({
+        code: 'PROCESS_STEP_OTHER', severity: 'minor', category: 'clarity', target: step.key, where: tr('Сценарий «{0}»', [scenario.title]),
+        message: tr('Шаг «{0}» отмечен как «Другое» — платформа не поймёт, что для него построить.', [step.action]),
+        fix: tr('Выберите в списке, что делает шаг; «Другое» оставьте только для того, чего в списке правда нет.'),
+      });
+    });
+    if (scenario.steps.length >= 2 && new Set(scenario.steps.map((step) => step.actor)).size === 1) push({
+      code: 'PROCESS_SCENARIO_ONE_ACTOR', severity: 'minor', category: 'logic', target: scenario.key, where: tr('Сценарий «{0}»', [scenario.title]),
+      message: tr('Все шаги делает один участник: никто не отвечает и не получает результат.'),
+      fix: tr('Добавьте, кто реагирует: сайт подтверждает, владелец получает уведомление, клиент видит статус.'),
+    });
     if (scenario.steps.length === 1) push({
       code: 'PROCESS_SCENARIO_ONE_STEP', severity: 'minor', category: 'logic', target: scenario.key, where: tr('Сценарий «{0}»', [scenario.title]),
       message: tr('В сценарии один шаг: обычно кто-то должен ответить или подтвердить.'),
       fix: tr('Добавьте, что происходит после первого шага.'),
     });
+  }
+  const twice = (values: string[]) => new Set(values.map((value) => value.trim().toLowerCase()).filter((value, index, all) => value && all.indexOf(value) !== index));
+  const actorTwice = twice(process.actors.map((actor) => actor.name));
+  for (const actor of process.actors) if (actorTwice.has(actor.name.trim().toLowerCase())) push({
+    code: 'PROCESS_ACTOR_DUPLICATE', severity: 'important', category: 'clarity', target: actor.key, where: tr('Участник «{0}»', [actor.name]),
+    message: tr('Два участника называются одинаково — на схеме и в приложении их не различить.'),
+    fix: tr('Переименуйте одного или объедините их.'),
+  });
+  const scenarioTwice = twice(process.scenarios.map((scenario) => scenario.title));
+  for (const scenario of process.scenarios) if (scenarioTwice.has(scenario.title.trim().toLowerCase())) push({
+    code: 'PROCESS_SCENARIO_DUPLICATE', severity: 'minor', category: 'clarity', target: scenario.key, where: tr('Сценарий «{0}»', [scenario.title]),
+    message: tr('Два сценария называются одинаково.'),
+    fix: tr('Назовите их по-разному, чтобы было видно, чем они отличаются.'),
+  });
+  const nameOf = (key: string) => process.data.find((entity) => entity.key === key)?.name ?? key;
+  for (const entity of process.data) {
+    const seen = new Set<string>();
+    for (const link of entity.links) {
+      if (seen.has(link.to)) push({
+        code: 'PROCESS_LINK_DUPLICATE', severity: 'minor', category: 'clarity', target: entity.key, where: tr('Данные «{0}»', [entity.name]),
+        message: tr('Связь с «{0}» указана дважды.', [nameOf(link.to)]),
+        fix: tr('Оставьте одну связь.'),
+        autoFix: { kind: 'remove_link', entity: entity.key, to: link.to },
+      });
+      if (seen.has(link.to)) continue;
+      seen.add(link.to);
+      // Both sides «many»: a database needs a record in between (an order line, a booking of a master…).
+      const back = process.data.find((other) => other.key === link.to)?.links.find((item) => item.to === entity.key);
+      if (link.kind === 'many' && back?.kind === 'many' && entity.key < link.to) push({
+        code: 'PROCESS_MANY_TO_MANY', severity: 'important', category: 'logic', target: entity.key, where: tr('Данные «{0}»', [entity.name]),
+        message: tr('У «{0}» много «{1}», и у «{1}» много «{0}». Так данные не сохранить без записи между ними.', [entity.name, nameOf(link.to)]),
+        fix: tr('Добавьте запись-связку, например «{0} — {1}»: в ней будет, что с чем связано (и количество, если нужно).', [entity.name, nameOf(link.to)]),
+        autoFix: { kind: 'add_junction', a: entity.key, b: link.to, name: `${entity.name} — ${nameOf(link.to)}`.slice(0, 40) },
+      });
+    }
   }
   const names = new Map<string, number>();
   for (const entity of process.data) names.set(entity.name.trim().toLowerCase(), (names.get(entity.name.trim().toLowerCase()) ?? 0) + 1);
