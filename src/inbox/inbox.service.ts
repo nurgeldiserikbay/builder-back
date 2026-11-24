@@ -44,7 +44,7 @@ export class InboxService {
       items.push({ dueAt: null, count: 1, who: null, text: null, ...item, projectName: project.name, projectType: project.projectType });
     };
 
-    const [reviews, returned, notices, proposals, hours, disputes, mentions] = await Promise.all([
+    const [reviews, returned, notices, proposals, hours, disputes, mentions, requests] = await Promise.all([
       // Stages waiting for acceptance, unless this person already gave their approval for the current version.
       managed.length ? this.prisma.projectStage.findMany({
         where: { projectId: { in: managed }, status: 'in_review' },
@@ -96,6 +96,11 @@ export class InboxService {
         select: { id: true, projectId: true, createdAt: true, text: true, stage: { select: { stageKey: true } } },
         orderBy: { createdAt: 'desc' }, take: 50,
       }) : [],
+      // Stage requests with responses to look at: open, not past their closing time.
+      managed.length ? this.prisma.stageRequest.findMany({
+        where: { projectId: { in: managed }, status: 'open', closesAt: { gt: new Date() }, responses: { some: { status: 'sent' } } },
+        select: { id: true, projectId: true, closesAt: true, stage: { select: { stageKey: true } }, responses: { where: { status: 'sent' }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } } },
+      }) : [],
     ]);
 
     for (const stage of reviews) {
@@ -124,6 +129,10 @@ export class InboxService {
     }
     for (const comment of mentions) {
       push({ id: `mention:${comment.id}`, kind: 'mention', projectId: comment.projectId, stageKey: comment.stage.stageKey, since: comment.createdAt.toISOString(), text: quote(comment.text) });
+    }
+
+    for (const request of requests) {
+      push({ id: `request:${request.id}`, kind: 'request_responses', projectId: request.projectId, stageKey: request.stage.stageKey, since: request.responses[0]!.createdAt.toISOString(), dueAt: request.closesAt.toISOString(), count: request.responses.length });
     }
 
     const updates = await this.updates(userId, memberships, assignments);

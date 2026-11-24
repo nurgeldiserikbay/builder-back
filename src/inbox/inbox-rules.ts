@@ -11,7 +11,7 @@ export const activityKinds: ActivityKind[] = ['stage', 'ai', 'changes', 'team', 
 const exact: Record<string, ActivityKind> = {
   stage_generated: 'ai', stage_ai_reviewed: 'ai', app_code_generated: 'ai', voice_transcribed: 'ai', analysis_run_requested: 'ai',
   starter_check_requested: 'ai', interview_applied: 'stage', handoff_built: 'stage', assignments_completed: 'team',
-  approval_policy_changed: 'stage', review_override: 'stage', ai_spend_limit_changed: 'money', choice_made: 'site',
+  approval_policy_changed: 'stage', stage_request_created: 'team', stage_request_response: 'team', stage_request_filled: 'team', stage_request_cancelled: 'team', review_override: 'stage', ai_spend_limit_changed: 'money', choice_made: 'site',
   browser_check_requested: 'site', deployment_checked: 'site', quality_profile_changed: 'site', route_created: 'stage', project_cancelled: 'other',
 };
 const prefixes: Array<[string, ActivityKind]> = [
@@ -65,7 +65,7 @@ export function publicDetails(raw: unknown): Record<string, string | number | bo
   return out;
 }
 
-export type InboxKind = 'stage_review' | 'stage_changes' | 'change_notice' | 'change_proposal' | 'time_entries' | 'dispute' | 'mention';
+export type InboxKind = 'stage_review' | 'stage_changes' | 'change_notice' | 'change_proposal' | 'time_entries' | 'dispute' | 'mention' | 'request_responses';
 export interface InboxItem {
   id: string;
   kind: InboxKind;
@@ -85,7 +85,7 @@ export interface InboxItem {
   text: string | null;
 }
 
-const urgency: Record<InboxKind, number> = { dispute: 0, change_notice: 1, stage_review: 2, stage_changes: 3, change_proposal: 4, time_entries: 5, mention: 6 };
+const urgency: Record<InboxKind, number> = { dispute: 0, change_notice: 1, stage_review: 2, stage_changes: 3, change_proposal: 4, request_responses: 5, time_entries: 6, mention: 7 };
 
 /** Overdue first, then by deadline, then by how urgent the kind is, then the oldest. */
 export function orderInbox(items: InboxItem[], now: Date = new Date()): InboxItem[] {

@@ -22,12 +22,13 @@ import { MonitoringModule } from './monitoring/monitoring.module.js';
 import { TeamModule } from './team/team.module.js';
 import { InboxModule } from './inbox/inbox.module.js';
 import { WorkModule } from './work/work.module.js';
+import { RequestsModule } from './requests/requests.module.js';
 import { AnalysisModule } from './analysis/analysis.module.js';
 import { BrowserChecksModule } from './quality/browser-checks.module.js';
 import { SandboxModule } from './sandbox/sandbox.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule, MonitoringModule, TeamModule, InboxModule, WorkModule, AnalysisModule, BrowserChecksModule, SandboxModule],
+  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule, MonitoringModule, TeamModule, InboxModule, WorkModule, RequestsModule, AnalysisModule, BrowserChecksModule, SandboxModule],
   controllers: [HealthController, WorkspacesController],
 })
 export class AppModule {}
