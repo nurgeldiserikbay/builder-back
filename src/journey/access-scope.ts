@@ -129,6 +129,11 @@ export function redact(stageKey: string, content: unknown, hidden: readonly Hidd
   return content;
 }
 
+/** Ways of changing the stage the owner can choose for a lead here: builds and the hand-off have nothing to type. */
+export function editModesFor(stageKey: StageKey): EditMode[] {
+  return NEEDS_EVERYTHING.has(stageDefinitions[stageKey].artifactType) ? ['both', 'ai_only'] : [...EDIT_MODES];
+}
+
 /** Parts the owner may hide for an assignment on `stageKey` (for the invitation form). */
 export function hideableFor(stageKey: StageKey, visible: StageKey[]): HiddenPart[] {
   if (NEEDS_EVERYTHING.has(stageDefinitions[stageKey].artifactType)) return [];

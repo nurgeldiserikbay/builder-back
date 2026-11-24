@@ -8806,7 +8806,7 @@ components:
           properties:
             assignments: { type: array, items: { $ref: '#/components/schemas/StageAssignment' } }
             roles: { type: object, description: Plain-language access summary per role. }
-            accessOptions: { type: object, description: 'For the invitation form: the stage inputs (always visible), stages that can be opened additionally, parts that can be hidden, readDaysMax.' }
+            accessOptions: { type: object, description: 'For the invitation form: the stage inputs (always visible), stages that can be opened additionally, parts that can be hidden, readDaysMax, editModes (the ways of changing the stage the owner can choose: both, ai_only, manual_only; no manual_only for builds and the hand-off).' }
             defaultAccess: { $ref: '#/components/schemas/AccessScope' }
     InviteSpecialistResponse:
       type: object

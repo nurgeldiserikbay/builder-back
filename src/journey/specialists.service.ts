@@ -5,7 +5,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { emailConfig, sendEmail } from '../notifications/email.js';
 import { escapeHtml } from './site-renderer.js';
 import { routeInputs, stageDefinitions, type StageKey } from './catalog.js';
-import { DEFAULT_SCOPE, HIDEABLE_PARTS, hideableFor, parseScope, scopeLines, scopeOf, type AccessScope } from './access-scope.js';
+import { DEFAULT_SCOPE, HIDEABLE_PARTS, editModesFor, hideableFor, parseScope, scopeLines, scopeOf, type AccessScope } from './access-scope.js';
 import { BillingService } from '../billing/billing.service.js';
 import { reviewState } from '../catalog/catalog-rules.js';
 
@@ -128,6 +128,7 @@ export class SpecialistsService {
       extraStages: extra.map((key) => ({ key, title: stageDefinitions[key].title })),
       hideable: hideableFor(ctx.stageKey, ctx.route).map((part) => ({ key: part, title: HIDEABLE_PARTS[part].title, stageKey: HIDEABLE_PARTS[part].stage })),
       readDaysMax: 30,
+      editModes: editModesFor(ctx.stageKey),
     };
   }
 
