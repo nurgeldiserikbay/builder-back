@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -56,6 +56,9 @@ describe('network agent rules', () => {
   });
 });
 
+// The push runs git; the image that builds BuildPath has none (the agent runs in the owner's network, not here).
+const noGit = spawnSync('git', ['--version']).error ? 'git is not installed' : false;
+
 describe('the agent program', () => {
   it('refuses settings that would leak the key or reach the wrong place', () => {
     assert.ok(program.readConfig({ BUILDPATH_URL: 'http://api.example.com/api/v1', BUILDPATH_AGENT_TOKEN: newAgentKey().token }).problems.some((text: string) => text.includes('https')));
@@ -71,7 +74,7 @@ describe('the agent program', () => {
     assert.deepEqual(settings, { BUILDPATH_URL: 'https://a.example/api/v1', DEPLOY_COMMAND: 'ssh deploy@app ./deploy.sh "$BUILDPATH_BRANCH"' });
   });
 
-  it('pushes the files to its own branch of the internal repository and removes what the change deleted', async () => {
+  it('pushes the files to its own branch of the internal repository and removes what the change deleted', { skip: noGit }, async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bp-agent-test-'));
     try {
       const remote = join(dir, 'remote.git');
