@@ -1,3 +1,4 @@
+import { launchItems, launchMarkdown, normalizeLaunch } from './launch.js';
 import { CASE_CLASSES, CASE_METHODS, TESTPLAN_LIMITS, normalizeTestPlan, templateTestPlan, testPlanMarkdown, type TestPlan } from './testplan.js';
 import { EXECUTORS, ROADMAP_LIMITS, normalizeRoadmap, roadmapMarkdown, templateRoadmap, type Roadmap } from './roadmap.js';
 import { CHANNELS, CONTRACT_LIMITS, METHODS, contractsMarkdown, contractsMigration, contractsOpenApi, normalizeContracts, templateContracts, type Contracts } from './contracts.js';
@@ -239,6 +240,9 @@ export class JourneyService {
     const concept = definition.artifactType === 'concept' ? await this.conceptView(ctx, stageKey, current?.content ?? null) : null;
     const contracts = definition.artifactType === 'contracts' ? await this.contractsView(ctx, stageKey, current?.content ?? null) : null;
     const roadmap = definition.artifactType === 'roadmap' ? await this.roadmapView(ctx, stageKey, current?.content ?? null) : null;
+    const launch = definition.artifactType === 'launch' ? await this.core.launchFacts(ctx, stageKey).then((facts) => inProject(ctx, () => ({
+      facts, items: launchItems(facts), markdown: current ? launchMarkdown(normalizeLaunch(current.content), facts) : null,
+    }))) : null;
     const testplan = definition.artifactType === 'testplan' ? await this.testPlanView(ctx, stageKey, current?.content ?? null) : null;
     const techPlanOutdated = Boolean(techPlanPreview && current && !sameTechPlan(techPlanPreview, current.content as unknown as TechPlan));
     const scheduleTemplate = definition.artifactType === 'schedule' && !current
@@ -335,6 +339,7 @@ export class JourneyService {
           ...(contracts ? { contracts } : {}),
           ...(roadmap ? { roadmap } : {}),
           ...(testplan ? { testplan } : {}),
+          ...(launch ? { launch } : {}),
           ...(definition.artifactType === 'process' ? { process: { capabilities: capabilitiesFor(ctx.type.key), actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS, situations: { version: SITUATIONS_VERSION, items: situationsFor(ctx.type.key) } } } : {}),
           ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.core.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),

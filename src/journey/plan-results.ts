@@ -79,3 +79,26 @@ export async function markModuleStarted(tx: Tx, input: { projectId: string; road
     await tx.planTaskState.upsert({ where: { projectId_taskKey: { projectId: input.projectId, taskKey: task.key } }, create: { projectId: input.projectId, taskKey: task.key, status: 'in_progress', updatedByUserId: input.userId }, update: { status: 'in_progress', updatedByUserId: input.userId } });
   }
 }
+
+/**
+ * The test plan's rule for a launch (§4.10 «Готово, когда»): blocking cases passed against the current plan version, main
+ * scenarios accepted by the owner (a remark counts as accepted, its task as an open remark), open remarks. Null without an
+ * accepted test plan.
+ */
+export async function testPlanReadiness(db: Tx, projectId: string) {
+  const testplan = await approved<TestPlan>(db, projectId, 'testplan');
+  if (!testplan) return null;
+  const [results, acceptances, fixes] = await Promise.all([
+    db.planCaseResult.findMany({ where: { projectId }, select: { caseKey: true, status: true, planVersion: true } }),
+    db.planCaseAcceptance.findMany({ where: { projectId }, select: { caseKey: true, verdict: true, planVersion: true } }),
+    db.planTaskState.findMany({ where: { projectId, fromCaseKey: { not: null } }, select: { status: true } }),
+  ]);
+  const current = (row: { planVersion: number }) => row.planVersion === testplan.versionNumber;
+  const blocking = testplan.content.cases.filter((item) => item.blocking);
+  const main = testplan.content.cases.filter((item) => item.class === 'normal' || item.class === 'mistakes');
+  return {
+    blocking: { total: blocking.length, passed: blocking.filter((item) => results.some((row) => row.caseKey === item.key && row.status === 'passed' && current(row))).length },
+    scenarios: { total: main.length, works: main.filter((item) => acceptances.some((row) => row.caseKey === item.key && row.verdict !== 'broken' && current(row))).length },
+    openRemarks: fixes.filter((row) => !finished.has(row.status)).length,
+  };
+}

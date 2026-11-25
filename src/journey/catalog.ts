@@ -1,10 +1,10 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.15.0';
+export const ROUTE_CATALOG_VERSION = '1.16.0';
 
-export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'build' | 'handoff';
-export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'site' | 'handoff';
+export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'build' | 'handoff' | 'launch';
+export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'site' | 'handoff' | 'launch';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking' | 'web_app';
 
@@ -566,6 +566,24 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     importHint: null,
     playbook: { version: '1.0.0', instructions: [] },
   },
+  launch: {
+    key: 'launch',
+    version: '1.0.0',
+    title: 'Подготовка к запуску',
+    purpose: 'Проверим, что приложение можно открыть людям и сбой не останется незамеченным. Часть проверяет платформа: кейсы плана проверки, ваша приёмка сценариев, адрес приложения по HTTPS и настоящая база данных. Остальное вы отмечаете сами: домен, юридические тексты, почта, резервные копии, мониторинг, перенос данных, цифры успеха, проверка безопасности.',
+    outcome: 'Чек-лист запуска: проверки платформы и ваши отметки с причинами; принятый этап — решение запускать.',
+    artifactType: 'launch',
+    inputs: ['idea', 'features', 'techplan', 'testplan', 'handoff'],
+    ai: {
+      level: 'none',
+      whatItDoes: 'Проверки делает платформа по плану проверки и проверке развёртывания, без ИИ. Пункты чек-листа отмечаете вы.',
+      instructionExamples: [],
+    },
+    acceptance: ['Блокирующие кейсы пройдены, главные сценарии приняты, замечаний нет', 'Приложение отвечает по HTTPS и работает с базой данных', 'Резервные копии и мониторинг настроены', 'Если чего-то нет — риск принят письменно'],
+    acceptExplanation: 'Принятый этап — ваше решение открыть приложение людям. Если что-то не готово, его можно принять только с письменным объяснением, и оно сохранится в журнале.',
+    importHint: null,
+    playbook: { version: '1.0.0', instructions: [] },
+  },
 };
 
 export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
@@ -620,7 +638,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Приложение со входом, ролями и своей логикой: кабинет клиента, учёт заявок, внутренняя система. BuildPath доведёт его до полного пакета — функции, экраны с прототипом, архитектуру и контракт API, — а ИИ-агент напишет по нему код приложения.',
     goodFor: 'Тем, кому нужен личный кабинет, учёт или внутренний сервис.',
     examples: ['Кабинет клиента сервиса', 'Учёт заявок и выездов', 'Запись на курсы с кабинетом ученика', 'Внутренняя система для сотрудников'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan', 'handoff'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan', 'handoff', 'launch'],
     resultExplanation: 'Пакет для разработки — техническое задание, права по ролям, схема данных, контракт API и кликабельный прототип — и код всего приложения, который пишет ИИ-агент и проверяет платформа. Запускаете вы: на своём Render или сервере.',
   },
 };

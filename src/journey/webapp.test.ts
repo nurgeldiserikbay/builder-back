@@ -27,7 +27,7 @@ const brief: Brief = { businessName: 'Сервис Клин', whatYouDo: 'Убо
 
 describe('web application route', () => {
   it('the route goes from functions to screens, architecture and the package', () => {
-    assert.deepEqual(projectTypes.web_app.stages, ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan', 'handoff']);
+    assert.deepEqual(projectTypes.web_app.stages, ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan', 'handoff', 'launch']);
     assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'techplan'), ['goal', 'process', 'features', 'screens']);
     assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'screens'), ['features']);
   });
@@ -155,7 +155,8 @@ describe('web application route (database)', async () => {
     const core = new JourneyCore(prisma!, billing);
     core.provider = null;
     const worktime = new WorktimeService(prisma!);
-    const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core), new StageReviewService(prisma!, core, new StageAiService(prisma!, core, worktime)));
+    const reviews = new StageReviewService(prisma!, core, new StageAiService(prisma!, core, worktime));
+    const journey = new JourneyService(prisma!, billing, worktime, core, new StageAiService(prisma!, core, worktime), new ChangeNoticesService(prisma!, core), reviews);
     const email = `app-${randomUUID()}@test.local`;
     const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), name: 'Owner' } });
     users.push(owner.id);
@@ -267,6 +268,22 @@ describe('web application route (database)', async () => {
     await assert.rejects(journey.saveDraft(owner.id, projectId, 'handoff', { content: {}, baseVersionId: built.data.versionId }), /STAGE_NOT_EDITABLE/);
     assert.ok((await journey.handoffFiles(owner.id, projectId)).data.files.some((file) => file.name === 'README.md'));
     await accept('handoff');
+    // The launch: the platform's checks block until fixed or accepted in writing; the owner's items need answers.
+    const launchView = (await journey.stage(owner.id, projectId, 'launch')).data;
+    assert.equal((launchView.options.launch as { items: unknown[] }).items.length, 8);
+    await journey.saveDraft(owner.id, projectId, 'launch', { content: { items: [{ key: 'domain', status: 'not_needed', note: 'Пока адрес хостинга' }, { key: 'backups', status: 'done', note: 'Neon, каждый день' }] }, baseVersionId: null });
+    const launchVersion = await versionOf('launch');
+    const launchCodes = (await journey.stage(owner.id, projectId, 'launch')).data.review!.findings.map((finding) => `${finding.severity}:${finding.code}`);
+    assert.ok(launchCodes.includes('blocking:LAUNCH_NOT_DEPLOYED'), launchCodes.join());
+    assert.ok(launchCodes.includes('blocking:LAUNCH_SCENARIOS_NOT_ACCEPTED'));
+    assert.ok(launchCodes.includes('important:LAUNCH_ITEM_OPEN'));
+    await assert.rejects(accept('launch'), /REVIEW_BLOCKING_OPEN/);
+    // A deployment that answers over HTTPS on a real database clears the deployment checks.
+    await prisma!.appDeployment.create({ data: { projectId, url: 'https://app.example.com', ok: true, status: 200, database: 'postgres', checkedAt: new Date(), checkedByUserId: owner.id } });
+    const afterDeploy = (await journey.stage(owner.id, projectId, 'launch')).data.review!.findings;
+    assert.ok(!afterDeploy.some((finding) => finding.code.startsWith('LAUNCH_NOT_DEPLOYED') || finding.code === 'LAUNCH_MEMORY_DATABASE'));
+    await reviews.override(owner.id, projectId, 'launch', { versionId: launchVersion, findingIds: afterDeploy.filter((finding) => finding.severity === 'blocking').map((finding) => finding.id), reason: 'Запускаем пробно для трёх знакомых клиентов, сценарии проходим вместе с ними' });
+    await accept('launch');
     const result = await journey.result(owner.id, projectId);
     assert.equal(result.data.complete, true);
     assert.ok(result.data.files.some((file) => file.name === 'handoff/spec.md'));
