@@ -1,3 +1,4 @@
+import { BacklogService } from './backlog.service.js';
 import { RoadmapProgressService } from './roadmap-progress.service.js';
 import { CommentsService } from './comments.service.js';
 import { StageReviewService } from './stage-review.service.js';
@@ -66,7 +67,7 @@ function uuid(value: string, code: string): string {
 @Controller()
 @UseGuards(AuthGuard)
 export class JourneyController {
-  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService, private readonly review: StageReviewService, private readonly proposals: ChangeProposalsService, private readonly playbooks: PlaybooksService, private readonly interviews: InterviewService, private readonly roadmap: RoadmapProgressService) {}
+  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService, private readonly review: StageReviewService, private readonly proposals: ChangeProposalsService, private readonly playbooks: PlaybooksService, private readonly interviews: InterviewService, private readonly roadmap: RoadmapProgressService, private readonly backlog: BacklogService) {}
 
   @Get('projects/:projectId/stages/:stageKey/comments')
   listComments(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
@@ -498,6 +499,28 @@ export class JourneyController {
     if (!/^[a-z][a-z0-9_]{0,31}$/.test(taskKey)) throw new BadRequestException('TASK_NOT_FOUND');
     const input = body(raw ?? {}, ['status', 'note', 'blockedBy', 'assigneeUserId', 'dueDate']);
     return this.roadmap.update(request.user.id, projectId, taskKey, input);
+  }
+
+  /** «Развитие»: what comes next, gathered from the accepted stages, feedback and the owner's ideas. */
+  @Get('projects/:projectId/backlog')
+  backlogList(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.backlog.list(request.user.id, projectId);
+  }
+
+  @Post('projects/:projectId/backlog')
+  backlogAdd(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    return this.backlog.add(request.user.id, projectId, body(raw ?? {}, ['title', 'details', 'source', 'priority']));
+  }
+
+  @Put('projects/:projectId/backlog/:itemId')
+  backlogUpdate(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('itemId') itemId: string, @Body() raw: unknown) {
+    return this.backlog.update(request.user.id, projectId, itemId, body(raw ?? {}, ['title', 'details', 'priority', 'status']));
+  }
+
+  @Post('projects/:projectId/backlog/next-version')
+  @HttpCode(200)
+  backlogNextVersion(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() raw: unknown) {
+    return this.backlog.startVersion(request.user.id, projectId, body(raw ?? {}, ['itemIds']));
   }
 
   /** The owner's verdicts on the main scenarios and what stands between the project and a launch. */

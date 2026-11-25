@@ -22,6 +22,7 @@ import { WorktimeService } from './worktime.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { RoadmapProgressService } from './roadmap-progress.service.js';
 import { recordRunResults } from './plan-results.js';
+import { BacklogService } from './backlog.service.js';
 
 const brief: Brief = { businessName: 'Сервис Клин', whatYouDo: 'Уборка квартир по заявкам', audience: 'Жители города', city: 'Алматы', mainAction: 'form', phone: '+7 701 000 00 00', messenger: null, email: null, address: null, tone: 'friendly' };
 
@@ -288,6 +289,23 @@ describe('web application route (database)', async () => {
     assert.equal(result.data.complete, true);
     assert.ok(result.data.files.some((file) => file.name === 'handoff/spec.md'));
     assert.ok(result.data.files.some((file) => file.name.startsWith('handoff/prototype/')));
+
+    // «Развитие»: the backlog gathers what was postponed and takes feedback; the next version reopens the ТЗ.
+    const backlog = new BacklogService(prisma!, core);
+    const listed = (await backlog.add(owner.id, projectId, { title: 'Клиенты просят оплату картой', source: 'feedback', priority: 'high' })).data;
+    assert.ok(listed.items.some((item) => item.source === 'feedback' && item.priority === 'high'));
+    // Gathering again does not duplicate.
+    assert.equal((await backlog.list(owner.id, projectId)).data.items.length, listed.items.length);
+    assert.equal(listed.canStartVersion, true);
+    await assert.rejects(backlog.add(owner.id, projectId, { title: 'x' }), /BACKLOG_TITLE_REQUIRED/);
+    const feedback = listed.items.find((item) => item.source === 'feedback')!;
+    const next = (await backlog.startVersion(owner.id, projectId, { itemIds: [feedback.id] })).data;
+    assert.equal(next.currentVersion, 2);
+    assert.equal(next.items.find((item) => item.id === feedback.id)!.status, 'next');
+    const spec = (await journey.stage(owner.id, projectId, 'features')).data;
+    assert.notEqual(spec.stage.status, 'approved');
+    assert.deepEqual((spec.options as { backlogNext: Array<{ title: string }> }).backlogNext.map((item) => item.title), ['Клиенты просят оплату картой']);
+    await assert.rejects(backlog.startVersion(owner.id, projectId, { itemIds: [feedback.id] }), /BACKLOG_ITEM_NOT_OPEN/);
   });
 
   it('holds a stage on a blocking review finding until it is fixed or explained in writing', { skip }, async () => {

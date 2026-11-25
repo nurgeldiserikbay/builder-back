@@ -4625,6 +4625,95 @@ paths:
         '403': { description: 'STAGE_ACCEPT_FORBIDDEN' }
         '404': { description: 'CASE_NOT_FOUND' }
         '409': { description: 'TESTPLAN_NOT_APPROVED' }
+  /projects/{projectId}/backlog:
+    get:
+      tags: [Journey]
+      operationId: listBacklog
+      summary: «Развитие» — what comes next for the project
+      description: 'Gathers, without overwriting, what accepted stages postponed: ТЗ functions with priority later (source spec_later), suggestions with decision later (suggestion), and the owner''s open remarks on main scenarios (remark). items[] (id, title, details, source spec_later | suggestion | remark | feedback | owner, priority high | medium | low, status open | next | done | dropped, version, createdAt), currentVersion, canEdit, canStartVersion, specStatus.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'data as described' }
+    post:
+      tags: [Journey]
+      operationId: addBacklogItem
+      summary: Add people's feedback or the owner's own idea
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [title]
+              properties:
+                title: { type: string, minLength: 3, maxLength: 200 }
+                details: { type: [string, 'null'], maxLength: 1000 }
+                source: { type: string, enum: [feedback, owner] }
+                priority: { type: string, enum: [high, medium, low] }
+      responses:
+        '201': { description: 'the same data as GET backlog' }
+        '400': { description: 'BACKLOG_TITLE_REQUIRED' }
+        '403': { description: 'STAGE_WRITE_FORBIDDEN' }
+  /projects/{projectId}/backlog/{itemId}:
+    put:
+      tags: [Journey]
+      operationId: updateBacklogItem
+      summary: Edit an item, or mark it done, dropped or open again
+      description: 'status next is set only by next-version; open clears the version.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { in: path, name: itemId, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                title: { type: string, minLength: 3, maxLength: 200 }
+                details: { type: [string, 'null'], maxLength: 1000 }
+                priority: { type: string, enum: [high, medium, low] }
+                status: { type: string, enum: [open, done, dropped] }
+      responses:
+        '200': { description: 'the same data as GET backlog' }
+        '400': { description: 'BACKLOG_TITLE_REQUIRED, BACKLOG_PRIORITY_INVALID, BACKLOG_STATUS_INVALID' }
+        '404': { description: 'BACKLOG_ITEM_NOT_FOUND' }
+  /projects/{projectId}/backlog/next-version:
+    post:
+      tags: [Journey]
+      operationId: startNextVersion
+      summary: Take chosen items into the next version
+      description: 'The items get status next and version N+1; the accepted ТЗ (features) is reopened and its page lists them (options.backlogNext). Stages after the ТЗ get change notices when the new ТЗ is accepted. Needs the right to accept the ТЗ.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [itemIds]
+              properties:
+                itemIds: { type: array, minItems: 1, maxItems: 50, items: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'the same data as GET backlog' }
+        '400': { description: 'BACKLOG_NOTHING_CHOSEN' }
+        '403': { description: 'STAGE_ACCEPT_FORBIDDEN' }
+        '409': { description: 'BACKLOG_ITEM_NOT_OPEN, SPEC_NOT_ACCEPTED' }
   /projects/{projectId}/testplan/browser-runs/latest:
     get:
       tags: [Journey]

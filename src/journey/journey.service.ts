@@ -345,6 +345,7 @@ export class JourneyService {
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
           ...(stageKey === 'content' && ctx.route.includes('sitemap') ? { pages: (await this.core.checkContext(ctx, stageKey)).sitemap?.pages ?? null } : {}),
           // The ТЗ as a document to download, from the version on screen, in the project's language.
+          ...(definition.artifactType === 'features' ? { backlogNext: await this.prisma.backlogItem.findMany({ where: { projectId, status: 'next' }, orderBy: { createdAt: 'asc' }, select: { id: true, title: true, details: true, version: true, source: true } }) } : {}),
           ...(definition.artifactType === 'features' ? { features: { kind: ctx.type.key === 'web_app' ? 'app' : 'site', firstVersionSoftLimit: FIRST_VERSION_SOFT_LIMIT[ctx.type.key === 'web_app' ? 'app' : 'site'], markdown: current ? await this.specDocument(ctx, stageKey, current.content) : null } } : {}),
           // The owner's story from «Расскажите о своём деле» starts the passport until the first version exists.
           ...(definition.artifactType === 'brief' && !stage.currentVersionId ? { brief: { intro: (await this.prisma.project.findUnique({ where: { id: projectId }, select: { summary: true } }))?.summary ?? null } } : {}),

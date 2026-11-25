@@ -394,6 +394,7 @@ model Project {
   caseResults     PlanCaseResult[]
   caseAcceptances PlanCaseAcceptance[]
   browserCaseRuns BrowserCaseRun[]
+  backlog         BacklogItem[]
   stagePlaybooks  StagePlaybook[]
   hostingConnection HostingConnection?
 }
@@ -2463,4 +2464,30 @@ model BrowserCaseRun {
   @@index([projectId, createdAt(sort: Desc)], map: "browser_case_runs_project_idx")
   @@index([status, createdAt], map: "browser_case_runs_status_idx")
   @@map("browser_case_runs")
+}
+
+/// «Развитие» (PRODUCT_LIFECYCLE §4.12): one list of what comes next — postponed functions of the ТЗ, suggestions left
+/// «потом», the owner's remarks on scenarios and people's feedback — with a priority. Items picked for the next version
+/// get its number; the ТЗ is reopened to take them in, and the stages after it follow by the usual change notices.
+model BacklogItem {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId   String    @map("project_id") @db.Uuid
+  title       String    @db.VarChar(200)
+  details     String?   @db.VarChar(1000)
+  /// spec_later, suggestion, remark, feedback or owner.
+  source      String    @db.VarChar(20)
+  /// The feature, suggestion or case it came from; null for feedback and the owner's own items.
+  sourceKey   String?   @map("source_key") @db.VarChar(64)
+  priority    String    @default("medium") @db.VarChar(10)
+  /// open, next (taken into a version), done, dropped.
+  status      String    @default("open") @db.VarChar(10)
+  version     Int?
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, source, sourceKey], map: "backlog_items_project_source_key")
+  @@index([projectId, status], map: "backlog_items_project_status_idx")
+  @@map("backlog_items")
 }
