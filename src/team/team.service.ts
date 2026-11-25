@@ -6,7 +6,7 @@ import { emailConfig, sendEmail } from '../notifications/email.js';
 import { notifyUser } from '../notifications/user-notifier.js';
 import { escapeHtml } from '../journey/site-renderer.js';
 import { tr } from '../i18n/i18n.js';
-import { projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { projectTypeOf, type StageKey, definitionOf } from '../journey/catalog.js';
 import { canManage, INVITABLE_ROLES, INVITE_DAYS, readPolicy, roleInfo, TEAM_LIMIT, type InvitableRole, type ProjectRole } from './team-rules.js';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -35,7 +35,7 @@ export class TeamService {
 
   /** Stage keys of the project route, for limiting a contributor to some stages. */
   private routeStages(projectType: string | null) {
-    return (projectTypeOf(projectType)?.stages ?? []).map((key) => ({ key, title: stageDefinitions[key].title }));
+    return (projectTypeOf(projectType)?.stages ?? []).map((key) => ({ key, title: definitionOf(key).title }));
   }
 
   /** Checks stage keys against the route; only contributors are limited to stages. */
@@ -165,7 +165,7 @@ export class TeamService {
       data: {
         projectName: row.project.name, invitedBy: inviter?.name ?? null, role: row.role, roleTitle: roleInfo[row.role as ProjectRole].title,
         roleExplanation: roleInfo[row.role as ProjectRole].explanation, expired: row.expiresAt < new Date(), revoked: Boolean(row.revokedAt), accepted: Boolean(row.acceptedAt),
-        stages: row.stageKeys.map((key) => stageDefinitions[key as StageKey]?.title ?? key),
+        stages: row.stageKeys.map((key) => definitionOf(key as StageKey)?.title ?? key),
         // The invitation also offers the project itself: the page says so before the person joins.
         ownership: row.ownershipKeepAccess !== null,
       },
@@ -219,7 +219,7 @@ export class TeamService {
       await tx.projectMember.update({ where: { id: member.id }, data: { stageKeys } });
       await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'team_stages_changed', details: { memberUserId: member.userId, stageKeys } } });
     });
-    const titles = stageKeys.map((key) => stageDefinitions[key as StageKey].title);
+    const titles = stageKeys.map((key) => definitionOf(key as StageKey).title);
     await notifyUser(this.prisma, member.userId, { category: 'team', text: () => (titles.length ? tr('В проекте «{0}» вы теперь работаете на этапах: {1}.', [project.name, titles.map((title) => tr(title)).join(', ')]) : tr('В проекте «{0}» вы теперь можете работать на всех этапах.', [project.name])) });
     return this.list(userId, projectId);
   }

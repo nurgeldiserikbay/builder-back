@@ -5,7 +5,7 @@ import { lockableKeys } from './artifacts.js';
 import { AI_REVIEW_VERSION, StageAiError, buildReviewPrompt, normalizeAiReview, type AiReviewFinding } from './stage-ai.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { tr } from '../i18n/i18n.js';
-import { stageDefinitions, type StageKey } from './catalog.js';
+import { type StageKey, definitionOf } from './catalog.js';
 import { JourneyCore } from './journey-core.js';
 import { inProject, normalizedOrRaw } from './journey-core.js';
 import { StageAiService } from './stage-ai.service.js';
@@ -25,7 +25,7 @@ export class StageReviewService {
   constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore, private readonly stageAi: StageAiService) {}
 
   async reviewOf(ctx: Ctx, key: StageKey, content: unknown): Promise<StageReview> {
-    const definition = stageDefinitions[key];
+    const definition = definitionOf(key);
     const context = await this.core.checkContext(ctx, key);
     return reviewStage(definition.artifactType, content, { ...context, projectType: ctx.type.key });
   }
@@ -72,7 +72,7 @@ export class StageReviewService {
     const ctx = await this.core.load(userId, projectId, 'write', key);
     const stage = this.core.stageOf(ctx, key);
     const stageKey = key as StageKey;
-    const definition = stageDefinitions[stageKey];
+    const definition = definitionOf(stageKey);
     if (definition.artifactType === 'site' || definition.artifactType === 'handoff') throw new BadRequestException('AI_REVIEW_NOT_USED_FOR_STAGE');
     const version = await this.core.versionContent(stage.currentVersionId);
     if (!version) throw new ConflictException('NOTHING_TO_REVIEW');

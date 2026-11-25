@@ -5,6 +5,7 @@ import { designIssues, type ArchitectureDesign } from './architecture.js';
 import { contractIssues, type Contracts } from './contracts.js';
 import { roadmapIssues, type Roadmap } from './roadmap.js';
 import { testPlanIssues, type TestPlan } from './testplan.js';
+import { moduleIssues, type ModuleFacts } from './module-stages.js';
 import { launchIssues, type LaunchChecklist, type LaunchFacts } from './launch.js';
 import { coverage, productSteps } from './spec-extras.js';
 import { conceptDocument, undefinedTerms, type Concept, type ConceptInputs } from './concept.js';
@@ -649,7 +650,7 @@ function situationsReview(process: BusinessProcess, projectType: string | null |
 }
 
 /** Review of one stage result. Types without rules yet get an empty review with the full score. */
-export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null; process?: BusinessProcess | null; projectType?: string | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null; launch?: LaunchFacts } = {}): StageReview {
+export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null; process?: BusinessProcess | null; projectType?: string | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null; launch?: LaunchFacts; module?: ModuleFacts } = {}): StageReview {
   const found: ReviewFinding[] = [];
   const counts = new Map<string, number>();
   const push: Push = (finding) => {
@@ -670,6 +671,9 @@ export function reviewStage(type: string, content: unknown, context: { features?
     }
     if (type === 'launch' && context.launch) for (const issue of launchIssues(content as LaunchChecklist, context.launch)) push({
       code: issue.code, severity: issue.severity, category: issue.code === 'LAUNCH_NO_HTTPS' || issue.code === 'LAUNCH_NO_AUDIT' ? 'security' : 'logic', target: issue.target, where: tr('Подготовка к запуску'), message: issue.message, fix: issue.fix,
+    });
+    if (type === 'module' && context.module) for (const issue of moduleIssues(context.module)) push({
+      code: issue.code, severity: issue.severity, category: 'logic', target: issue.target, where: tr('Модуль'), message: issue.message, fix: issue.fix,
     });
     if (type === 'testplan') for (const issue of testPlanIssues(content as TestPlan, context.features ?? null, context.design ?? null)) push({
       code: issue.code, severity: issue.severity, category: issue.code === 'TESTPLAN_THREAT_UNCOVERED' || issue.code === 'TESTPLAN_SENSITIVE_UNCOVERED' ? 'security' : 'logic', target: issue.target, where: tr('План проверки'), message: issue.message, fix: issue.fix,

@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
-import { stageDefinitions, type StageKey } from './catalog.js';
+import { stageDefinitions, type StageKey, definitionOf } from './catalog.js';
 import { JourneyCore, acceptRoles, editableProject, isUuid } from './journey-core.js';
 import type { Brief } from './artifacts.js';
 import { PLAYBOOK_LIMITS, checkPlaybook, parsePlaybook, projectFingerprints, type PlaybookIssue } from './playbooks.js';
@@ -8,7 +8,7 @@ import { PLAYBOOK_LIMITS, checkPlaybook, parsePlaybook, projectFingerprints, typ
 const playbookSelect = { id: true, stageKey: true, title: true, instructions: true, checklist: true, version: true, checkIssues: true, updatedAt: true } as const;
 type PlaybookRow = { id: string; stageKey: string; title: string; instructions: string[]; checklist: string[]; version: number; checkIssues: unknown; updatedAt: Date };
 const view = (row: PlaybookRow) => ({
-  id: row.id, stageKey: row.stageKey, stageTitle: stageDefinitions[row.stageKey as StageKey]?.title ?? row.stageKey, title: row.title,
+  id: row.id, stageKey: row.stageKey, stageTitle: definitionOf(row.stageKey as StageKey)?.title ?? row.stageKey, title: row.title,
   instructions: row.instructions, checklist: row.checklist, version: row.version, issues: row.checkIssues as PlaybookIssue[], updatedAt: row.updatedAt,
 });
 

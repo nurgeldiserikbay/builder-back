@@ -12,7 +12,7 @@
 
 import { BadRequestException } from '@nestjs/common';
 import { tr } from '../i18n/i18n.js';
-import { stageDefinitions, type StageKey } from './catalog.js';
+import { type StageKey, definitionOf, isStageKey } from './catalog.js';
 import type { Brief, Offer } from './artifacts.js';
 import type { Catalog } from './products.js';
 
@@ -75,7 +75,7 @@ export function parseScope(raw: unknown, ctx: { route: StageKey[]; stageKey: Sta
   const visible = new Set<StageKey>([...ctx.inputs, ...extraReadStages]);
   // Hiding only makes sense for something the specialist would see; a build needs every detail to render the site.
   hiddenParts = hiddenParts.filter((part) => visible.has(HIDEABLE_PARTS[part].stage));
-  if (hiddenParts.length && NEEDS_EVERYTHING.has(stageDefinitions[ctx.stageKey].artifactType)) throw new BadRequestException('ACCESS_HIDE_NOT_FOR_BUILD');
+  if (hiddenParts.length && NEEDS_EVERYTHING.has(definitionOf(ctx.stageKey).artifactType)) throw new BadRequestException('ACCESS_HIDE_NOT_FOR_BUILD');
   if (hiddenParts.some((part) => CONSUMES[ctx.stageKey]?.includes(part))) throw new BadRequestException('ACCESS_HIDE_USED_BY_STAGE');
 
   let allowDownload = base.allowDownload;
@@ -92,7 +92,7 @@ export function parseScope(raw: unknown, ctx: { route: StageKey[]; stageKey: Sta
   if (input.editMode !== undefined) {
     if (typeof input.editMode !== 'string' || !(EDIT_MODES as readonly string[]).includes(input.editMode)) throw new BadRequestException('ACCESS_EDIT_MODE_INVALID');
     // Builds and the hand-off are made by the platform, and the technical plan is computed; there is nothing to type by hand.
-    if (input.editMode === 'manual_only' && NEEDS_EVERYTHING.has(stageDefinitions[ctx.stageKey].artifactType)) throw new BadRequestException('ACCESS_EDIT_MODE_INVALID');
+    if (input.editMode === 'manual_only' && NEEDS_EVERYTHING.has(definitionOf(ctx.stageKey).artifactType)) throw new BadRequestException('ACCESS_EDIT_MODE_INVALID');
     editMode = input.editMode as EditMode;
   }
   return { extraReadStages, hiddenParts, allowDownload, readDays, editMode };
@@ -102,7 +102,7 @@ export function parseScope(raw: unknown, ctx: { route: StageKey[]; stageKey: Sta
 export function scopeOf(row: { extraReadStages: string[]; hiddenParts: string[]; allowDownload: boolean; readDays: number; editMode?: string | null }): AccessScope {
   return {
     editMode: (EDIT_MODES as readonly string[]).includes(row.editMode ?? '') ? row.editMode as EditMode : 'both',
-    extraReadStages: row.extraReadStages.filter((key): key is StageKey => key in stageDefinitions),
+    extraReadStages: row.extraReadStages.filter((key): key is StageKey => isStageKey(key)),
     hiddenParts: row.hiddenParts.filter((part): part is HiddenPart => part in HIDEABLE_PARTS),
     allowDownload: row.allowDownload, readDays: row.readDays,
   };
@@ -131,12 +131,12 @@ export function redact(stageKey: string, content: unknown, hidden: readonly Hidd
 
 /** Ways of changing the stage the owner can choose for a lead here: builds and the hand-off have nothing to type. */
 export function editModesFor(stageKey: StageKey): EditMode[] {
-  return NEEDS_EVERYTHING.has(stageDefinitions[stageKey].artifactType) ? ['both', 'ai_only'] : [...EDIT_MODES];
+  return NEEDS_EVERYTHING.has(definitionOf(stageKey).artifactType) ? ['both', 'ai_only'] : [...EDIT_MODES];
 }
 
 /** Parts the owner may hide for an assignment on `stageKey` (for the invitation form). */
 export function hideableFor(stageKey: StageKey, visible: StageKey[]): HiddenPart[] {
-  if (NEEDS_EVERYTHING.has(stageDefinitions[stageKey].artifactType)) return [];
+  if (NEEDS_EVERYTHING.has(definitionOf(stageKey).artifactType)) return [];
   return (Object.keys(HIDEABLE_PARTS) as HiddenPart[]).filter((part) => visible.includes(HIDEABLE_PARTS[part].stage) && !CONSUMES[stageKey]?.includes(part));
 }
 
@@ -144,7 +144,7 @@ export function hideableFor(stageKey: StageKey, visible: StageKey[]): HiddenPart
 export function scopeLines(scope: AccessScope): { can: string[]; cannot: string[]; afterAcceptance: string } {
   const can: string[] = [];
   const cannot: string[] = [];
-  if (scope.extraReadStages.length) can.push(tr('Читать принятые результаты: {0}', [scope.extraReadStages.map((key) => `«${tr(stageDefinitions[key].title)}»`).join(', ')]));
+  if (scope.extraReadStages.length) can.push(tr('Читать принятые результаты: {0}', [scope.extraReadStages.map((key) => `«${tr(definitionOf(key).title)}»`).join(', ')]));
   for (const part of scope.hiddenParts) cannot.push(tr('Видеть: {0} — вместо них «{1}»', [tr(HIDEABLE_PARTS[part].title).toLowerCase(), tr(HIDDEN_MARK)]));
   (scope.allowDownload ? can : cannot).push(tr('Скачивать файлы этапа, загруженные другими'));
   if (scope.editMode === 'ai_only') { can.push(tr('Менять этап через ИИ: давать задания и принимать предложения')); cannot.push(tr('Править этап вручную')); }

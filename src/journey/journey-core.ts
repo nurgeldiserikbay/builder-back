@@ -15,7 +15,10 @@ import { type BookingConfig, type Schedule } from './schedule.js';
 import { type BusinessProcess } from './process.js';
 import { TECHPLAN_VERSION, buildTechPlan, techPlanDesign, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
-import { projectTypeOf, stageTitle, routeAncestors, routeInputs, stageDefinitions, type ArtifactType, type ProjectTypeKey, type StageKey } from './catalog.js';
+import { projectTypeOf, stageTitle, routeAncestors, routeInputs, type ArtifactType, type ProjectTypeKey, type StageKey, isStageKey, isModuleStageKey, moduleKeyOf } from './catalog.js';
+import { moduleFacts, type ModuleFacts } from './module-stages.js';
+import type { Roadmap } from './roadmap.js';
+import type { TestPlan } from './testplan.js';
 import { ArtifactValidationError, defaultDesign, normalizeArtifact, contentImageIds, type Brief, type ContentArtifact, type DesignArtifact, type Offer } from './artifacts.js';
 import { inlineImages } from '../images/image-processing.js';
 import { type ImageInfo } from './site-renderer.js';
@@ -46,8 +49,25 @@ export const SPECIALIST_READ_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type StageRow = {
   id: string; stageKey: string; position: number; status: StageStatus; currentVersionId: string | null; approvedVersionId: string | null;
-  lockedKeys: string[]; approvedAt: Date | null; updatedAt: Date; definitionVersion: string; reviewNote: string | null;
+  lockedKeys: string[]; approvedAt: Date | null; updatedAt: Date; definitionVersion: string; reviewNote: string | null; title: string | null; moduleKey: string | null;
 };
+
+/**
+ * The project's route: its type's stages it has, and the module stages created from the accepted plan right after the
+ * developer package (the agent builds a module on it); the launch comes after them.
+ */
+export function projectRoute(typeStages: readonly StageKey[], stages: Array<{ stageKey: string; position: number }>): StageKey[] {
+  const own = typeStages.filter((key) => stages.some((stage) => stage.stageKey === key));
+  const modules = stages.filter((stage) => isModuleStageKey(stage.stageKey)).sort((a, b) => a.position - b.position).map((stage) => stage.stageKey as StageKey);
+  if (!modules.length) return own;
+  const after = own.indexOf('handoff') >= 0 ? own.indexOf('handoff') + 1 : own.length;
+  return [...own.slice(0, after), ...modules, ...own.slice(after)];
+}
+
+/** A stage's title: a module stage carries its module's name. */
+export function titleOf(row: { stageKey: string; title?: string | null } | undefined, key: StageKey, typeKey: string | null | undefined): string {
+  return row?.title || stageTitle(key, typeKey);
+}
 
 export function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -97,7 +117,7 @@ export class JourneyCore {
         id: true, name: true, status: true, locale: true, projectType: true, startStageKey: true, routeVersion: true, ownerUserId: true, changeResponseDays: true,
         members: { where: { userId, status: 'active' }, select: { role: true, stageKeys: true } },
         assignments: { where: { userId, status: { in: ['active', 'completed'] } }, select: { id: true, stageId: true, role: true, status: true, aiBudget: true, aiUsed: true, readUntil: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, editMode: true } },
-        stages: { orderBy: { position: 'asc' }, select: { id: true, stageKey: true, position: true, status: true, currentVersionId: true, approvedVersionId: true, lockedKeys: true, approvedAt: true, updatedAt: true, definitionVersion: true, reviewNote: true } },
+        stages: { orderBy: { position: 'asc' }, select: { id: true, stageKey: true, position: true, status: true, currentVersionId: true, approvedVersionId: true, lockedKeys: true, approvedAt: true, updatedAt: true, definitionVersion: true, reviewNote: true, title: true, moduleKey: true } },
       },
     });
     if (!project) throw new NotFoundException('PROJECT_NOT_FOUND');
@@ -112,7 +132,7 @@ export class JourneyCore {
     const viewer: Viewer = member ? { kind: 'member', role: member.role, stageKeys: member.role === 'contributor' ? member.stageKeys : [] } : { kind: 'specialist', assignments };
     if (viewer.kind === 'specialist' && assignments.length === 0) throw new NotFoundException('PROJECT_NOT_FOUND');
     const role = member?.role ?? 'specialist';
-    const route = type.stages.filter((key) => stages.some((stage) => stage.stageKey === key));
+    const route = projectRoute(type.stages, stages);
     const statuses: StatusMap = Object.fromEntries(stages.map((stage) => [stage.stageKey, stage.status]));
     // What dependent stages see: a stage being changed again still provides its last accepted version.
     const dep = effectiveStatuses(statuses, (key) => Boolean(stages.find((stage) => stage.stageKey === key)?.approvedVersionId));
@@ -168,9 +188,14 @@ export class JourneyCore {
     return assignment?.role === 'lead' && assignment.status === 'active';
   }
 
+  /** A stage's title in this project: a module stage is called by its module's name. */
+  title(ctx: { stages: StageRow[]; type?: { key: string } }, key: StageKey): string {
+    return titleOf(ctx.stages.find((stage) => stage.stageKey === key), key, ctx.type?.key);
+  }
+
   stageOf(ctx: { stages: StageRow[] }, key: string): StageRow {
     const stage = ctx.stages.find((item) => item.stageKey === key);
-    if (!stage || !(key in stageDefinitions)) throw new NotFoundException('STAGE_NOT_FOUND');
+    if (!stage || !isStageKey(key)) throw new NotFoundException('STAGE_NOT_FOUND');
     return stage;
   }
 
@@ -183,11 +208,11 @@ export class JourneyCore {
    * A stage that brings branches together (two or more inputs) waits while any stage it is built on still has an undecided
    * change: otherwise the branches could be built on different versions of the same contract.
    */
-  waitingBranches(ctx: { route: StageKey[]; openNotices: Array<{ targetKey: StageKey; sourceKey: StageKey }>; type?: { key: string } }, key: StageKey) {
+  waitingBranches(ctx: { route: StageKey[]; stages: StageRow[]; openNotices: Array<{ targetKey: StageKey; sourceKey: StageKey }>; type?: { key: string } }, key: StageKey) {
     if (routeInputs(ctx.route, key).length < 2) return [];
     const ancestors = new Set(routeAncestors(ctx.route, key));
     return ctx.openNotices.filter((notice) => ancestors.has(notice.targetKey))
-      .map((notice) => ({ stageKey: notice.targetKey, title: stageTitle(notice.targetKey, ctx.type?.key), sourceKey: notice.sourceKey, sourceTitle: stageTitle(notice.sourceKey, ctx.type?.key) }));
+      .map((notice) => ({ stageKey: notice.targetKey, title: this.title(ctx, notice.targetKey), sourceKey: notice.sourceKey, sourceTitle: this.title(ctx, notice.sourceKey) }));
   }
 
   /** Accepted version of a stage as seen by `forKey`: pinned by an undecided change notice, otherwise the latest accepted one. */
@@ -209,7 +234,9 @@ export class JourneyCore {
     };
   }
 
-  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { project?: { id: string } }, key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null; launch?: LaunchFacts }> {
+  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { project?: { id: string } }, key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null; launch?: LaunchFacts; module?: ModuleFacts }> {
+    // A module is checked against what is true now: its tasks, its cases' results and the agent's last build of it.
+    if (isModuleStageKey(key) && ctx.project) return { sitemap: null, module: await this.moduleFactsFor({ ...ctx, project: ctx.project }, key) };
     // The launch is checked against what the platform knows now: the test plan's state and the last deployment check.
     if (key === 'launch' && ctx.project) return { sitemap: null, launch: await this.launchFacts({ ...ctx, project: ctx.project }, key) };
     // The test plan is checked against the ТЗ (functions, rights) and the architecture's threats.
@@ -242,6 +269,12 @@ export class JourneyCore {
     return { sitemap: ((await this.acceptedInputs(ctx, key)).sitemap?.content as Sitemap | undefined) ?? null };
   }
 
+  async moduleFactsFor(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { project: { id: string } }, key: StageKey): Promise<ModuleFacts> {
+    const inputs = await this.acceptedInputs(ctx, key);
+    const testplan = inputs.testplan ? { plan: inputs.testplan.content as TestPlan, versionNumber: inputs.testplan.versionNumber } : null;
+    return moduleFacts(this.prisma, { projectId: ctx.project.id, moduleKey: moduleKeyOf(key)!, roadmap: (inputs.roadmap?.content as Roadmap | undefined) ?? null, testplan });
+  }
+
   async launchFacts(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { project: { id: string } }, key: StageKey): Promise<LaunchFacts> {
     const inputs = await this.acceptedInputs(ctx, key);
     let design: ArchitectureDesign | null = null;
@@ -251,6 +284,7 @@ export class JourneyCore {
       readiness: await testPlanReadiness(this.prisma, ctx.project.id),
       deployment: deployment ? { ...deployment, checkedAt: deployment.checkedAt.toISOString() } : null,
       features: (inputs.features?.content as AppFeatures | undefined) ?? null, idea: (inputs.idea?.content as IdeaReview | undefined) ?? null, design,
+      modulesOpen: ctx.stages.filter((stage) => isModuleStageKey(stage.stageKey) && !isSatisfied(stage.status) && stage.status !== 'blocked').map((stage) => stage.title ?? stage.stageKey),
     };
   }
 

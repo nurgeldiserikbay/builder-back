@@ -7,7 +7,7 @@ import { templateProcess } from './process.js';
 import { templateIdea, type IdeaReview } from './idea.js';
 import { templateSuggestions, type Suggestions } from './suggestions.js';
 import { PrismaService } from '../database/prisma.service.js';
-import { stageFor, stageDefinitions, type StageKey } from './catalog.js';
+import { stageFor, type StageKey, definitionOf } from './catalog.js';
 import { ArtifactValidationError, changedKeys, completenessIssues, defaultDesign, emptyBrief, lockableKeys, mergeProposal, normalizeArtifact, normalizeContent, templateContent, type Brief, type ContentArtifact, type Offer } from './artifacts.js';
 import { templateSitemap, type Sitemap } from './sitemap.js';
 import type { BusinessProcess } from './process.js';
@@ -294,7 +294,7 @@ export class StageAiService {
             : 'replaced';
       return {
         id: run.id, createdAt: run.createdAt,
-        stage: { key, title: stageDefinitions[key].title },
+        stage: { key, title: definitionOf(key).title },
         author: people.get(run.requestedByUserId) ?? { id: run.requestedByUserId, name: 'Удалённый участник', kind: 'former' as const },
         text: review ? tr('ИИ-проверка качества') : instruction?.text ?? null,
         savedAs: instruction?.kind ?? null,
@@ -328,7 +328,7 @@ export class StageAiService {
     const byAuthor = [...sum((row) => row.requestedByUserId)].map(([id, total]) => ({ author: people.get(id) ?? { id, name: 'Удалённый участник', kind: 'former' as const }, ...total }));
     const byStage = [...sum((row) => row.stageId)].map(([id, total]) => {
       const key = keyOf.get(id) as StageKey;
-      return { stage: { key, title: stageDefinitions[key].title }, ...total };
+      return { stage: { key, title: definitionOf(key).title }, ...total };
     });
     return {
       data: {
@@ -336,7 +336,7 @@ export class StageAiService {
         nextBefore: runs.length > filter.limit ? page[page.length - 1].createdAt : null,
         summary: { byAuthor, byStage, tokensReported: grouped.some((row) => row._sum.inputTokens !== null || row._sum.outputTokens !== null) },
         filters: {
-          stages: readable.map((key) => ({ key, title: stageDefinitions[key].title })),
+          stages: readable.map((key) => ({ key, title: definitionOf(key).title })),
           authors: [...people.values()],
         },
       },

@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { tr } from '../i18n/i18n.js';
-import { routeAncestors, routeInputs, stageDefinitions, type StageKey } from './catalog.js';
+import { routeAncestors, routeInputs, type StageKey, definitionOf } from './catalog.js';
 import { JourneyCore, acceptRoles, editableProject, isUuid } from './journey-core.js';
 import { JourneyService } from './journey.service.js';
 import { StageAiService } from './stage-ai.service.js';
@@ -53,8 +53,8 @@ export class ChangeProposalsService {
     // Those who can settle it: the owner and managers, and the specialist working on the earlier stage.
     const deciders = await this.prisma.projectMember.findMany({ where: { projectId, status: 'active', role: { in: [...acceptRoles] as never } }, select: { userId: true } });
     const workers = await this.prisma.stageAssignment.findMany({ where: { projectId, stageId: target.id, status: 'active' }, select: { userId: true } });
-    const fromTitle = stageDefinitions[fromKey as StageKey].title;
-    const targetTitle = stageDefinitions[targetKey as StageKey].title;
+    const fromTitle = definitionOf(fromKey as StageKey).title;
+    const targetTitle = definitionOf(targetKey as StageKey).title;
     for (const recipient of new Set([...deciders, ...workers].map((item) => item.userId).filter((id): id is string => Boolean(id) && id !== userId))) {
       void this.core.notifyUser(recipient, () => tr(kind === 'question'
         ? '{4}Вопрос к этапу «{1}» от этапа «{0}»: {2}\n{3}'
@@ -80,7 +80,7 @@ export class ChangeProposalsService {
         author: { select: { name: true, email: true } },
       },
     });
-    const title = (key: string) => stageDefinitions[key as StageKey]?.title ?? key;
+    const title = (key: string) => definitionOf(key as StageKey)?.title ?? key;
     return {
       data: {
         canDecide: deciding,
@@ -132,7 +132,7 @@ export class ChangeProposalsService {
       if (stage.status === 'approved' || stage.status === 'imported') await this.journey.reopen(userId, projectId, targetKey);
       if (input.applyWithAi === true) {
         try {
-          await this.stageAi.generate(userId, projectId, targetKey, { instruction: tr('Запрос от этапа «{0}», принятый владельцем: {1}', [tr(stageDefinitions[proposal.fromStage.stageKey as StageKey]?.title ?? ''), proposal.text]), saveAs: 'one_off', targetKey: null });
+          await this.stageAi.generate(userId, projectId, targetKey, { instruction: tr('Запрос от этапа «{0}», принятый владельцем: {1}', [tr(definitionOf(proposal.fromStage.stageKey as StageKey)?.title ?? ''), proposal.text]), saveAs: 'one_off', targetKey: null });
           generation = { ok: true, code: null };
         } catch (caught) {
           // The decision stands; the owner applies the change by hand or asks the AI again from the stage page.
@@ -140,7 +140,7 @@ export class ChangeProposalsService {
         }
       }
     }
-    const title = tr(stageDefinitions[targetKey as StageKey].title);
+    const title = tr(definitionOf(targetKey as StageKey).title);
     if (proposal.authorUserId !== userId) void this.core.notifyUser(proposal.authorUserId, () => decision === 'accept'
       ? tr('Ваш запрос к этапу «{0}» принят: этап исправят и примут заново — тогда запрос закроется сам.{1}', [title, note ? ` ${note}` : ''])
       : decision === 'answer' ? tr('Ответ на ваш запрос к этапу «{0}»: {1}', [title, note])

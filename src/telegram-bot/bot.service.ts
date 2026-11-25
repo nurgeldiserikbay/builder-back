@@ -219,7 +219,7 @@ export class TelegramBotService {
     const state = await this.state(chatId);
     if (!state || state.userId !== userId || !state.projectId) return this.guarded(ctx, () => this.showProjects(ctx));
     const projectId = state.projectId;
-    if (action === 'S' && /^[a-z]{2,20}$/.test(arg)) return this.guarded(ctx, async () => { await this.showStage(ctx, projectId, arg); await this.setState(ctx, { stageKey: arg, pending: null }); });
+    if (action === 'S' && /^(?:[a-z]{2,20}|m_[a-z][a-z0-9_]{0,31})$/.test(arg)) return this.guarded(ctx, async () => { await this.showStage(ctx, projectId, arg); await this.setState(ctx, { stageKey: arg, pending: null }); });
     const stageKey = state.stageKey;
     if (!stageKey) return this.guarded(ctx, () => this.showProject(ctx, projectId));
     await this.guarded(ctx, async () => {

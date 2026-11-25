@@ -10,7 +10,7 @@ import { billingSettings, projectBalance, walletLockKey } from './wallet.js';
 import { STAGE_ORDER_PREFIX, normalizeIban, splitFee } from './payouts.js';
 import { openSecret, sealSecret, secretKey } from '../common/secret-box.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
-import { stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { type StageKey, definitionOf } from '../journey/catalog.js';
 import { reportError } from '../observability/error-reporting.js';
 
 const MAX_TOP_UP_TIYN = 50_000_000; // 500 000 ₸
@@ -266,7 +266,7 @@ export class PaymentsService {
       this.prisma.adminAuditEvent.create({ data: { staffId, eventType: 'refund.stage_payment', targetType: 'stage_payment', targetId: paymentId, details: { amount: tenge(payment.amountTiyn), reference, note } } }),
       this.prisma.projectEvent.create({ data: { projectId: payment.projectId, type: 'specialist_payment_refunded', stageKey: payment.assignment.stage.stageKey, details: { paymentId, amount: tenge(payment.amountTiyn) } } }),
     ]);
-    await this.notify(payment.assignment.userId, () => tr('Оплата {0} ₸ за этап «{1}» возвращена владельцу проекта: {2}.', [money(payment.amountTiyn), tr(stageDefinitions[payment.assignment.stage.stageKey as StageKey]?.title ?? ''), note]));
+    await this.notify(payment.assignment.userId, () => tr('Оплата {0} ₸ за этап «{1}» возвращена владельцу проекта: {2}.', [money(payment.amountTiyn), tr(definitionOf(payment.assignment.stage.stageKey as StageKey)?.title ?? ''), note]));
     return this.payoutQueue();
   }
 
@@ -295,7 +295,7 @@ export class PaymentsService {
     }
     const row = await this.prisma.stagePayment.findFirst({ where: { id, projectId, status: { in: ['held', 'paid_out', 'refunded'] } }, select: { amountTiyn: true, feeTiyn: true, payoutTiyn: true, paidAt: true, provider: true, providerPaymentId: true, status: true, refundedAt: true, refundReference: true, assignment: { select: { email: true, user: { select: { name: true } }, stage: { select: { stageKey: true } } } } } });
     if (!row?.paidAt) throw new NotFoundException('RECEIPT_NOT_FOUND');
-    const stage = stageDefinitions[row.assignment.stage.stageKey as StageKey]?.title ?? row.assignment.stage.stageKey;
+    const stage = definitionOf(row.assignment.stage.stageKey as StageKey)?.title ?? row.assignment.stage.stageKey;
     return { data: {
       number: number(row.paidAt), paidAt: row.paidAt, payer: buyer?.owner.name || buyer?.owner.email, payerEmail: buyer?.owner.email ?? null, project: access.name,
       items: [
@@ -356,7 +356,7 @@ export class PaymentsService {
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
     const orderId = `${STAGE_ORDER_PREFIX}${payment.id}`;
     const back = (result: string) => `${appBase()}/projects/${projectId}/stages/${payment.assignment.stage.stageKey}?payment=${result}`;
-    const title = stageDefinitions[payment.assignment.stage.stageKey as StageKey]?.title ?? '';
+    const title = definitionOf(payment.assignment.stage.stageKey as StageKey)?.title ?? '';
     let checkout;
     try {
       checkout = provider === 'mock'
@@ -413,7 +413,7 @@ export class PaymentsService {
       data: rows.map((row) => ({
         id: row.id, status: row.status, amount: tenge(row.amountTiyn), fee: tenge(row.feeTiyn ?? 0), payout: tenge(row.payoutTiyn ?? row.amountTiyn),
         heldAt: row.heldAt, paidOutAt: row.paidOutAt, reference: row.payoutReference, project: row.assignment.project.name, disputeOpen: row.assignment._count.disputes > 0,
-        stage: stageDefinitions[row.assignment.stage.stageKey as StageKey]?.title ?? row.assignment.stage.stageKey,
+        stage: definitionOf(row.assignment.stage.stageKey as StageKey)?.title ?? row.assignment.stage.stageKey,
         specialist: row.assignment.user?.name || row.assignment.email,
         account: row.assignment.user?.payoutDetails ? { holderName: row.assignment.user.payoutDetails.holderName, ibanHint: row.assignment.user.payoutDetails.ibanHint } : null,
       })),
@@ -450,7 +450,7 @@ export class PaymentsService {
       this.prisma.adminAuditEvent.create({ data: { staffId, eventType: 'payout.paid_out', targetType: 'stage_payment', targetId: paymentId, details: { amount: tenge(payment.payoutTiyn ?? payment.amountTiyn), reference: clean } } }),
       this.prisma.projectEvent.create({ data: { projectId: payment.projectId, type: 'specialist_paid_out', stageKey: payment.assignment.stage.stageKey, details: { paymentId, amount: tenge(payment.payoutTiyn ?? payment.amountTiyn) } } }),
     ]);
-    await this.notify(payment.assignment.userId, () => tr('BuildPath перевёл вам {0} ₸ за этап «{1}». Номер перевода: {2}.', [money(payment.payoutTiyn ?? payment.amountTiyn), tr(stageDefinitions[payment.assignment.stage.stageKey as StageKey]?.title ?? ''), clean]));
+    await this.notify(payment.assignment.userId, () => tr('BuildPath перевёл вам {0} ₸ за этап «{1}». Номер перевода: {2}.', [money(payment.payoutTiyn ?? payment.amountTiyn), tr(definitionOf(payment.assignment.stage.stageKey as StageKey)?.title ?? ''), clean]));
     return this.payoutQueue();
   }
 

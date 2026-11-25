@@ -4,7 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 import { emailConfig, sendEmail } from '../notifications/email.js';
 import { escapeHtml } from './site-renderer.js';
-import { routeInputs, stageDefinitions, type StageKey } from './catalog.js';
+import { routeInputs, type StageKey, definitionOf } from './catalog.js';
 import { DEFAULT_SCOPE, HIDEABLE_PARTS, editModesFor, hideableFor, parseScope, scopeLines, scopeOf, type AccessScope } from './access-scope.js';
 import { BillingService } from '../billing/billing.service.js';
 import { reviewState } from '../catalog/catalog-rules.js';
@@ -124,8 +124,8 @@ export class SpecialistsService {
     const ctx = this.scopeContext(project, stageKey);
     const extra = ctx.route.filter((key) => key !== stageKey && !ctx.inputs.includes(key));
     return {
-      inputs: ctx.inputs.map((key) => ({ key, title: stageDefinitions[key].title })),
-      extraStages: extra.map((key) => ({ key, title: stageDefinitions[key].title })),
+      inputs: ctx.inputs.map((key) => ({ key, title: definitionOf(key).title })),
+      extraStages: extra.map((key) => ({ key, title: definitionOf(key).title })),
       hideable: hideableFor(ctx.stageKey, ctx.route).map((part) => ({ key: part, title: HIDEABLE_PARTS[part].title, stageKey: HIDEABLE_PARTS[part].stage })),
       readDaysMax: 30,
       editModes: editModesFor(ctx.stageKey),
@@ -202,7 +202,7 @@ export class SpecialistsService {
     const appUrl = process.env.PUBLIC_APP_URL ?? 'http://localhost:3000';
     const inviteUrl = new URL(`/invite/${token}`, appUrl).toString();
     const mail = emailConfig();
-    const stageTitle = stageDefinitions[stageKey as StageKey].title;
+    const stageTitle = definitionOf(stageKey as StageKey).title;
     const inviter = project.owner.name ?? project.owner.email;
     const emailSent = mail ? await sendEmail(mail, email, tr("Приглашение в проект «{0}»", [project.name]),
       tr("<p>{0} приглашает вас в проект «{1}» на этап «{2}» как {3}.</p><p>{4}</p><p><a href=\"{5}\">Открыть приглашение</a></p><p>Ссылка действует 7 дней.</p>", [escapeHtml(inviter), escapeHtml(project.name), escapeHtml(stageTitle), escapeHtml(roleAccess[input.role].title.toLowerCase()), escapeHtml(termsText(input.terms)), escapeHtml(inviteUrl)])) : false;
@@ -237,7 +237,7 @@ export class SpecialistsService {
 
   async inviteInfo(token: string) {
     const invite = await this.byToken(token);
-    const definition = stageDefinitions[invite.stage.stageKey as StageKey];
+    const definition = definitionOf(invite.stage.stageKey as StageKey);
     const lines = scopeLines(scopeOf(invite));
     return {
       data: {
@@ -277,7 +277,7 @@ export class SpecialistsService {
     });
     return {
       data: rows.map((row) => ({
-        id: row.id, projectId: row.projectId, projectName: row.project.name, stageKey: row.stage.stageKey, stageTitle: stageDefinitions[row.stage.stageKey as StageKey]?.title ?? row.stage.stageKey,
+        id: row.id, projectId: row.projectId, projectName: row.project.name, stageKey: row.stage.stageKey, stageTitle: definitionOf(row.stage.stageKey as StageKey)?.title ?? row.stage.stageKey,
         stageStatus: row.stage.status, role: row.role, roleTitle: roleAccess[row.role].title, status: row.status, aiBudget: row.aiBudget, aiUsed: row.aiUsed, readUntil: row.readUntil,
       })),
     };

@@ -2,8 +2,8 @@ import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/com
 import { PrismaService } from '../database/prisma.service.js';
 import { WorktimeService } from '../journey/worktime.service.js';
 import { JourneyService } from '../journey/journey.service.js';
-import { projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
-import { DEFAULT_TOKENS, MAX_LIMIT_TENGE, EXPECTED_REQUESTS, estimateRoute, plannedRoute, requestCost, requestRange, spendLimitState, tenge } from './budget.js';
+import { projectTypeOf, stageDefinitions, type StageKey, type CatalogStageKey, definitionOf } from '../journey/catalog.js';
+import { DEFAULT_TOKENS, MAX_LIMIT_TENGE, expectedRequests, estimateRoute, plannedRoute, requestCost, requestRange, spendLimitState, tenge } from './budget.js';
 import { plannedAmount } from '../journey/worktime.js';
 
 const MAX_PRICE_TENGE = 1_000_000;
@@ -82,7 +82,7 @@ export class BudgetService {
   async routeEstimate(projectType: string, startStageKey: string | null) {
     const type = projectTypeOf(projectType);
     if (!type) throw new BadRequestException('INVALID_PROJECT_TYPE');
-    if (startStageKey !== null && !type.stages.includes(startStageKey as StageKey)) throw new BadRequestException('INVALID_START_STAGE');
+    if (startStageKey !== null && !type.stages.includes(startStageKey as CatalogStageKey)) throw new BadRequestException('INVALID_START_STAGE');
     const route = plannedRoute(type.stages, startStageKey as StageKey | null);
     const [row, tokens] = await Promise.all([this.prisma.aiPricing.findUnique({ where: { id: 1 } }), this.typicalTokens()]);
     const estimate = row ? estimateRoute(route, tokens, row) : null;
@@ -95,9 +95,9 @@ export class BudgetService {
         perRequest: estimate ? tenge(estimate.perRequest) : null,
         cost: estimate ? { min: tenge(estimate.remaining.min), max: tenge(estimate.remaining.max) } : null,
         stages: route.map((stage) => {
-          const [min, max] = stage.aiUsed && !stage.done ? EXPECTED_REQUESTS[stage.key] : [0, 0];
+          const [min, max] = stage.aiUsed && !stage.done ? expectedRequests(stage.key) : [0, 0];
           const planned = estimate?.perStage.find((item) => item.key === stage.key);
-          return { key: stage.key, title: stageDefinitions[stage.key].title, brought: stage.done, aiUsed: stage.aiUsed, requests: { min, max }, cost: planned && !stage.done ? { min: tenge(planned.cost.min), max: tenge(planned.cost.max) } : null };
+          return { key: stage.key, title: definitionOf(stage.key).title, brought: stage.done, aiUsed: stage.aiUsed, requests: { min, max }, cost: planned && !stage.done ? { min: tenge(planned.cost.min), max: tenge(planned.cost.max) } : null };
         }),
         basedOnRequests: tokens.basedOn,
         currency: 'KZT',
@@ -135,7 +135,7 @@ export class BudgetService {
     const byStage = access.canDecide ? await this.specialistsByStage(projectId) : null;
     const tokens = await this.typicalTokens();
     const route = stages.filter((stage) => stage.stageKey in stageDefinitions).map((stage) => ({
-      id: stage.id, key: stage.stageKey as StageKey, done: ['approved', 'imported', 'skipped'].includes(stage.status), aiUsed: stageDefinitions[stage.stageKey as StageKey].ai.level !== 'none',
+      id: stage.id, key: stage.stageKey as StageKey, done: ['approved', 'imported', 'skipped'].includes(stage.status), aiUsed: definitionOf(stage.stageKey as StageKey).ai.level !== 'none',
     }));
     const estimate = row ? estimateRoute(route, tokens, row) : null;
     const users = await this.prisma.user.findMany({ where: { id: { in: byAuthor.map((item) => item.requestedByUserId) } }, select: { id: true, name: true, email: true } });
@@ -153,10 +153,10 @@ export class BudgetService {
         stages: route.map((stage) => {
           const used = runs.find((item) => item.stageId === stage.id);
           const planned = estimate?.perStage.find((item) => item.key === stage.key);
-          const [requestsMin, requestsMax] = stage.aiUsed ? EXPECTED_REQUESTS[stage.key] : [0, 0];
+          const [requestsMin, requestsMax] = stage.aiUsed ? expectedRequests(stage.key) : [0, 0];
           const people = byStage?.get(stage.id) ?? null;
           return {
-            key: stage.key, title: stageDefinitions[stage.key].title, done: stage.done, aiUsed: stage.aiUsed,
+            key: stage.key, title: definitionOf(stage.key).title, done: stage.done, aiUsed: stage.aiUsed,
             spent: tenge(used?._sum.costTiyn ?? 0), requests: used?._count._all ?? 0,
             planned: planned ? { requestsMin: planned.requests.min, requestsMax: planned.requests.max, min: tenge(planned.cost.min), max: tenge(planned.cost.max) } : null,
             expectedRequests: { min: requestsMin, max: requestsMax },

@@ -3,7 +3,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { tr } from '../i18n/i18n.js';
 import { readPolicy } from '../team/team-rules.js';
 import { lockableKeys } from './artifacts.js';
-import { stageDefinitions, type StageKey } from './catalog.js';
+import { type StageKey, definitionOf } from './catalog.js';
 import { acceptRoles, editableProject, isUuid, JourneyCore } from './journey-core.js';
 
 export const COMMENT_LIMITS = { text: 2000, perStage: 300, files: 5, mentions: 10 };
@@ -69,7 +69,7 @@ export class CommentsService {
       data: {
         comments: top, openBlocking: top.filter((item) => item.blocking && !item.resolved).length, open: top.filter((item) => !item.resolved).length,
         canWrite, canBlock, canUpload: canWrite && this.core.canWrite(ctx, key) && editableProject(ctx.project.status), currentVersion: current?.versionNumber ?? null, files: stageFiles, people: mentionable, limits: { files: COMMENT_LIMITS.files, mentions: COMMENT_LIMITS.mentions },
-        targets: current ? lockableKeys(stageDefinitions[key as StageKey].artifactType, current.content) : [],
+        targets: current ? lockableKeys(definitionOf(key as StageKey).artifactType, current.content) : [],
       },
     };
   }
@@ -97,7 +97,7 @@ export class CommentsService {
       if (mentionIds.some((id) => !allowed.has(id))) throw new BadRequestException('COMMENT_MENTIONS_INVALID');
     }
     const current = await this.core.versionContent(stage.currentVersionId);
-    if (input.targetKey && (!current || !lockableKeys(stageDefinitions[key as StageKey].artifactType, current.content).includes(input.targetKey))) throw new NotFoundException('TARGET_NOT_FOUND');
+    if (input.targetKey && (!current || !lockableKeys(definitionOf(key as StageKey).artifactType, current.content).includes(input.targetKey))) throw new NotFoundException('TARGET_NOT_FOUND');
     const created = await this.prisma.$transaction(async (tx) => {
       const row = await tx.stageComment.create({ data: { projectId, stageId: stage.id, parentId: parent?.id ?? null, versionNumber: current?.versionNumber ?? null, targetKey: parent ? null : input.targetKey, authorUserId: userId, text, blocking: input.blocking, fileIds, mentionUserIds: mentionIds } });
       await this.core.event(tx, projectId, userId, parent ? 'stage_comment_replied' : 'stage_comment_added', key, { commentId: row.id, blocking: input.blocking, files: fileIds.length, mentions: mentionIds.length });
@@ -118,7 +118,7 @@ export class CommentsService {
     }
     recipients.delete(userId);
     for (const id of mentionIds) recipients.delete(id);
-    const title = stageDefinitions[key as StageKey].title;
+    const title = definitionOf(key as StageKey).title;
     for (const id of mentionIds) {
       await this.core.notifyUser(id, () => tr('Вас упомянули в замечании к этапу «{0}» в проекте «{1}»: {2} {3}', [tr(title), ctx.project.name, text.slice(0, 300), this.core.stageLink(projectId, key)]).trim()).catch(() => undefined);
     }

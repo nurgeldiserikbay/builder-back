@@ -11,7 +11,7 @@ import { sitemapChanges, type Sitemap } from './sitemap.js';
 import { catalogChanges, type Catalog } from './products.js';
 import { featuresChanges, screensChanges, type AppFeatures, type AppScreens } from './webapp.js';
 import { tr } from '../i18n/i18n.js';
-import { stageDefinitions, type StageKey } from './catalog.js';
+import { type StageKey, definitionOf } from './catalog.js';
 
 type Json = Record<string, unknown>;
 const record = (value: unknown): Json => (value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {});
@@ -23,7 +23,7 @@ const designLabels: Record<string, string> = { palette: 'Цвета', font: 'Ш�
 
 function fieldChanges(key: StageKey, before: Json, after: Json): string[] {
   const lines: string[] = [];
-  const fields = stageDefinitions[key].fields ?? [];
+  const fields = definitionOf(key).fields ?? [];
   for (const field of fields) {
     if (field.kind === 'list') continue;
     const was = text(before[field.key]);
@@ -100,7 +100,7 @@ function scheduleChanges(before: Json, after: Json): string[] {
 export function describeChanges(key: StageKey, beforeRaw: unknown, afterRaw: unknown): string[] {
   const before = record(beforeRaw);
   const after = record(afterRaw);
-  const type = stageDefinitions[key].artifactType;
+  const type = definitionOf(key).artifactType;
   const lines = type === 'offer' ? serviceChanges(before, after)
     : type === 'content' ? contentChanges(before, after)
       : type === 'design' ? designChanges(before, after)
@@ -113,6 +113,7 @@ export function describeChanges(key: StageKey, beforeRaw: unknown, afterRaw: unk
           : type === 'catalog' ? catalogChanges(beforeRaw as Catalog, afterRaw as Catalog)
           : type === 'features' ? featuresChanges(beforeRaw as AppFeatures, afterRaw as AppFeatures)
           : type === 'screens' ? screensChanges(beforeRaw as AppScreens, afterRaw as AppScreens)
+          : type === 'module' ? (before.summary !== after.summary ? ['Изменено описание того, что сделано в модуле'] : [])
           : type === 'launch' ? launchChanges(normalizeLaunch(beforeRaw ?? {}), normalizeLaunch(afterRaw ?? {}))
           : type === 'testplan' ? testPlanChanges(normalizeTestPlan(beforeRaw ?? {}), normalizeTestPlan(afterRaw ?? {}))
           : type === 'roadmap' ? roadmapChanges(normalizeRoadmap(beforeRaw ?? {}), normalizeRoadmap(afterRaw ?? {}))

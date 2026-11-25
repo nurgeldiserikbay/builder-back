@@ -201,6 +201,15 @@ describe('web application route (database)', async () => {
     assert.equal(roadmap.template.modules[0]!.key, 'setup');
     await journey.saveDraft(owner.id, projectId, 'roadmap', { content: roadmap.template, baseVersionId: null });
     await accept('roadmap');
+    // Every module of the accepted plan is now its own stage after the developer package, called by the module's name.
+    const planModules = (roadmap.template as unknown as { modules: Array<{ key: string; name: string }> }).modules;
+    const moduleRows = await prisma!.projectStage.findMany({ where: { projectId, stageKey: { startsWith: 'm_' } }, orderBy: { position: 'asc' } });
+    assert.deepEqual(moduleRows.map((row) => row.stageKey), planModules.map((module) => `m_${module.key}`));
+    assert.deepEqual(moduleRows.map((row) => row.title), planModules.map((module) => module.name));
+    // The test plan is not accepted yet: the module stages wait for it.
+    assert.ok(moduleRows.every((row) => row.status === 'locked'));
+    const map = (await journey.journey(owner.id, projectId)).data.stages.map((stage) => stage.key);
+    assert.deepEqual(map.slice(map.indexOf('handoff') + 1), [...planModules.map((module) => `m_${module.key}`), 'launch']);
     const progress = new RoadmapProgressService(prisma!, core);
     const first = (await progress.view(owner.id, projectId)).data;
     assert.equal(first.progress, 0);
@@ -223,6 +232,7 @@ describe('web application route (database)', async () => {
     const cases = [...testplan.template.cases.filter((item) => item.task !== 'setup_env'), { key: 'env_check', title: 'Тестовая версия открывается', class: 'normal', given: 'Выкладка сделана', steps: ['Открыть адрес тестовой версии'], expected: 'Открывается экран входа', task: 'setup_env', method: 'human', blocking: true }];
     await journey.saveDraft(owner.id, projectId, 'testplan', { content: { ...testplan.template, cases }, baseVersionId: null });
     await accept('testplan');
+    assert.ok((await prisma!.projectStage.findMany({ where: { projectId, stageKey: { startsWith: 'm_' } } })).every((row) => row.status === 'ready'));
     const auto = cases.find((item) => item.method === 'auto')!;
     await assert.rejects(progress.recordCase(owner.id, projectId, auto.key, { status: 'passed' }), /CASE_AUTOMATIC/);
     await assert.rejects(progress.update(owner.id, projectId, 'setup_env', { status: 'done' }), /TASK_CHECKS_NOT_PASSED/);
@@ -285,8 +295,38 @@ describe('web application route (database)', async () => {
     assert.ok(!afterDeploy.some((finding) => finding.code.startsWith('LAUNCH_NOT_DEPLOYED') || finding.code === 'LAUNCH_MEMORY_DATABASE'));
     await reviews.override(owner.id, projectId, 'launch', { versionId: launchVersion, findingIds: afterDeploy.filter((finding) => finding.severity === 'blocking').map((finding) => finding.id), reason: 'Запускаем пробно для трёх знакомых клиентов, сценарии проходим вместе с ними' });
     await accept('launch');
+    // Not complete while a module is open: each module is accepted on its own stage, honestly — by cases, not by word.
+    assert.equal((await journey.result(owner.id, projectId)).data.complete, false);
+    const setupStage = (await journey.stage(owner.id, projectId, 'm_setup')).data;
+    assert.equal(setupStage.stage.title, planModules[0]!.name);
+    assert.equal(setupStage.stage.artifactType, 'module');
+    const setupView = setupStage.options.module as unknown as { key: string; facts: { tasks: Array<{ key: string; status: string }> }; dependsOn: unknown[] };
+    assert.equal(setupView.key, 'setup');
+    assert.ok(setupView.facts.tasks.some((task) => task.key === 'setup_db' && task.status === 'blocked'));
+    await journey.saveDraft(owner.id, projectId, 'm_setup', { content: { summary: 'Каркас: репозиторий, база по schema.sql, окружения' }, baseVersionId: null });
+    const setupCodes = (await journey.stage(owner.id, projectId, 'm_setup')).data.review!.findings.map((finding) => `${finding.severity}:${finding.code}`);
+    assert.ok(setupCodes.includes('blocking:MODULE_TASKS_OPEN'), setupCodes.join());
+    assert.ok(setupCodes.includes('important:MODULE_NOT_BUILT'), setupCodes.join());
+    await assert.rejects(accept('m_setup'), /REVIEW_BLOCKING_OPEN/);
+    for (const row of moduleRows) {
+      if (row.stageKey !== 'm_setup') await journey.saveDraft(owner.id, projectId, row.stageKey, { content: { summary: '' }, baseVersionId: null });
+      const findings = (await journey.stage(owner.id, projectId, row.stageKey)).data.review!.findings;
+      await reviews.override(owner.id, projectId, row.stageKey, { versionId: await versionOf(row.stageKey), findingIds: findings.filter((finding) => finding.severity === 'blocking').map((finding) => finding.id), reason: 'Модуль принимаем для пробного запуска, задачи доделаем в следующей версии' });
+      await accept(row.stageKey);
+    }
     const result = await journey.result(owner.id, projectId);
     assert.equal(result.data.complete, true);
+    // A new plan without a module: a module stage someone worked on is set aside, not thrown away; the rest get notices.
+    await journey.reopen(owner.id, projectId, 'roadmap');
+    const lastModule = planModules[planModules.length - 1]!;
+    await journey.saveDraft(owner.id, projectId, 'roadmap', { content: { ...roadmap.template, modules: (roadmap.template as unknown as { modules: Array<{ key: string; dependsOn: string[] }> }).modules.filter((module) => module.key !== lastModule.key).map((module) => ({ ...module, dependsOn: module.dependsOn.filter((key) => key !== lastModule.key) })) }, baseVersionId: await versionOf('roadmap') });
+    const roadmapFindings = (await journey.stage(owner.id, projectId, 'roadmap')).data.review!.findings.filter((finding) => finding.severity === 'blocking');
+    if (roadmapFindings.length) await reviews.override(owner.id, projectId, 'roadmap', { versionId: await versionOf('roadmap'), findingIds: roadmapFindings.map((finding) => finding.id), reason: 'Модуль убрали из первой версии, вернём позже' });
+    await accept('roadmap');
+    const aside = await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: `m_${lastModule.key}` } });
+    assert.equal(aside.status, 'blocked');
+    assert.equal(aside.reviewNote, 'MODULE_REMOVED_FROM_PLAN');
+    assert.ok((await prisma!.changeNotice.count({ where: { projectId, targetStage: { stageKey: 'm_setup' }, status: 'open' } })) > 0);
     assert.ok(result.data.files.some((file) => file.name === 'handoff/spec.md'));
     assert.ok(result.data.files.some((file) => file.name.startsWith('handoff/prototype/')));
 

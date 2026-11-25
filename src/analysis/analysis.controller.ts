@@ -9,7 +9,7 @@ import { StageFilesService } from './stage-files.service.js';
 type Download = { set(headers: Record<string, string>): unknown; send(body: Buffer | string): unknown };
 
 function stageKey(value: string): string {
-  if (!/^[a-z]{2,20}$/.test(value)) throw new BadRequestException('INVALID_STAGE_KEY');
+  if (!/^(?:[a-z]{2,20}|m_[a-z][a-z0-9_]{0,31})$/.test(value)) throw new BadRequestException('INVALID_STAGE_KEY');
   return value;
 }
 

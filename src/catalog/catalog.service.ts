@@ -2,13 +2,13 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { MAX_UPLOAD_BYTES, ImageRejectedError, detectImageType, processImage } from '../images/image-processing.js';
 import { scanRequired, scanWithClamAv } from '../security/clamav.js';
 import { PrismaService } from '../database/prisma.service.js';
-import { projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { projectTypeOf, type StageKey, definitionOf } from '../journey/catalog.js';
 import { MAX_PORTFOLIO, catalogScore, catalogStageKeys, checkModeration, checkPortfolio, checkProfile, checkReport, checkReview, checkProfileReport, checkProfileDecision, searchWords, matchesSearch, ratingSummary, reviewState, type PortfolioItem, type ProfileInput } from './catalog-rules.js';
 import { tr } from '../i18n/i18n.js';
 import { notifyUser } from '../notifications/user-notifier.js';
 
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-const stageTitle = (key: string) => stageDefinitions[key as StageKey]?.title ?? key;
+const stageTitle = (key: string) => definitionOf(key as StageKey)?.title ?? key;
 const tenge = (tiyn: number | null) => (tiyn === null ? null : tiyn / 100);
 /** Visible in the catalog: published, not hidden by support, and the account is not being deleted. */
 const visible = { published: true, blockedAt: null, user: { deletionRequestedAt: null } };
@@ -22,7 +22,7 @@ export class CatalogService {
   constructor(private readonly prisma: PrismaService) {}
 
   stages() {
-    return catalogStageKeys.map((key) => ({ key, title: stageDefinitions[key].title }));
+    return catalogStageKeys.map((key) => ({ key, title: definitionOf(key).title }));
   }
 
   private async stats(userIds: string[]) {

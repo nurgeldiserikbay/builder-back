@@ -38,6 +38,8 @@ export interface LaunchFacts {
   features: AppFeatures | null;
   idea: IdeaReview | null;
   design: ArchitectureDesign | null;
+  /** Module stages of the accepted plan (§4.9) that are not accepted yet; absent for projects without them. */
+  modulesOpen?: string[];
 }
 
 export interface LaunchItemInfo { key: LaunchItemKey; title: string; why: string; required: boolean }
@@ -71,6 +73,8 @@ export function launchIssues(value: LaunchChecklist, facts: LaunchFacts): Launch
     if (readiness.scenarios.works < readiness.scenarios.total) issues.push({ code: 'LAUNCH_SCENARIOS_NOT_ACCEPTED', severity: 'blocking', target: 'tests', message: tr('Вы приняли не все главные сценарии: {0} из {1}.', [readiness.scenarios.works, readiness.scenarios.total]), fix: tr('Пройдите сценарии в тестовой версии и отметьте их в «Приёмке владельцем».') });
     if (readiness.openRemarks > 0) issues.push({ code: 'LAUNCH_OPEN_REMARKS', severity: 'blocking', target: 'tests', message: tr('Открытых замечаний по сценариям: {0}.', [readiness.openRemarks]), fix: tr('Когда замечания поправят, отметьте сценарии «Работает».') });
   }
+  // Not blocking: the test plan's cases already decide whether the whole works; a module left open is still worth knowing.
+  if (facts.modulesOpen?.length) issues.push({ code: 'LAUNCH_MODULES_NOT_ACCEPTED', severity: 'important', target: 'modules', message: tr('Не приняты модули: {0}.', [facts.modulesOpen.join(', ')]), fix: tr('Примите модули на их этапах или объясните, почему запускаете без них.') });
   const deployment = facts.deployment;
   if (!deployment || !deployment.ok) issues.push({ code: 'LAUNCH_NOT_DEPLOYED', severity: 'blocking', target: 'deployment', message: deployment ? tr('Приложение по адресу {0} не ответило при последней проверке.', [deployment.url]) : tr('Не указан адрес, где работает приложение.'), fix: tr('Разверните приложение и проверьте адрес в «Пакете для разработки», блок «Запуск у вас».') });
   else {
