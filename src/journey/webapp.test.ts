@@ -244,6 +244,19 @@ describe('web application route (database)', async () => {
     // Red again: the task goes back to work.
     const again = await prisma!.$transaction((tx) => recordRunResults(tx, { projectId, agentTaskId: fakeTask, userId: owner.id, cases: { [autoCases[0]!.key]: 'failed' } }));
     assert.deepEqual(again!.tasksReopened, [byAuto.key]);
+    // The owner's acceptance: a remark on a main scenario becomes a plan task; «работает» later closes it.
+    const scenario = cases.find((item) => item.class === 'normal')!;
+    await assert.rejects(progress.acceptScenario(owner.id, projectId, scenario.key, { verdict: 'remark' }), /ACCEPTANCE_NOTE_REQUIRED/);
+    await assert.rejects(progress.acceptScenario(owner.id, projectId, cases.find((item) => item.class === 'rights')!.key, { verdict: 'works' }), /CASE_NOT_MAIN_SCENARIO/);
+    const remarked = await progress.acceptScenario(owner.id, projectId, scenario.key, { verdict: 'remark', note: 'Кнопка сохранения прячется под клавиатурой' });
+    assert.equal(remarked.data.readiness.openRemarks, 1);
+    const fix = (await progress.view(owner.id, projectId)).data.modules.flatMap((module) => module.tasks).find((task) => task.fromCase === scenario.key)!;
+    assert.match(fix.title, /Замечание к/);
+    assert.equal(fix.status, 'not_started');
+    await progress.update(owner.id, projectId, fix.key, { status: 'in_progress' });
+    const accepted = await progress.acceptScenario(owner.id, projectId, scenario.key, { verdict: 'works' });
+    assert.equal(accepted.data.readiness.openRemarks, 0);
+    assert.equal((await progress.view(owner.id, projectId)).data.modules.flatMap((module) => module.tasks).find((task) => task.key === fix.key)!.status, 'done');
     const built = await journey.buildHandoff(owner.id, projectId);
     assert.deepEqual(built.data.checks.filter((check) => check.status === 'failed'), []);
     const view = await journey.stage(owner.id, projectId, 'handoff');

@@ -1,5 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
+import { tr } from '../i18n/i18n.js';
+import { acceptRoles, inProject } from './journey-core.js';
 import { JourneyCore } from './journey-core.js';
 import { scheduleOf, type Roadmap, type RoadmapModule } from './roadmap.js';
 import type { TestPlan } from './testplan.js';
@@ -81,9 +83,13 @@ export class RoadmapProgressService {
     };
     // The agent's latest task per module, so people see which module is being built and how it went.
     const agentRuns = await this.prisma.agentTask.findMany({ where: { projectId, moduleKey: { not: null } }, orderBy: { createdAt: 'desc' }, select: { id: true, moduleKey: true, status: true, createdAt: true, finishedAt: true }, take: 50 });
+    // The owner's remarks on scenarios are tasks too: in the module of the case's task, without an estimate.
+    const extras = rows.filter((row) => row.fromCaseKey);
+    const homeOf = (row: (typeof rows)[number]) => (plan.modules.some((module) => module.key === row.moduleKey) ? row.moduleKey : plan.modules[0]?.key);
     const modules = plan.modules.map((module) => {
       const run = agentRuns.find((item) => item.moduleKey === module.key) ?? null;
-      return { ...moduleView(module), agent: run ? { taskId: run.id, status: run.status, startedAt: run.createdAt, finishedAt: run.finishedAt } : null };
+      const view = moduleView({ ...module, tasks: [...module.tasks, ...extras.filter((row) => homeOf(row) === module.key).map((row) => ({ key: row.taskKey, title: row.title ?? row.taskKey, feature: null, release: 1, hours: 0, aiRequests: 0 }))] });
+      return { ...view, tasks: view.tasks.map((task) => ({ ...task, fromCase: extras.find((row) => row.taskKey === task.key)?.fromCaseKey ?? null })), agent: run ? { taskId: run.id, status: run.status, startedAt: run.createdAt, finishedAt: run.finishedAt } : null };
     });
     const total = modules.reduce((sum, module) => sum + module.hoursTotal, 0);
     const done = modules.reduce((sum, module) => sum + module.hoursDone, 0);
@@ -114,7 +120,8 @@ export class RoadmapProgressService {
 
   async update(userId: string, projectId: string, taskKey: string, input: { status?: unknown; note?: unknown; blockedBy?: unknown; assigneeUserId?: unknown; dueDate?: unknown }) {
     const { ctx, plan } = await this.plan(userId, projectId, 'write');
-    const task = plan.modules.flatMap((module) => module.tasks).find((item) => item.key === taskKey);
+    const task = plan.modules.flatMap((module) => module.tasks).find((item) => item.key === taskKey)
+      ?? (await this.prisma.planTaskState.findFirst({ where: { projectId, taskKey, fromCaseKey: { not: null } } }));
     if (!task) throw new NotFoundException('TASK_NOT_FOUND');
     const current = await this.prisma.planTaskState.findUnique({ where: { projectId_taskKey: { projectId, taskKey } } });
     const status = (input.status === undefined ? current?.status ?? 'not_started' : input.status) as TaskStatus;
@@ -170,6 +177,71 @@ export class RoadmapProgressService {
     }
     await this.core.event(this.prisma, projectId, userId, 'test_case_result', 'testplan', { caseKey, status: input.status, ...(note ? { note } : {}) });
     return { data: { cases: (await this.cases(ctx, projectId)).cases.map((one) => ({ key: one.key, result: one.result })) } };
+  }
+
+  /**
+   * «Приёмка владельцем» (§4.10): the owner tries a main scenario — normal path or mistakes — on the test version and says
+   * it works, does not work, or works with a remark. Not working and a remark become a task of the plan in the module of the
+   * case's task; «работает» later closes it — the owner's own confirmation is what that task waited for.
+   */
+  async acceptScenario(userId: string, projectId: string, caseKey: string, input: { verdict?: unknown; note?: unknown }) {
+    const ctx = await this.core.load(userId, projectId, 'accept', 'testplan');
+    const { plan, cases } = await this.cases(ctx, projectId);
+    if (!plan) throw new ConflictException('TESTPLAN_NOT_APPROVED');
+    const item = cases.find((one) => one.key === caseKey);
+    if (!item) throw new NotFoundException('CASE_NOT_FOUND');
+    if (item.class !== 'normal' && item.class !== 'mistakes') throw new BadRequestException('CASE_NOT_MAIN_SCENARIO');
+    const verdict = input.verdict;
+    if (verdict !== 'works' && verdict !== 'broken' && verdict !== 'remark') throw new BadRequestException('ACCEPTANCE_VERDICT_INVALID');
+    const note = typeof input.note === 'string' ? input.note.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 500) || null : null;
+    if (verdict !== 'works' && (!note || note.length < 10)) throw new BadRequestException('ACCEPTANCE_NOTE_REQUIRED');
+    const roadmapStage = ctx.route.includes('roadmap') ? this.core.stageOf(ctx, 'roadmap') : null;
+    const roadmap = roadmapStage?.approvedVersionId ? (await this.core.versionContent(roadmapStage.approvedVersionId))?.content as unknown as Roadmap | undefined : undefined;
+    const moduleKey = roadmap?.modules.find((module) => module.tasks.some((task) => task.key === item.task))?.key ?? null;
+    const fixKey = `fix_${caseKey}`.slice(0, 32);
+    await this.prisma.$transaction(async (tx) => {
+      const data = { verdict: verdict as 'works' | 'broken' | 'remark', note, planVersion: plan.versionNumber, byUserId: userId };
+      await tx.planCaseAcceptance.upsert({ where: { projectId_caseKey: { projectId, caseKey } }, create: { projectId, caseKey, ...data }, update: data });
+      const fix = await tx.planTaskState.findUnique({ where: { projectId_taskKey: { projectId, taskKey: fixKey } } });
+      if (verdict === 'works') {
+        if (fix && !finished(fix.status as TaskStatus)) await tx.planTaskState.update({ where: { id: fix.id }, data: { status: 'done', blockedBy: null, updatedByUserId: userId } });
+      } else if (roadmap) {
+        const title = inProject(ctx, () => tr(verdict === 'broken' ? 'Не работает «{0}»: {1}' : 'Замечание к «{0}»: {1}', [item.title, note!])).slice(0, 200);
+        const reopen = fix && finished(fix.status as TaskStatus);
+        await tx.planTaskState.upsert({ where: { projectId_taskKey: { projectId, taskKey: fixKey } },
+          create: { projectId, taskKey: fixKey, title, moduleKey, fromCaseKey: caseKey, status: 'not_started', updatedByUserId: userId },
+          update: { title, moduleKey, ...(reopen ? { status: 'in_progress' } : {}), updatedByUserId: userId } });
+      }
+      await this.core.event(tx, projectId, userId, 'scenario_accepted', 'testplan', { caseKey, verdict, ...(note ? { note } : {}) });
+    });
+    return { data: { ...(await this.acceptanceSummary(ctx, projectId)), canAccept: true } };
+  }
+
+  async acceptance(userId: string, projectId: string) {
+    const ctx = await this.core.load(userId, projectId, 'read', 'testplan');
+    return { data: { ...(await this.acceptanceSummary(ctx, projectId)), canAccept: ctx.viewer.kind === 'member' && acceptRoles.has(ctx.role) } };
+  }
+
+  /** The owner's verdicts and what stands between the project and a launch, by the test plan's own rule (§4.10 «Готово, когда»). */
+  async acceptanceSummary(ctx: Awaited<ReturnType<JourneyCore['load']>>, projectId: string) {
+    const { plan, cases } = await this.cases(ctx, projectId);
+    const rows = plan ? await this.prisma.planCaseAcceptance.findMany({ where: { projectId } }) : [];
+    const fixes = plan ? await this.prisma.planTaskState.findMany({ where: { projectId, fromCaseKey: { not: null } }, select: { taskKey: true, status: true, fromCaseKey: true } }) : [];
+    const main = cases.filter((item) => item.class === 'normal' || item.class === 'mistakes');
+    const verdictOf = (key: string) => {
+      const row = rows.find((one) => one.caseKey === key);
+      return row ? { verdict: row.verdict, note: row.note, stale: row.planVersion !== plan!.versionNumber } : null;
+    };
+    const blocking = cases.filter((item) => item.blocking);
+    const openFixes = fixes.filter((row) => !finished(row.status as TaskStatus));
+    return {
+      acceptances: main.map((item) => ({ caseKey: item.key, ...(verdictOf(item.key) ?? { verdict: null, note: null, stale: false }) })),
+      readiness: {
+        blocking: { total: blocking.length, passed: blocking.filter((item) => item.result?.status === 'passed' && !item.result.stale).length },
+        scenarios: { total: main.length, works: main.filter((item) => { const v = verdictOf(item.key); return v && !v.stale && v.verdict !== 'broken'; }).length },
+        openRemarks: openFixes.length,
+      },
+    };
   }
 
   /** Who can take a task: active members and specialists assigned to stages of this project. */
