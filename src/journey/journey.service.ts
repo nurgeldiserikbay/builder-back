@@ -1,3 +1,4 @@
+import { CHANNELS, CONTRACT_LIMITS, METHODS, contractsMarkdown, contractsMigration, contractsOpenApi, normalizeContracts, templateContracts, type Contracts } from './contracts.js';
 import { stageRequests, UNSETTLED_REQUESTS } from './stage-requests.js';
 import { conceptDocument, importConceptText, normalizeConcept, slugFile, type Concept, type ConceptInputs } from './concept.js';
 import { markdownToDocx } from './docx.js';
@@ -13,7 +14,7 @@ import { PHASES_VERSION, guideFor, STAGE_PHASE, phasesOf } from './phases.js';
 import { TYPE_QUESTIONS, TYPE_QUESTIONS_VERSION, hintAnswers, parseAnswers, suggestType, type TypeAnswers } from './type-suggest.js';
 import { SITUATIONS_VERSION, situationsFor } from './situations.js';
 import { bookingApiContract, sameTechPlan, techPlanDesign, techPlanMarkdown, techPlanNotes, type TechPlan } from './techplan.js';
-import type { ArchitectureDesign } from './architecture.js';
+import { expandedSchema, type ArchitectureDesign } from './architecture.js';
 
 import { PrismaService } from '../database/prisma.service.js';
 import { stageFor, stageTitle, ROUTE_CATALOG_VERSION, projectTypes, routeInputs, stageDefinitions, statusExplanations, type StageKey } from './catalog.js';
@@ -234,6 +235,7 @@ export class JourneyService {
     // Titles are translated like every stage title on this page.
     const requests = await stageRequests(this.prisma, projectId, stage.id).then((value) => ({ outgoing: value.outgoing.map((item) => ({ ...item, fromTitle: tr(item.fromTitle), targetTitle: tr(item.targetTitle) })), incoming: value.incoming.map((item) => ({ ...item, fromTitle: tr(item.fromTitle), targetTitle: tr(item.targetTitle) })) }));
     const concept = definition.artifactType === 'concept' ? await this.conceptView(ctx, stageKey, current?.content ?? null) : null;
+    const contracts = definition.artifactType === 'contracts' ? await this.contractsView(ctx, stageKey, current?.content ?? null) : null;
     const techPlanOutdated = Boolean(techPlanPreview && current && !sameTechPlan(techPlanPreview, current.content as unknown as TechPlan));
     const scheduleTemplate = definition.artifactType === 'schedule' && !current
       ? await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSchedule(inputs.offer?.content as Offer | undefined ?? null))) : null;
@@ -326,6 +328,7 @@ export class JourneyService {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
           ...(definition.artifactType === 'techplan' ? { techplan: { preview: techPlanPreview, outdated: techPlanOutdated } } : {}),
           ...(concept ? { concept } : {}),
+          ...(contracts ? { contracts } : {}),
           ...(definition.artifactType === 'process' ? { process: { capabilities: capabilitiesFor(ctx.type.key), actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS, situations: { version: SITUATIONS_VERSION, items: situationsFor(ctx.type.key) } } } : {}),
           ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.core.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
@@ -556,7 +559,7 @@ export class JourneyService {
     const artifact = buildHandoffPackage({
       brief: (inputs.goal?.content as Brief | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
       features: inputs.features!.content as AppFeatures, screens: inputs.screens!.content as AppScreens, plan: inputs.techplan!.content as TechPlan,
-      locale: ctx.project.locale, sourceVersionIds: Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.versionId])),
+      contracts: (inputs.contracts?.content as Contracts | undefined) ?? null, locale: ctx.project.locale, sourceVersionIds: Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.versionId])),
     });
     const version = await this.prisma.$transaction(async (tx) => {
       const created = await this.core.createVersion(tx, { projectId, stage, artifactType: 'handoff', content: artifact, origin: 'compiled', note: 'Пакет из принятых этапов', userId });
@@ -834,6 +837,33 @@ export class JourneyService {
    * The concept document as this viewer may see it: assembled from the inputs they see (a specialist gets hidden parts
    * replaced) and the owner's parts of the given version, or a blank draft before there is one.
    */
+  /**
+   * What the contracts editor needs: the first draft from the accepted architecture and ТЗ (also for «Собрать заново»), the
+   * names it refers to, and the files the current version turns into, so the owner reads what the developer gets.
+   */
+  private async contractsView(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: StageKey, content: unknown) {
+    const satisfied = inputsSatisfied(ctx.route, ctx.dep, key);
+    const context = satisfied ? await this.core.checkContext(ctx, key) : { sitemap: null };
+    const design = context.design ?? null;
+    const features = context.features ?? null;
+    const template = design && features ? inProject(ctx, () => templateContracts({ design, features, process: context.process ?? null })) : null;
+    let current: Contracts | null = null;
+    try { current = content ? normalizeContracts(content) : null; } catch { current = null; }
+    const files = current && design && features ? inProject(ctx, () => [
+      { name: 'openapi.yaml', mimeType: 'application/yaml', content: contractsOpenApi(ctx.project.name, current!, design, features) },
+      { name: 'schema.sql', mimeType: 'application/sql', content: contractsMigration(design) },
+      { name: 'contracts.md', mimeType: 'text/markdown', content: contractsMarkdown(current!, features) },
+    ]) : [];
+    return {
+      template, files, limits: CONTRACT_LIMITS, methods: METHODS, channels: CHANNELS,
+      missing: !satisfied ? 'inputs' : !design ? 'design' : null,
+      roles: features?.roles.map((role) => ({ key: role.key, name: role.name })) ?? [],
+      features: features?.features.map((feature) => ({ key: feature.key, title: feature.title, priority: feature.priority })) ?? [],
+      entities: design ? expandedSchema(design.schema).map((entity) => ({ key: entity.key, name: entity.name, junction: entity.junction })) : [],
+      access: features?.access ?? [], services: features?.services.map((service) => service.name) ?? [],
+    };
+  }
+
   private async conceptView(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: StageKey, content: unknown) {
     const inputs = await this.core.viewInputs(ctx, key);
     const seen = <T>(stage: string) => (inputs[stage]?.content as T | undefined) ?? null;

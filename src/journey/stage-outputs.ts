@@ -13,12 +13,14 @@ import { measurable, type IdeaReview } from './idea.js';
 import type { Schedule } from './schedule.js';
 import type { Sitemap } from './sitemap.js';
 import type { TechPlan } from './techplan.js';
+import type { ArchitectureDesign } from './architecture.js';
+import { contractIssues, type Contracts } from './contracts.js';
 import type { AppFeatures, AppScreens } from './webapp.js';
 
 export const OUTPUTS_VERSION = '1.0.0';
 export type OutputLevel = 'required' | 'recommended';
 interface OutputItem<T> { key: string; text: () => string; level: OutputLevel; met: (content: T, context: OutputContext) => boolean }
-export interface OutputContext { features?: AppFeatures | null }
+export interface OutputContext { features?: AppFeatures | null; design?: ArchitectureDesign | null }
 
 const PLACEHOLDER = /\[[^\]]{1,80}\]/;
 const filled = (value: string | null | undefined) => Boolean(value?.trim());
@@ -109,8 +111,17 @@ const techplan: OutputItem<TechPlan>[] = [
   { key: 'coverage', level: 'recommended', text: () => tr('Для каждого шага процесса решено: делает сайт или вручную'), met: (t) => !(t.coverage ?? []).some((step) => step.status === 'not_built') },
 ];
 
+const contractCodes = (value: Contracts, context: OutputContext) => new Set(contractIssues(value, context.features ?? null, context.design ?? null).map((issue) => issue.code));
+const contracts: OutputItem<Contracts>[] = [
+  { key: 'coverage', level: 'required', text: () => tr('Каждая функция ТЗ покрыта операцией — по ним пишут модули'), met: (c, context) => c.operations.length > 0 && !contractCodes(c, context).has('CONTRACT_FEATURE_NOT_COVERED') },
+  { key: 'rights', level: 'required', text: () => tr('У операций права не шире матрицы «кто что может» — их проверяет сервер'), met: (c, context) => !['CONTRACT_OPERATION_OPEN', 'CONTRACT_ROLE_NOT_ALLOWED'].some((code) => contractCodes(c, context).has(code)) },
+  { key: 'owners', level: 'required', text: () => tr('У каждой записи один модуль-владелец — чтобы модули писали параллельно'), met: (c, context) => !contractCodes(c, context).has('CONTRACT_TWO_OWNERS') },
+  { key: 'errors', level: 'recommended', text: () => tr('Ошибки операций описаны — для экранов и тестов'), met: (c) => c.operations.every((operation) => operation.errors.length > 0) },
+  { key: 'fallbacks', level: 'recommended', text: () => tr('Для внешних сервисов сказано, что делать при сбое'), met: (c, context) => !['CONTRACT_INTEGRATION_NO_FALLBACK', 'CONTRACT_SERVICE_MISSING'].some((code) => contractCodes(c, context).has(code)) },
+];
+
 const OUTPUTS: Partial<Record<ArtifactType, OutputItem<never>[]>> = {
-  brief, idea, suggestions, concept, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan,
+  brief, idea, suggestions, concept, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan, contracts,
 } as unknown as Partial<Record<ArtifactType, OutputItem<never>[]>>;
 
 export interface StageOutputItem { key: string; text: string; level: OutputLevel; met: boolean }

@@ -1,10 +1,10 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.12.0';
+export const ROUTE_CATALOG_VERSION = '1.13.0';
 
-export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'build' | 'handoff';
-export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'site' | 'handoff';
+export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'content' | 'design' | 'build' | 'handoff';
+export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'content' | 'design' | 'site' | 'handoff';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking' | 'web_app';
 
@@ -422,6 +422,25 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     contract: { explanation: 'Архитектура — договорённость о том, что собирается. Сборка проверяет, что она соответствует версии плана. Когда меняется процесс или расписание, архитектура получает уведомление и обновляется по новым данным.' },
     playbook: { version: '1.0.0', instructions: [] },
   },
+  contracts: {
+    key: 'contracts',
+    version: '1.0.0',
+    title: 'Контракты',
+    purpose: 'Договоримся о границах, по которым разные люди или ИИ-агенты могут писать части приложения одновременно и не ломать друг друга: какие модули есть и какими данными владеет каждый, какие операции даёт сервер, кто может их вызывать и какие ошибки бывают, какие события и уведомления отправляются и что делать, если внешний сервис не отвечает.',
+    outcome: 'Модули, операции API с правами и ошибками, события, интеграции; файлы openapi.yaml и первая миграция базы.',
+    artifactType: 'contracts',
+    inputs: ['process', 'features', 'techplan'],
+    ai: {
+      level: 'none',
+      whatItDoes: 'Первый вариант платформа строит сама из схемы данных архитектуры, матрицы «кто что может» и функций ТЗ. Вы со специалистом правите его и подтверждаете.',
+      instructionExamples: [],
+    },
+    acceptance: ['Каждая функция ТЗ покрыта операцией', 'Права операций не шире матрицы «кто что может»', 'У операций описаны ошибки', 'У каждой записи один модуль-владелец', 'Для внешних сервисов сказано, что делать при сбое'],
+    acceptExplanation: 'Контракты станут договорённостью для разработки: модули пишутся по ним параллельно. Изменить их можно только новой версией — тогда этапы после получат уведомление.',
+    importHint: null,
+    contract: { explanation: 'Контракт — то, на что опираются все, кто пишет код: пока он не меняется, модули можно делать одновременно. Любое изменение — новая версия с уведомлением тем, кто на неё опирается.' },
+    playbook: { version: '1.0.0', instructions: [] },
+  },
   content: {
     key: 'content',
     version: '1.0.0',
@@ -500,7 +519,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     purpose: 'Соберём всё, что нужно для кода: техническое задание с критериями приёмки, права по ролям, схему данных, черновик контракта API и прототип экранов. По пакету ИИ-агент пишет всё приложение — экраны, вход, базу данных и тесты, — а BuildPath проверяет его и отправляет в ваш репозиторий. Разработчик может продолжить с этого же пакета.',
     outcome: 'Архив с ТЗ, правами, схемой данных, контрактом API и прототипом; проверка полноты.',
     artifactType: 'handoff',
-    inputs: ['goal', 'process', 'features', 'screens', 'techplan'],
+    inputs: ['goal', 'process', 'features', 'screens', 'techplan', 'contracts'],
     ai: {
       level: 'none',
       whatItDoes: 'Пакет собирает платформа по принятым этапам, без ИИ: он всегда совпадает с тем, о чём вы договорились.',
@@ -565,7 +584,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Приложение со входом, ролями и своей логикой: кабинет клиента, учёт заявок, внутренняя система. BuildPath доведёт его до полного пакета — функции, экраны с прототипом, архитектуру и контракт API, — а ИИ-агент напишет по нему код приложения.',
     goodFor: 'Тем, кому нужен личный кабинет, учёт или внутренний сервис.',
     examples: ['Кабинет клиента сервиса', 'Учёт заявок и выездов', 'Запись на курсы с кабинетом ученика', 'Внутренняя система для сотрудников'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'handoff'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'handoff'],
     resultExplanation: 'Пакет для разработки — техническое задание, права по ролям, схема данных, контракт API и кликабельный прототип — и код всего приложения, который пишет ИИ-агент и проверяет платформа. Запускаете вы: на своём Render или сервере.',
   },
 };
@@ -588,7 +607,7 @@ export function stageFor(key: StageKey, typeKey: string | null | undefined): Sta
       purpose: 'Решим, как будет устроено приложение. Платформа подготовит первый вариант по процессу и ТЗ, а вы со специалистом его поправите: схему данных с типами полей и связями, компоненты из каталога, решения с вариантами, угрозы и меры против них, окружения. Сценарии по шагам и контракт API для разработчика строятся из этого сами.',
       outcome: 'Схема данных, компоненты, решения, угрозы и меры, окружения, сценарии по шагам и контракт API.',
       acceptance: ['Все данные из ТЗ есть в схеме', 'Все интеграции из ТЗ стали компонентами', 'У денег и личных данных описаны угрозы и меры', 'По требованиям ТЗ приняты решения'],
-      acceptExplanation: 'Архитектура станет договорённостью для разработки: по ней пишутся контракты и план. Если позже изменится ТЗ, она получит уведомление.',
+      acceptExplanation: 'Архитектура станет договорённостью для разработки: по ней строятся контракты и план. Если позже изменится ТЗ, она получит уведомление.',
     };
   }
   if (typeKey === 'web_app' && key === 'process') {

@@ -174,6 +174,8 @@ describe('starter code check (database)', async () => {
     for (const key of ['process', 'features', 'screens']) { await journey.generate(owner.id, projectId, key, { instruction: null, saveAs: 'one_off', targetKey: null }); await accept(key); }
     await journey.saveDraft(owner.id, projectId, 'techplan', { content: { ownerNotes: null }, baseVersionId: null });
     await accept('techplan');
+    await journey.saveDraft(owner.id, projectId, 'contracts', { content: ((await journey.stage(owner.id, projectId, 'contracts')).data.options.contracts as { template: unknown }).template, baseVersionId: null });
+    await accept('contracts');
 
     const runner = new SandboxRunner(prisma!);
     const service = new StarterChecksService(prisma!, core, runner);

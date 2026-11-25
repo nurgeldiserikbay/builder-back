@@ -166,6 +166,8 @@ describe('AI-written business rules (database)', async () => {
     for (const key of ['process', 'features', 'screens']) { await journey.generate(owner.id, projectId, key, { instruction: null, saveAs: 'one_off', targetKey: null }); await accept(key); }
     await journey.saveDraft(owner.id, projectId, 'techplan', { content: { ownerNotes: null }, baseVersionId: null });
     await accept('techplan');
+    await journey.saveDraft(owner.id, projectId, 'contracts', { content: ((await journey.stage(owner.id, projectId, 'contracts')).data.options.contracts as { template: unknown }).template, baseVersionId: null });
+    await accept('contracts');
     await journey.buildHandoff(owner.id, projectId);
 
     const runner = new SandboxRunner(prisma!);
