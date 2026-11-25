@@ -1,3 +1,4 @@
+import { normalizeTestPlan, type TestPlan } from './testplan.js';
 import { normalizeRoadmap, roadmapIssues, type Roadmap } from './roadmap.js';
 import { contractIssues, normalizeContracts, type Contracts } from './contracts.js';
 import { conceptIssues, normalizeConcept, type Concept } from './concept.js';
@@ -224,6 +225,7 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown, projectType?
     case 'screens': return normalizeScreens(raw);
     case 'contracts': return normalizeContracts(raw);
     case 'roadmap': return normalizeRoadmap(raw);
+    case 'testplan': return normalizeTestPlan(raw);
     default: throw new ArtifactValidationError('ARTIFACT_NOT_EDITABLE');
   }
 }
@@ -246,6 +248,7 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'screens') return ['screens'];
   if (type === 'contracts') return ['modules', 'operations', 'events', 'integrations'];
   if (type === 'roadmap') return ['modules', 'risks', 'hoursPerDay', 'notes'];
+  if (type === 'testplan') return ['cases', 'skipped', 'notes'];
   return [];
 }
 
@@ -338,6 +341,7 @@ export function completenessIssues(type: ArtifactType, content: unknown, context
   if (type === 'idea') issues.push(...ideaIssues(content as IdeaReview));
   if (type === 'suggestions') issues.push(...suggestionsIssues(content as Suggestions));
   if (type === 'concept') issues.push(...conceptIssues(content as Concept));
+  if (type === 'testplan' && !(content as TestPlan).cases.length) issues.push({ key: 'cases', message: tr('Добавьте хотя бы один кейс.') });
   if (type === 'roadmap') {
     const value = content as Roadmap;
     if (!value.modules.length) issues.push({ key: 'modules', message: tr('Добавьте хотя бы один модуль.') });

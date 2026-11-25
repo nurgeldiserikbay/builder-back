@@ -16,6 +16,7 @@ import type { TechPlan } from './techplan.js';
 import type { ArchitectureDesign } from './architecture.js';
 import { contractIssues, type Contracts } from './contracts.js';
 import { roadmapIssues, scheduleOf, type Roadmap } from './roadmap.js';
+import { testPlanIssues, type TestPlan } from './testplan.js';
 import type { AppFeatures, AppScreens } from './webapp.js';
 
 export const OUTPUTS_VERSION = '1.0.0';
@@ -129,8 +130,16 @@ const roadmap: OutputItem<Roadmap>[] = [
   { key: 'risks', level: 'recommended', text: () => tr('Риски с действиями'), met: (r) => r.risks.length > 0 && r.risks.every((risk) => Boolean(risk.action)) },
 ];
 
+const testCodes = (value: TestPlan, context: OutputContext) => new Set(testPlanIssues(value, context.features ?? null, context.design ?? null).map((issue) => issue.code));
+const testplan: OutputItem<TestPlan>[] = [
+  { key: 'functions', level: 'required', text: () => tr('У обязательных функций есть нормальный путь и «кому нельзя» — по ним закрываются задачи'), met: (p, context) => p.cases.length > 0 && !['TESTPLAN_NO_NORMAL', 'TESTPLAN_NO_RIGHTS'].some((code) => testCodes(p, context).has(code)) },
+  { key: 'threats', level: 'required', text: () => tr('Каждая угроза архитектуры проверяется'), met: (p, context) => !['TESTPLAN_THREAT_UNCOVERED', 'TESTPLAN_SENSITIVE_UNCOVERED'].some((code) => testCodes(p, context).has(code)) },
+  { key: 'expected', level: 'required', text: () => tr('У каждого кейса есть ожидаемый результат'), met: (p) => p.cases.every((item) => Boolean(item.expected)) },
+  { key: 'tasks', level: 'recommended', text: () => tr('Кейсы привязаны к задачам плана реализации'), met: (p) => p.cases.filter((item) => item.task).length >= p.cases.length / 2 },
+];
+
 const OUTPUTS: Partial<Record<ArtifactType, OutputItem<never>[]>> = {
-  brief, idea, suggestions, concept, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan, contracts, roadmap,
+  brief, idea, suggestions, concept, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan, contracts, roadmap, testplan,
 } as unknown as Partial<Record<ArtifactType, OutputItem<never>[]>>;
 
 export interface StageOutputItem { key: string; text: string; level: OutputLevel; met: boolean }

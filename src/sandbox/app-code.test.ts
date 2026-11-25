@@ -170,6 +170,8 @@ describe('AI-written business rules (database)', async () => {
     await accept('contracts');
     await journey.saveDraft(owner.id, projectId, 'roadmap', { content: ((await journey.stage(owner.id, projectId, 'roadmap')).data.options.roadmap as { template: unknown }).template, baseVersionId: null });
     await accept('roadmap');
+    await journey.saveDraft(owner.id, projectId, 'testplan', { content: ((await journey.stage(owner.id, projectId, 'testplan')).data.options.testplan as { template: unknown }).template, baseVersionId: null });
+    await accept('testplan');
     await journey.buildHandoff(owner.id, projectId);
 
     const runner = new SandboxRunner(prisma!);

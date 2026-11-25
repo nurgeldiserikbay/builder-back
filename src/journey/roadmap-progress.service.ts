@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { PrismaService } from '../database/prisma.service.js';
 import { JourneyCore } from './journey-core.js';
 import { scheduleOf, type Roadmap, type RoadmapModule } from './roadmap.js';
+import type { TestPlan } from './testplan.js';
 
 export const TASK_STATUSES = ['not_started', 'in_progress', 'review', 'done', 'done_with_note', 'blocked'] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
@@ -12,9 +13,9 @@ const finished = (status: TaskStatus) => status === 'done' || status === 'done_w
  * done by estimated hours (not by the number of items), what is blocked and by what, the expected finish of the critical
  * path, and the AI requests and specialist hours actually spent against the estimate.
  *
- * «Готово» needs green checks of the task. Until the test plan (§4.10) gives tasks their checks, no task has any, so
- * `done` is refused and only «готово с замечанием» with a written reason closes a task — the same rule as going on past
- * a blocking review finding. The status is never set to done on anyone's word alone.
+ * «Готово» needs green checks: every case of the accepted test plan (§4.10) linked to the task has passed. A task without
+ * cases, or with a case not passed, can only be closed as «готово с замечанием» with a written reason — the same rule as
+ * going on past a blocking review finding. The status is never set to done on anyone's word alone.
  */
 @Injectable()
 export class RoadmapProgressService {
@@ -30,8 +31,32 @@ export class RoadmapProgressService {
     return { ctx, stage, plan: version.content as unknown as Roadmap, versionNumber: version.versionNumber };
   }
 
+  /** Cases of the accepted test plan with their latest results; empty when there is no accepted test plan. */
+  async cases(ctx: Awaited<ReturnType<JourneyCore['load']>>, projectId: string) {
+    if (!ctx.route.includes('testplan')) return { plan: null, cases: [] as Array<TestPlan['cases'][number] & { result: { status: 'passed' | 'failed'; note: string | null; stale: boolean } | null }> };
+    const stage = this.core.stageOf(ctx, 'testplan');
+    const version = stage.approvedVersionId ? await this.core.versionContent(stage.approvedVersionId) : null;
+    if (!version) return { plan: null, cases: [] };
+    const plan = version.content as unknown as TestPlan;
+    const rows = await this.prisma.planCaseResult.findMany({ where: { projectId } });
+    return {
+      plan: { versionNumber: version.versionNumber },
+      cases: plan.cases.map((item) => {
+        const row = rows.find((result) => result.caseKey === item.key);
+        // A result recorded against an older plan version still shows, but a changed case has to be checked again.
+        return { ...item, result: row ? { status: row.status, note: row.note, stale: row.planVersion !== version.versionNumber } : null };
+      }),
+    };
+  }
+
+  private checksOf(cases: Awaited<ReturnType<RoadmapProgressService['cases']>>['cases'], task: string) {
+    const own = cases.filter((item) => item.task === task);
+    return { total: own.length, passed: own.filter((item) => item.result?.status === 'passed' && !item.result.stale).length, failed: own.filter((item) => item.result?.status === 'failed').length };
+  }
+
   async view(userId: string, projectId: string) {
     const { ctx, stage, plan, versionNumber } = await this.plan(userId, projectId, 'read');
+    const { cases } = await this.cases(ctx, projectId);
     const rows = await this.prisma.planTaskState.findMany({ where: { projectId } });
     const people = await this.people(projectId);
     const today = new Date(new Date().toISOString().slice(0, 10));
@@ -46,8 +71,7 @@ export class RoadmapProgressService {
           status, assigneeUserId: row?.assigneeUserId ?? null, assignee: people.find((person) => person.userId === row?.assigneeUserId)?.name ?? null,
           dueDate: row?.dueDate ? row.dueDate.toISOString().slice(0, 10) : null, note: row?.note ?? null, blockedBy: row?.blockedBy ?? null,
           late: Boolean(row?.dueDate && row.dueDate < today && !finished(status)),
-          // No task has checks yet: the test plan gives them. Shown so nobody reads «готово с замечанием» as tested.
-          checks: { total: 0, passed: 0 },
+          checks: this.checksOf(cases, task.key),
         };
       });
       const total = tasks.reduce((sum, task) => sum + task.hours, 0);
@@ -83,7 +107,7 @@ export class RoadmapProgressService {
   }
 
   async update(userId: string, projectId: string, taskKey: string, input: { status?: unknown; note?: unknown; blockedBy?: unknown; assigneeUserId?: unknown; dueDate?: unknown }) {
-    const { plan } = await this.plan(userId, projectId, 'write');
+    const { ctx, plan } = await this.plan(userId, projectId, 'write');
     const task = plan.modules.flatMap((module) => module.tasks).find((item) => item.key === taskKey);
     if (!task) throw new NotFoundException('TASK_NOT_FOUND');
     const current = await this.prisma.planTaskState.findUnique({ where: { projectId_taskKey: { projectId, taskKey } } });
@@ -93,7 +117,11 @@ export class RoadmapProgressService {
     const note = input.note === undefined ? current?.note ?? null : clean(input.note, 500);
     const blockedBy = input.blockedBy === undefined ? current?.blockedBy ?? null : clean(input.blockedBy, 300);
     // A task is done when its checks pass; without checks it can only be closed with a written reason.
-    if (status === 'done') throw new ConflictException('TASK_NEEDS_CHECKS');
+    if (status === 'done') {
+      const checks = this.checksOf((await this.cases(ctx, projectId)).cases, taskKey);
+      if (!checks.total) throw new ConflictException('TASK_NEEDS_CHECKS');
+      if (checks.passed < checks.total) throw new ConflictException('TASK_CHECKS_NOT_PASSED');
+    }
     if (status === 'done_with_note' && (!note || note.length < 10)) throw new BadRequestException('TASK_NOTE_REQUIRED');
     if (status === 'blocked' && !blockedBy) throw new BadRequestException('TASK_BLOCKER_REQUIRED');
     let assigneeUserId = current?.assigneeUserId ?? null;
@@ -113,6 +141,29 @@ export class RoadmapProgressService {
       if ((current?.status ?? 'not_started') !== status) await this.core.event(tx, projectId, userId, 'plan_task_status', 'roadmap', { taskKey, from: current?.status ?? 'not_started', to: status, ...(status === 'done_with_note' ? { note } : {}) });
     });
     return this.view(userId, projectId);
+  }
+
+  /**
+   * A person records the result of a case checked by hand or in a browser. Automatic cases get results only from test
+   * runs: a person cannot mark them passed.
+   */
+  async recordCase(userId: string, projectId: string, caseKey: string, input: { status?: unknown; note?: unknown }) {
+    const ctx = await this.core.load(userId, projectId, 'write', 'testplan');
+    const { plan, cases } = await this.cases(ctx, projectId);
+    if (!plan) throw new ConflictException('TESTPLAN_NOT_APPROVED');
+    const item = cases.find((one) => one.key === caseKey);
+    if (!item) throw new NotFoundException('CASE_NOT_FOUND');
+    if (item.method === 'auto') throw new ConflictException('CASE_AUTOMATIC');
+    const note = typeof input.note === 'string' ? input.note.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 500) || null : null;
+    if (input.status === 'not_run') await this.prisma.planCaseResult.deleteMany({ where: { projectId, caseKey } });
+    else {
+      if (input.status !== 'passed' && input.status !== 'failed') throw new BadRequestException('CASE_STATUS_INVALID');
+      if (input.status === 'failed' && (!note || note.length < 10)) throw new BadRequestException('CASE_NOTE_REQUIRED');
+      const data = { status: input.status as 'passed' | 'failed', note, planVersion: plan.versionNumber, byUserId: userId };
+      await this.prisma.planCaseResult.upsert({ where: { projectId_caseKey: { projectId, caseKey } }, create: { projectId, caseKey, ...data }, update: data });
+    }
+    await this.core.event(this.prisma, projectId, userId, 'test_case_result', 'testplan', { caseKey, status: input.status, ...(note ? { note } : {}) });
+    return { data: { cases: (await this.cases(ctx, projectId)).cases.map((one) => ({ key: one.key, result: one.result })) } };
   }
 
   /** Who can take a task: active members and specialists assigned to stages of this project. */

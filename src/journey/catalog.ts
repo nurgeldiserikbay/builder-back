@@ -1,10 +1,10 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.14.0';
+export const ROUTE_CATALOG_VERSION = '1.15.0';
 
-export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'content' | 'design' | 'build' | 'handoff';
-export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'content' | 'design' | 'site' | 'handoff';
+export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'build' | 'handoff';
+export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'site' | 'handoff';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking' | 'web_app';
 
@@ -459,6 +459,24 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     importHint: null,
     playbook: { version: '1.0.0', instructions: [] },
   },
+  testplan: {
+    key: 'testplan',
+    version: '1.0.0',
+    title: 'План проверки',
+    purpose: 'Решим заранее, как проверим приложение, — до того, как написан код. Каждый кейс — инструкция: кто действует, что делает по шагам и что должно и не должно получиться. Есть нормальный путь, ошибки, крайние случаи, недобросовестный пользователь, права, безопасность, личные данные, сбои, нагрузка и устройства. Кейсы привязаны к задачам плана: задача готова, только когда её кейсы пройдены.',
+    outcome: 'Кейсы по классам с шагами и ожидаемым результатом, связь с функциями, правами, угрозами и задачами плана; итог простыми словами.',
+    artifactType: 'testplan',
+    inputs: ['process', 'features', 'techplan', 'contracts', 'roadmap'],
+    ai: {
+      level: 'none',
+      whatItDoes: 'Первый вариант платформа строит сама: из историй ТЗ, матрицы прав, ответов «Вы это учли?», угроз архитектуры, интеграций контрактов и нефункциональных требований. Специалист по тестированию или безопасности может проверить и дополнить.',
+      instructionExamples: [],
+    },
+    acceptance: ['У каждой обязательной функции есть нормальный путь и «кому нельзя»', 'Каждая угроза архитектуры проверяется', 'У каждого кейса есть ожидаемый результат', 'Вы прочитали «Что мы проверим — простыми словами»'],
+    acceptExplanation: 'Утверждённый план проверки — договорённость о том, что считается «работает». По нему пишутся автотесты, а задачи плана реализации становятся готовыми, только когда их кейсы пройдены.',
+    importHint: null,
+    playbook: { version: '1.0.0', instructions: [] },
+  },
   content: {
     key: 'content',
     version: '1.0.0',
@@ -537,7 +555,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     purpose: 'Соберём всё, что нужно для кода: техническое задание с критериями приёмки, права по ролям, схему данных, черновик контракта API и прототип экранов. По пакету ИИ-агент пишет всё приложение — экраны, вход, базу данных и тесты, — а BuildPath проверяет его и отправляет в ваш репозиторий. Разработчик может продолжить с этого же пакета.',
     outcome: 'Архив с ТЗ, правами, схемой данных, контрактом API и прототипом; проверка полноты.',
     artifactType: 'handoff',
-    inputs: ['goal', 'process', 'features', 'screens', 'techplan', 'contracts', 'roadmap'],
+    inputs: ['goal', 'process', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan'],
     ai: {
       level: 'none',
       whatItDoes: 'Пакет собирает платформа по принятым этапам, без ИИ: он всегда совпадает с тем, о чём вы договорились.',
@@ -602,7 +620,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Приложение со входом, ролями и своей логикой: кабинет клиента, учёт заявок, внутренняя система. BuildPath доведёт его до полного пакета — функции, экраны с прототипом, архитектуру и контракт API, — а ИИ-агент напишет по нему код приложения.',
     goodFor: 'Тем, кому нужен личный кабинет, учёт или внутренний сервис.',
     examples: ['Кабинет клиента сервиса', 'Учёт заявок и выездов', 'Запись на курсы с кабинетом ученика', 'Внутренняя система для сотрудников'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'handoff'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan', 'handoff'],
     resultExplanation: 'Пакет для разработки — техническое задание, права по ролям, схема данных, контракт API и кликабельный прототип — и код всего приложения, который пишет ИИ-агент и проверяет платформа. Запускаете вы: на своём Render или сервере.',
   },
 };

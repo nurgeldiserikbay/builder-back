@@ -500,6 +500,13 @@ export class JourneyController {
     return this.roadmap.update(request.user.id, projectId, taskKey, input);
   }
 
+  /** A person's result of a test case checked by hand or in a browser (automatic cases get results from test runs only). */
+  @Put('projects/:projectId/testplan/cases/:caseKey/result')
+  recordTestCase(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('caseKey') caseKey: string, @Body() raw: unknown) {
+    if (!/^[a-z][a-z0-9_]{0,31}$/.test(caseKey)) throw new BadRequestException('CASE_NOT_FOUND');
+    return this.roadmap.recordCase(request.user.id, projectId, caseKey, body(raw ?? {}, ['status', 'note']));
+  }
+
   @Post('projects/:projectId/stages/:stageKey/skip')
   @HttpCode(200)
   skip(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
