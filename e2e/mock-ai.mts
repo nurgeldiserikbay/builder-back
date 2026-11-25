@@ -82,10 +82,18 @@ function stageAnswer(name: string, system: string, user: Json, schema: Json): un
       { key: 'reviews', title: 'Отзывы клиентов', value: 'Новым клиентам проще решиться.', basis: 'Обычно есть у таких проектов', source: 'catalog', catalogKey: 'reviews', support: 'site', effort: 'small', decision: '', reason: '' },
       { key: 'loyalty', title: 'Бонусы за повторный визит', value: 'Клиенты возвращаются чаще.', basis: 'Цель: повторные визиты у 30% клиентов', source: 'ai', catalogKey: null, support: 'site', effort: 'medium', decision: '', reason: '' },
     ] };
+    case 'buildpath_concept': return {
+      pitch: 'Онлайн-запись в студию маникюра: клиентка выбирает мастера и время с телефона, без звонков. Для занятых женщин, которые живут или работают рядом.',
+      glossary: [{ key: 'g1', term: 'Сценарий', meaning: 'Путь клиентки по шагам от выбора услуги до визита.' }],
+      questions: [{ key: 'q1', text: 'Берём ли предоплату за запись?' }],
+      notes: '',
+    };
     case 'buildpath_features': return templateFeatures(confirmedBrief ?? brief(true), (inputs.process ?? null) as never);
     case 'buildpath_screens': return templateScreens((inputs.features ?? null) as never);
     case 'buildpath_interview': return interview(user, schema);
     default:
+      // The concept is read as an outsider would: one unclear place, so the page shows how such a finding looks.
+      if (name === 'buildpath_review_concept') return { findings: [{ severity: 'important', category: 'clarity', target: 'pitch', where: 'В двух словах', message: 'Непонятно, чем запись онлайн лучше звонка для самой студии.', fix: 'Добавьте фразу о пользе для студии: меньше пропущенных звонков.' }] };
       if (name.startsWith('buildpath_review_')) return { findings: [] };
       return fill(schema);
   }

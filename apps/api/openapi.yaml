@@ -4452,13 +4452,42 @@ paths:
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '422': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/stages/concept/document:
+    get:
+      tags: [Journey]
+      operationId: downloadConceptDocument
+      summary: Download the product concept as Markdown or Word
+      description: >-
+        The document assembled from the accepted stages the viewer may see and the owner's parts of the current version.
+        Word carries the text; the drawn diagrams are in the PDF, which is the print page of the web app.
+        409 NOTHING_TO_EXPORT before the first version.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - in: query
+          name: format
+          required: true
+          schema: { type: string, enum: [md, docx] }
+      responses:
+        '200':
+          description: The file
+          content:
+            text/markdown: { schema: { type: string } }
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document: { schema: { type: string, format: binary } }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/stages/{stageKey}/skip:
     post:
       tags: [Journey]
       operationId: skipStage
       summary: Skip an optional stage with a written reason
       description: >-
-        Only stages marked optional (the idea review, feature suggestions) can be skipped, also before their inputs are ready. The reason is stored on the stage and in the
+        Only stages marked optional (the idea review, feature suggestions, the product concept) can be skipped, also before their inputs are ready. The reason is stored on the stage and in the
         activity log as stage_skipped; the stages after it open as if it were accepted. A skipped stage can be reopened.
         400 STAGE_NOT_OPTIONAL or INVALID_REASON (10–500 characters); 409 STAGE_ALREADY_DONE or STAGE_IN_REVIEW.
       x-implementation-status: implemented
@@ -6782,7 +6811,7 @@ components:
       in: path
       name: stageKey
       required: true
-      schema: { type: string, enum: [goal, idea, process, suggestions, offer, products, schedule, sitemap, features, screens, techplan, content, design, build, handoff] }
+      schema: { type: string, enum: [goal, idea, process, suggestions, concept, offer, products, schedule, sitemap, features, screens, techplan, content, design, build, handoff] }
     RuleId:
       in: path
       name: ruleId
@@ -8408,7 +8437,7 @@ components:
                         steps: { type: array, items: { type: string } }
                         checks: { type: array, items: { type: string } }
                         doneWhen: { type: string }
-                artifactType: { type: string, enum: [brief, idea, process, suggestions, offer, catalog, schedule, sitemap, features, screens, techplan, content, design, site, handoff] }
+                artifactType: { type: string, enum: [brief, idea, process, suggestions, concept, offer, catalog, schedule, sitemap, features, screens, techplan, content, design, site, handoff] }
                 status: { $ref: '#/components/schemas/StageStatus' }
                 statusLabel: { type: string }
                 statusExplanation: { type: string }

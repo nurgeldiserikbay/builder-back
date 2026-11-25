@@ -2,7 +2,7 @@
 // The owner knows the business but not the usual practice, so each question carries the answer most businesses choose.
 // The chosen answer becomes a rule of the business process — the owner's own decision, never invented by AI.
 // Texts are written in Russian; the English dictionary (en.ts) translates them like any platform text.
-import { trl, type Locale } from '../i18n/i18n.js';
+import { tr, trl, type Locale } from '../i18n/i18n.js';
 import type { ProjectTypeKey } from './catalog.js';
 
 export const SITUATIONS_VERSION = '1.0.0';
@@ -182,6 +182,8 @@ export const SITUATIONS: Situation[] = [
 
 const byKey = new Map(SITUATIONS.map((situation) => [situation.key, situation]));
 export const situationOf = (key: string): Situation | undefined => byKey.get(key);
+/** The questions of «Вы это учли?» answered «later», as open questions in the project language. */
+export const situationQuestions = (keys: string[]): string[] => keys.map((key) => byKey.get(key)).filter((item): item is Situation => Boolean(item)).map((item) => tr(item.question));
 export const situationsFor = (type: string | null | undefined): Situation[] => SITUATIONS.filter((situation) => situation.types.includes(type as ProjectTypeKey));
 
 /** Rule texts of every answer in every language, so the platform can tell its own rules from the owner's. */

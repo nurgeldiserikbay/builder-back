@@ -62,6 +62,7 @@ describe('release gate (database)', async () => {
     await step('goal', brief);
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
+    await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
     await step('process', templateProcess('landing', brief));
     await step('features', templateFeatures(brief, templateProcess('landing', brief), 'site'));
     await step('techplan', { ownerNotes: null });
@@ -156,6 +157,7 @@ describe('release gate (database)', async () => {
       await step('goal', brief);
       await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
       await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
+      await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
       await step('process', templateProcess('landing', brief));
       await step('features', templateFeatures(brief, templateProcess('landing', brief), 'site'));
       await step('techplan', { ownerNotes: null });

@@ -1,4 +1,5 @@
 // AI requests on a stage (drafts, targeted rewrites) and their history.
+import { templateConcept } from './concept.js';
 import { tr } from '../i18n/i18n.js';
 import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { WorktimeService } from './worktime.service.js';
@@ -68,6 +69,12 @@ export class StageAiService {
       else if (stageKey === 'idea') draft = templateIdea((inputs.goal?.content as Brief | undefined) ?? null);
       else if (stageKey === 'process') draft = inProject(ctx, () => templateProcess(ctx.type.key, (inputs.goal?.content as Brief | undefined) ?? null));
       else if (stageKey === 'features') draft = inProject(ctx, () => templateFeatures((inputs.goal?.content as Brief | undefined) ?? null, (inputs.process?.content as BusinessProcess | undefined) ?? null, ctx.type.key === 'web_app' ? 'app' : 'site', (inputs.suggestions?.content as Suggestions | undefined) ?? null));
+      else if (stageKey === 'concept') {
+        // From what this viewer sees: a specialist's draft must not carry parts hidden from them.
+        const seen = <T>(stage: string) => (inputs[stage]?.content as T | undefined) ?? null;
+        const conceptInputs = { brief: seen<Brief>('goal'), idea: seen<IdeaReview>('idea'), process: seen<BusinessProcess>('process'), suggestions: seen<Suggestions>('suggestions'), skipped: ctx.stages.filter((row) => row.status === 'skipped').map((row) => row.stageKey) };
+        draft = inProject(ctx, () => templateConcept(conceptInputs, ctx.project.name));
+      }
       else if (stageKey === 'suggestions') draft = inProject(ctx, () => templateSuggestions(ctx.type.key, (inputs.idea?.content as IdeaReview | undefined) ?? null, (inputs.process?.content as BusinessProcess | undefined) ?? null));
       else if (stageKey === 'screens') draft = inProject(ctx, () => templateScreens((inputs.features?.content as AppFeatures | undefined) ?? null));
       else throw new ServiceUnavailableException('AI_NOT_CONFIGURED');

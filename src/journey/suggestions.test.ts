@@ -31,7 +31,8 @@ test('the stage sits between the process and the ТЗ on every route, is optiona
   for (const type of Object.values(projectTypes)) {
     const at = type.stages.indexOf('suggestions');
     assert.ok(at > type.stages.indexOf('process'), type.key);
-    assert.equal(type.stages[at + 1], 'features', type.key);
+    assert.equal(type.stages[at + 1], 'concept', type.key);
+    assert.equal(type.stages[at + 2], 'features', type.key);
     assert.deepEqual(routeInputs(type.stages, 'features').includes('suggestions'), true, type.key);
   }
   assert.ok(stageDefinitions.suggestions.optional);

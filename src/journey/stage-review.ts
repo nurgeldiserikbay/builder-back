@@ -1,6 +1,7 @@
 // Quality review of a stage result: deterministic rules for logic gaps and weak spots that a later stage would trip over.
 // Completeness (artifacts.ts) says what is missing; the review says what does not fit together or is risky.
 // A blocking finding stops acceptance until it is fixed or the owner explains in writing why the stage goes on anyway.
+import { conceptDocument, undefinedTerms, type Concept, type ConceptInputs } from './concept.js';
 import { FIRST_VERSION_EXTRAS, type Suggestions } from './suggestions.js';
 import { measurable, type IdeaReview } from './idea.js';
 import { tr } from '../i18n/i18n.js';
@@ -79,6 +80,26 @@ function briefReview(brief: Brief, push: Push) {
  * the idea. The rest is advice: goals without a number, alternatives the AI suggested and nobody confirmed, a problem that
  * describes the product instead of the pain.
  */
+function conceptReview(concept: Concept, inputs: ConceptInputs, push: Push) {
+  const document = conceptDocument(inputs, concept, '');
+  for (const term of undefinedTerms(document.markdown, concept.glossary)) push({
+    code: 'CONCEPT_TERM_UNDEFINED', severity: 'important', category: 'clarity', target: 'glossary', where: tr('Словарь'),
+    message: tr('В документе есть «{0}», но в словаре это не объяснено — посторонний может не понять.', [term]),
+    fix: tr('Добавьте «{0}» в словарь одной простой фразой или замените слово в тексте.', [term]),
+  });
+  const empty = document.sections.filter((section) => section.empty && !['notes', 'glossary', 'questions'].includes(section.key));
+  if (empty.length) push({
+    code: 'CONCEPT_SECTIONS_EMPTY', severity: 'minor', category: 'logic', target: null, where: tr('Разделы'),
+    message: tr('Без содержания: {0}. В документе они помечены, почему пусты.', [empty.map((section) => `«${section.title}»`).join(', ')]),
+    fix: tr('Если раздел важен читателю, заполните этап, из которого он берётся, и примите его.'),
+  });
+  if (concept.pitch && concept.pitch.length < 60) push({
+    code: 'CONCEPT_PITCH_SHORT', severity: 'minor', category: 'clarity', target: 'pitch', where: tr('В двух словах'),
+    message: tr('«В двух словах» слишком коротко: посторонний не поймёт, что это и для кого.'),
+    fix: tr('Две-три фразы: что за продукт, для кого и какую проблему решает.'),
+  });
+}
+
 function suggestionsReview(value: Suggestions, push: Push) {
   const now = value.items.filter((item) => item.decision === 'now');
   if (now.length > FIRST_VERSION_EXTRAS) push({
@@ -588,7 +609,7 @@ function situationsReview(process: BusinessProcess, projectType: string | null |
 }
 
 /** Review of one stage result. Types without rules yet get an empty review with the full score. */
-export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null; process?: BusinessProcess | null; projectType?: string | null } = {}): StageReview {
+export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null; process?: BusinessProcess | null; projectType?: string | null; concept?: ConceptInputs } = {}): StageReview {
   const found: ReviewFinding[] = [];
   const counts = new Map<string, number>();
   const push: Push = (finding) => {
@@ -601,6 +622,7 @@ export function reviewStage(type: string, content: unknown, context: { features?
     if (type === 'brief') briefReview(content as Brief, push);
     if (type === 'idea') ideaReview(content as IdeaReview, push);
     if (type === 'suggestions') suggestionsReview(content as Suggestions, push);
+    if (type === 'concept' && context.concept) conceptReview(content as Concept, context.concept, push);
     if (type === 'process') { processReview(content as BusinessProcess, push); situationsReview(content as BusinessProcess, context.projectType, push); }
     if (type === 'features') featuresReview(content as AppFeatures, context.process ?? null, push, context.projectType && context.projectType !== 'web_app' ? 'site' : 'app');
     if (type === 'screens') screensReview(content as AppScreens, context.features ?? null, push);

@@ -1,3 +1,4 @@
+import { conceptDocument, type Concept } from './concept.js';
 import { BadRequestException, BadGatewayException, ConflictException, HttpException, HttpStatus, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { costOf } from '../budget/budget.js';
 import { lockableKeys } from './artifacts.js';
@@ -6,6 +7,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { tr } from '../i18n/i18n.js';
 import { stageDefinitions, type StageKey } from './catalog.js';
 import { JourneyCore } from './journey-core.js';
+import { inProject, normalizedOrRaw } from './journey-core.js';
 import { StageAiService } from './stage-ai.service.js';
 import { fixInstruction, REVIEW_LIMITS, reviewStage, uncoveredBlocking, type ReviewFinding, type StageReview } from './stage-review.js';
 
@@ -79,10 +81,15 @@ export class StageReviewService {
     if (await this.core.remainingAiRuns(projectId) < 1) throw new HttpException('AI_DAILY_LIMIT_REACHED', HttpStatus.TOO_MANY_REQUESTS);
     if (assignment && assignment.aiBudget !== null && assignment.aiUsed >= assignment.aiBudget) throw new HttpException('AI_BUDGET_EXHAUSTED', HttpStatus.TOO_MANY_REQUESTS);
     const inputs = await this.core.acceptedInputs(ctx, stageKey);
+    const conceptIn = definition.artifactType === 'concept' ? await this.core.conceptInputs(ctx, stageKey) : null;
     const rules = await this.reviewOf(ctx, stageKey, version.content);
     const targets = lockableKeys(definition.artifactType, version.content);
     const prompt = buildReviewPrompt({
-      stage: definition, locale: ctx.project.locale, projectTypeTitle: ctx.type.title, current: version.content, targets,
+      stage: definition, locale: ctx.project.locale, projectTypeTitle: ctx.type.title, targets,
+      // The concept is reviewed as the reader gets it: the assembled document, not the owner's fields alone.
+      current: definition.artifactType === 'concept'
+        ? inProject(ctx, () => conceptDocument(conceptIn!, normalizedOrRaw('concept', version.content) as Concept, ctx.project.name).markdown)
+        : version.content,
       inputs: Object.fromEntries(Object.entries(inputs).map(([inputKey, value]) => [inputKey, value.content])),
       ruleFindings: rules.findings.map((finding) => `${finding.where}: ${finding.message}`),
     });

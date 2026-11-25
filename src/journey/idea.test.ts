@@ -146,6 +146,7 @@ describe('idea review (database)', async () => {
     assert.equal((await journey.stage(owner.id, projectId, 'idea')).data.stage.canSkip, true);
     await journey.skip(owner.id, projectId, 'idea', 'Бизнес работает пять лет, идея проверена');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
+    await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
     const skipped = await row('idea');
     assert.equal(skipped.status, 'skipped');
     assert.equal(skipped.reviewNote, 'Бизнес работает пять лет, идея проверена');

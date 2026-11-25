@@ -23,12 +23,12 @@ describe('routes', () => {
     assert.deepEqual(routeInputs(projectTypes.landing.stages, 'content'), ['goal', 'process', 'features']);
   });
   it('computes dependents and ancestors transitively', () => {
-    assert.deepEqual(routeDependents(projectTypes.landing.stages, 'goal'), ['idea', 'process', 'suggestions', 'features', 'techplan', 'content', 'design', 'build']);
+    assert.deepEqual(routeDependents(projectTypes.landing.stages, 'goal'), ['idea', 'process', 'suggestions', 'concept', 'features', 'techplan', 'content', 'design', 'build']);
     assert.deepEqual(routeAncestors(projectTypes.company_site.stages, 'build'), ['goal', 'idea', 'process', 'suggestions', 'features', 'offer', 'techplan', 'content', 'design']);
   });
   it('the idea review comes right after the goal, then the business process and the ТЗ, and the architecture builds on them', () => {
     for (const type of Object.values(projectTypes)) {
-      assert.deepEqual(type.stages.slice(0, 5), ['goal', 'idea', 'process', 'suggestions', 'features'], type.key);
+      assert.deepEqual(type.stages.slice(0, 6), ['goal', 'idea', 'process', 'suggestions', 'concept', 'features'], type.key);
       assert.ok(routeInputs(type.stages, 'techplan').includes('features'), type.key);
       assert.ok(routeInputs(type.stages, 'techplan').includes('process'), type.key);
       assert.ok(routeInputs(type.stages, 'build').includes('techplan'), type.key);

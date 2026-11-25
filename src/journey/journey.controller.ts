@@ -1,6 +1,6 @@
 import { CommentsService } from './comments.service.js';
 import { StageReviewService } from './stage-review.service.js';
-import { BadRequestException, NotFoundException, Body, Controller, Get, Header, HttpCode, Param, Post, Put, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, NotFoundException, Body, Controller, Get, Header, HttpCode, Param, Post, Put, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { VOICE_LIMITS } from '../telegram-bot/transcribe.js';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
@@ -13,6 +13,9 @@ import { PlaybooksService } from './playbooks.service.js';
 import { CatalogService } from '../catalog/catalog.service.js';
 import { WorktimeService } from './worktime.service.js';
 
+import { attachment } from '../analysis/analysis.controller.js';
+
+type Download = { set(headers: Record<string, string>): unknown; send(body: Buffer): unknown };
 function body(value: unknown, fields: string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('INVALID_REQUEST_BODY');
   const record = value as Record<string, unknown>;
@@ -471,6 +474,15 @@ export class JourneyController {
   @HttpCode(200)
   reopen(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
     return this.journey.reopen(request.user.id, projectId, stageKey(key));
+  }
+
+  /** The product concept as a file: ?format=md or docx. The PDF is the print page of the web app. */
+  @Get('projects/:projectId/stages/concept/document')
+  async conceptDocument(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Query('format') format: string | undefined, @Res() response: Download) {
+    if (format !== 'md' && format !== 'docx') throw new BadRequestException('INVALID_FORMAT');
+    const file = await this.journey.conceptFile(request.user.id, projectId, format);
+    response.set({ 'Content-Type': file.mime, 'Content-Disposition': attachment(file.name), 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, no-store' });
+    response.send(file.data);
   }
 
   /** { reason } — skip an optional stage; the stages after it go on without it. Owner or manager. */

@@ -170,6 +170,7 @@ describe('starter code check (database)', async () => {
     await accept('goal');
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
+    await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
     for (const key of ['process', 'features', 'screens']) { await journey.generate(owner.id, projectId, key, { instruction: null, saveAs: 'one_off', targetKey: null }); await accept(key); }
     await journey.saveDraft(owner.id, projectId, 'techplan', { content: { ownerNotes: null }, baseVersionId: null });
     await accept('techplan');

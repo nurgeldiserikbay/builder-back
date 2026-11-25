@@ -47,6 +47,7 @@ describe('«Вы это учли?» in a project (database)', async () => {
     await journey.accept(owner.id, projectId, 'goal', (await current('goal'))!);
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
+    await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
 
     // The stage page brings the questions of this kind of business.
     const detail = await journey.stage(owner.id, projectId, 'process') as unknown as { data: { options: { process: { situations: { items: Array<{ key: string }> } } } } };

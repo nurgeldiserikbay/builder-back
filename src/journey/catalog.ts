@@ -1,10 +1,10 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.11.0';
+export const ROUTE_CATALOG_VERSION = '1.12.0';
 
-export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'build' | 'handoff';
-export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'site' | 'handoff';
+export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'build' | 'handoff';
+export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'site' | 'handoff';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking' | 'web_app';
 
@@ -207,6 +207,34 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
         'decision: leave an empty string — the owner decides. Keep the decisions the owner already made.',
         'Never suggest what the process already has. 3–12 suggestions in total.',
         'Catalog (key: title — value): reminders, cancel_booking, pay_online, prepay_booking, owner_alerts, order_alerts, status_updates, client_account, staff_roles, reports, export, search, messenger, faq, reviews, analytics.',
+      ],
+    },
+  },
+  concept: {
+    key: 'concept',
+    version: '1.0.0',
+    title: 'Концепция продукта',
+    purpose: 'Соберём один документ, который поймёт любой: инвестор, партнёр, разработчик, новый сотрудник. Платформа сама собирает его из принятых этапов — идеи, процесса со схемами и первой версии; от вас — пара фраз «в двух словах», словарь и открытые вопросы.',
+    outcome: 'Документ с оглавлением, схемами процесса и данных, словарём и открытыми вопросами — его можно скачать в Word, PDF или Markdown.',
+    artifactType: 'concept',
+    inputs: ['goal', 'idea', 'process', 'suggestions'],
+    ai: {
+      level: 'ai_full',
+      whatItDoes: 'ИИ напишет «в двух словах», подберёт термины для словаря и соберёт открытые вопросы. Разделы из принятых этапов он не переписывает. Проверка ИИ читает документ глазами постороннего и говорит, что непонятно.',
+      instructionExamples: ['Пиши для инвестора: коротко и про деньги', 'Добавь в словарь «предоплата»', 'Объясни проще, без терминов'],
+    },
+    acceptance: ['Документ понятен человеку, который не участвовал в проекте', 'Каждый термин объяснён в словаре', 'Открытые вопросы записаны, а не спрятаны'],
+    acceptExplanation: 'Документ можно показать партнёрам и разработчику. Если позже изменятся идея или процесс, концепция получит уведомление и соберётся заново.',
+    importHint: 'Есть своё описание продукта или презентация? Вставьте текст — первые абзацы станут «в двух словах», остальное вы разложите сами.',
+    optional: { why: 'Можно пропустить, если документ для других людей пока не нужен. Позже его можно собрать в любой момент.' },
+    playbook: {
+      version: '1.0.0',
+      instructions: [
+        'Write only the owner\'s parts of the product concept document, in plain words and in the project language. The sections from accepted stages are assembled by the platform; do not rewrite them.',
+        'pitch: 2–3 sentences — what the product is, for whom and which problem it solves. Only facts from the inputs; no market numbers, no praise.',
+        'glossary: words from the inputs an outsider may not know (ТЗ, CRM, сегмент, личный кабинет, names of roles or data special to this business), each with a one-sentence plain meaning. 0–15 terms.',
+        'questions: decisions still open in the inputs — risks without a decision, missing revenue or goals, «later» answers, undecided suggestions. Phrase each as a question. Do not answer them.',
+        'notes: leave as is unless the user asks.',
       ],
     },
   },
@@ -486,7 +514,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Одна страница, которая рассказывает о вас и ведёт к одному действию: позвонить, написать или прийти.',
     goodFor: 'Мастерам, небольшим услугам, мероприятиям, запуску продукта.',
     examples: ['Мастер маникюра', 'Торты на заказ', 'Репетитор', 'Мероприятие'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница сайта в виде файла и все тексты проекта.',
   },
   company_site: {
@@ -495,7 +523,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Подробная страница компании: услуги и цены, о вас, как работаете, контакты и часы работы.',
     goodFor: 'Небольшим компаниям, салонам, студиям, сервисам.',
     examples: ['Автосервис', 'Стоматология', 'Юридическая консультация', 'Студия йоги'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'offer', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница компании в виде файла, список услуг и все тексты проекта.',
   },
   multipage: {
@@ -504,7 +532,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Несколько страниц с меню: главная, услуги, о вас, вопросы, контакты — у каждой свой адрес и своё описание для поисковиков.',
     goodFor: 'Компаниям с несколькими направлениями услуг, клиникам, школам, сервисам, которым тесно на одной странице.',
     examples: ['Стоматология', 'Языковая школа', 'Ремонт квартир', 'Юридическая фирма'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт из нескольких страниц с меню, файлы всех страниц, карта сайта и все тексты проекта.',
   },
   store: {
@@ -513,7 +541,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Витрина с товарами, корзина и заказ без регистрации: клиент выбирает товары и способ получения, а вы получаете заказ в Telegram и видите все заказы в проекте.',
     goodFor: 'Небольшим магазинам и мастерским: до 60 товаров, самовывоз или доставка, оплата при получении или переводом.',
     examples: ['Кондитерская', 'Цветы', 'Мыло ручной работы', 'Кофе в зёрнах'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'products', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'products', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный магазин с витриной, корзиной и формой заказа, каталог и все тексты проекта. Заказы принимаются, когда сайт опубликован на BuildPath. Онлайн-оплаты пока нет.',
   },
   booking: {
@@ -522,7 +550,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Сайт с записью: клиент выбирает услугу, мастера и свободное время, а вы получаете запись в Telegram и видите все записи в проекте.',
     goodFor: 'Салонам красоты, барбершопам, массажу, тренерам, репетиторам — всем, кто работает по времени.',
     examples: ['Барбершоп', 'Маникюр', 'Массаж', 'Автомойка'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт с онлайн-записью, список услуг, расписание и все тексты проекта. Запись работает, когда сайт опубликован на BuildPath.',
   },
   web_app: {
@@ -531,7 +559,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Приложение со входом, ролями и своей логикой: кабинет клиента, учёт заявок, внутренняя система. BuildPath доведёт его до полного пакета — функции, экраны с прототипом, архитектуру и контракт API, — а ИИ-агент напишет по нему код приложения.',
     goodFor: 'Тем, кому нужен личный кабинет, учёт или внутренний сервис.',
     examples: ['Кабинет клиента сервиса', 'Учёт заявок и выездов', 'Запись на курсы с кабинетом ученика', 'Внутренняя система для сотрудников'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'screens', 'techplan', 'handoff'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'handoff'],
     resultExplanation: 'Пакет для разработки — техническое задание, права по ролям, схема данных, контракт API и кликабельный прототип — и код всего приложения, который пишет ИИ-агент и проверяет платформа. Запускаете вы: на своём Render или сервере.',
   },
 };
