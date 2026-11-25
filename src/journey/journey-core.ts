@@ -1,6 +1,8 @@
 import type { ArchitectureDesign } from './architecture.js';
 import type { ConceptInputs } from './concept.js';
 import type { Contracts } from './contracts.js';
+import type { LaunchFacts } from './launch.js';
+import { testPlanReadiness } from './plan-results.js';
 import type { IdeaReview } from './idea.js';
 import type { Suggestions } from './suggestions.js';
 import { buildAppPlan, type AppFeatures, type AppScreens } from './webapp.js';
@@ -207,7 +209,9 @@ export class JourneyCore {
     };
   }
 
-  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null }> {
+  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { project?: { id: string } }, key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null; launch?: LaunchFacts }> {
+    // The launch is checked against what the platform knows now: the test plan's state and the last deployment check.
+    if (key === 'launch' && ctx.project) return { sitemap: null, launch: await this.launchFacts({ ...ctx, project: ctx.project }, key) };
     // The test plan is checked against the ТЗ (functions, rights) and the architecture's threats.
     if (key === 'testplan') {
       const inputs = await this.acceptedInputs(ctx, key);
@@ -236,6 +240,18 @@ export class JourneyCore {
     if (key === 'screens') return { sitemap: null, features: ((await this.acceptedInputs(ctx, key)).features?.content as AppFeatures | undefined) ?? null };
     if (key !== 'content' || !ctx.route.includes('sitemap')) return { sitemap: null };
     return { sitemap: ((await this.acceptedInputs(ctx, key)).sitemap?.content as Sitemap | undefined) ?? null };
+  }
+
+  async launchFacts(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { project: { id: string } }, key: StageKey): Promise<LaunchFacts> {
+    const inputs = await this.acceptedInputs(ctx, key);
+    let design: ArchitectureDesign | null = null;
+    try { design = techPlanDesign(inputs.techplan?.content) ?? null; } catch { design = null; }
+    const deployment = await this.prisma.appDeployment.findUnique({ where: { projectId: ctx.project.id }, select: { url: true, ok: true, database: true, checkedAt: true } });
+    return {
+      readiness: await testPlanReadiness(this.prisma, ctx.project.id),
+      deployment: deployment ? { ...deployment, checkedAt: deployment.checkedAt.toISOString() } : null,
+      features: (inputs.features?.content as AppFeatures | undefined) ?? null, idea: (inputs.idea?.content as IdeaReview | undefined) ?? null, design,
+    };
   }
 
   async acceptedInputs(ctx: { route: StageKey[]; stages: StageRow[]; dep: StatusMap; pins: Map<StageKey, Map<StageKey, string>> }, key: StageKey) {

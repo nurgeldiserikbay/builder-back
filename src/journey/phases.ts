@@ -28,6 +28,7 @@ export const STAGE_PHASE: Record<StageKey, PhaseKey> = {
   techplan: 'tech', contracts: 'tech', roadmap: 'tech', testplan: 'tech',
   content: 'content', design: 'content',
   build: 'build', handoff: 'build',
+  launch: 'launch',
 };
 
 export interface StageGuide {
@@ -187,6 +188,15 @@ export const STAGE_GUIDES: Record<StageKey, StageGuide> = {
       { term: 'Недобросовестный пользователь', meaning: 'Человек, который пытается получить больше, чем ему положено: чужие данные, скидку, бесплатный заказ.' },
     ],
   },
+  launch: {
+    why: 'Приложение, которое никто не охраняет, ломается молча: копии не делались, о сбое никто не узнал, политика не опубликована. Чек-лист ловит это до того, как придут люди.',
+    next: 'После запуска — развитие: отзывы, замечания и отложенные функции попадают в список следующей версии.',
+    example: '«Адрес app.masterdoma.kz отвечает по HTTPS, база Neon, копии каждый день, UptimeRobot пишет в Telegram».',
+    terms: [
+      { term: 'Мониторинг', meaning: 'Сервис, который раз в несколько минут проверяет, что приложение отвечает, и пишет вам, если нет.' },
+      { term: 'HTTPS', meaning: 'Защищённое соединение: пароли и данные не видны по дороге. Замок в адресной строке.' },
+    ],
+  },
   handoff: {
     why: 'Разработчик сделает ровно то, что записано. Полный и понятный пакет экономит недели переписки и переделок.',
     next: 'По пакету ИИ-агент пишет всё приложение — экраны, вход, базу данных и тесты; BuildPath проверяет его и помогает запустить у вас.',
@@ -208,7 +218,8 @@ export interface PhaseView { key: PhaseKey; title: string; short: string; status
 export function phasesOf(stages: Array<{ key: StageKey; done: boolean }>, publishing: { applies: boolean; live: boolean } | null): PhaseView[] {
   const out: PhaseView[] = [];
   for (const phase of PHASES) {
-    if (phase.key === 'launch' || phase.key === 'after') {
+    // A site launches by publication; an application has its launch as a stage of the route.
+    if ((phase.key === 'launch' || phase.key === 'after') && !stages.some((stage) => STAGE_PHASE[stage.key] === phase.key)) {
       if (!publishing?.applies) continue;
       const done = phase.key === 'launch' ? publishing.live : false;
       out.push({ ...phase, status: done ? 'done' : 'upcoming', stageKeys: [], done: done ? 1 : 0, total: 1, kind: 'publish' });
@@ -356,6 +367,11 @@ export const STAGE_PASSPORTS: Record<StageKey, StagePassport> = {
     steps: ['Платформа собирает кейсы по классам из ТЗ, процесса, архитектуры и контрактов.', 'Прочитайте «Что мы проверим» простыми словами; специалист дополняет кейсы.', 'Утвердите — по кейсам пишут автотесты, задачи плана закрываются по ним.'],
     checks: ['У обязательных функций есть нормальный путь, ошибки и «кому нельзя».', 'Каждая угроза архитектуры проверяется; при личных данных и деньгах есть кейсы безопасности.', 'У кейсов есть ожидаемый результат; пустой класс объяснён.'],
     doneWhen: 'Для каждой задачи понятно, по каким кейсам она будет считаться готовой.',
+  },
+  launch: {
+    steps: ['Платформа проверяет кейсы, вашу приёмку сценариев и адрес приложения.', 'Отметьте пункты чек-листа: готово или не нужно — с причиной.', 'Примите этап — это решение запускать; непройденное — только с письменным объяснением.'],
+    checks: ['Блокирующие кейсы пройдены, сценарии приняты, замечаний нет.', 'Адрес отвечает по HTTPS, приложение работает с базой данных.', 'Резервные копии и мониторинг готовы; юридические тексты — если есть личные данные.'],
+    doneWhen: 'Приложение можно открыть людям, а сбой не останется незамеченным.',
   },
   handoff: {
     steps: ['Платформа собирает пакет: ТЗ с критериями, права по ролям, схема данных, API, прототип.', 'ИИ-агент пишет код приложения в изолированной среде; платформа проверяет сборку и тесты.', 'Посмотрите предпросмотр и подтвердите.'],

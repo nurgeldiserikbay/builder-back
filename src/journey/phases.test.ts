@@ -45,9 +45,10 @@ describe('phases of the common path', () => {
     assert.equal(half.find((phase) => phase.status === 'current')?.key, 'tech');
   });
 
-  it('an app ends with the developer package: no launch phase yet; specialists see no launch either', () => {
+  it('an app launches through its own stage after the developer package; it has no publication', () => {
     const app = phasesOf(route('web_app'), null);
-    assert.deepEqual(app.map((phase) => phase.key), ['idea', 'spec', 'experience', 'tech', 'build']);
+    assert.deepEqual(app.map((phase) => phase.key), ['idea', 'spec', 'experience', 'tech', 'build', 'launch']);
+    assert.equal(app.find((phase) => phase.key === 'launch')?.kind, 'stages');
     assert.equal(app.find((phase) => phase.key === 'spec')?.total, 1);
   });
 });
