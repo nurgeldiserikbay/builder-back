@@ -162,9 +162,9 @@ export function expandedSchema(schema: DataSchema): Array<SchemaEntity & { junct
           { key: 'b', name: b.name, type: 'ref', required: true, unique: false, ref: b.key, options: [] },
         ], links: [{ to: a.key, kind: 'one', label: relation.label }, { to: b.key, kind: 'one', label: relation.label }] });
     } else {
-      // The «many» side (or the second of one-to-one) keeps the link to the other.
-      find(relation.to).links.push({ to: relation.from, kind: 'one', label: relation.label });
-      if (relation.kind === 'one_many') find(relation.from).links.push({ to: relation.to, kind: 'many', label: relation.label });
+      // Said once, from the «one» side, as the process says it: «A has many B» / «A has one B». Who keeps the link field
+      // follows from that (the «many» side, or A for one-to-one); saying it from both sides would draw it twice.
+      find(relation.from).links.push({ to: relation.to, kind: relation.kind === 'one_many' ? 'many' : 'one', label: relation.label });
     }
   }
   return out;
