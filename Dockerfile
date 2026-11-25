@@ -30,6 +30,8 @@ COPY --chown=node:node package.json prisma.config.ts tsconfig.json ./
 COPY --chown=node:node prisma ./prisma
 COPY --chown=node:node scripts ./scripts
 COPY --chown=node:node apps/api/openapi.yaml ./apps/api/openapi.yaml
+# The «Агент в вашей сети» program the owner downloads and runs in their own network (it never runs here).
+COPY --chown=node:node apps/network-agent ./apps/network-agent
 USER node
 EXPOSE 4000 4100
 CMD ["node", "dist/main.js"]

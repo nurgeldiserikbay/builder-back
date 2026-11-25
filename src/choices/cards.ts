@@ -5,9 +5,10 @@ export type CardKey = 'code_hosting' | 'deployment' | 'domain' | 'technologies';
  * manual — the user does it and ticks it off; connect — form that checks a repository; download — files from the result package;
  * publish — publishing on BuildPath; push — send to the connected repository; package — files for an own server; verify — BuildPath opens the address and checks the site;
  * domain — form for the owner's domain with the DNS record to create and a check that it points at BuildPath;
- * ssh_key — the project's deploy key for a git server over SSH, created on request and shown with its fingerprint.
+ * ssh_key — the project's deploy key for a git server over SSH, created on request and shown with its fingerprint;
+ * network_agent — the project's «Агент в вашей сети»: its key, state and jobs (an application's developer package page).
  */
-export type StepKind = 'manual' | 'ssh_key' | 'connect' | 'download' | 'publish' | 'push' | 'package' | 'verify' | 'domain' | 'hosting_connect' | 'hosting_deploy';
+export type StepKind = 'manual' | 'ssh_key' | 'connect' | 'download' | 'publish' | 'push' | 'package' | 'verify' | 'domain' | 'hosting_connect' | 'hosting_deploy' | 'network_agent';
 
 export interface ChoiceStep {
   key: string;
@@ -383,11 +384,35 @@ export function technologiesCard(projectType: string | null): ChoiceCard {
  * The code hosting card as an application sees it: its code is written by the AI agent and run by the owner, so a repository
  * is where it lives, not a spare copy of a site that runs on BuildPath.
  */
+/**
+ * An application whose repository and servers are inside a closed network (corporate GitLab, a server behind VPN): BuildPath
+ * cannot reach them, so the owner runs the agent inside the network and it calls out (PRODUCT_LIFECYCLE §7, step 11).
+ */
+export const networkAgentOption: ChoiceOption = {
+  key: 'network_agent',
+  title: 'Агент в вашей сети',
+  summary: 'Репозиторий и серверы во внутренней сети компании, за VPN. Вы запускаете у себя небольшую программу BuildPath — она сама обращается к BuildPath, отправляет код во внутренний git, запускает вашу выкладку и проверяет, что приложение отвечает.',
+  pros: ['Не нужно открывать порты и давать BuildPath VPN', 'Пароли и ключи от git и серверов остаются у вас: BuildPath их не видит', 'BuildPath не может прислать команду или адрес — только «проверить», «отправить код» или «выложить» туда, что вы сами указали агенту'],
+  limits: ['Нужен компьютер или сервер во внутренней сети с Node.js 22 и git, либо Docker', 'Ставит и обновляет агента ваш специалист или администратор', 'Код для ИИ-агента BuildPath пишется в облаке: внутренних пакетов и реестров он не видит', 'Пока только для веб-приложений'],
+  cost: 'Бесплатно со стороны BuildPath; работает на вашем компьютере или сервере',
+  upkeep: 'Держать агента запущенным; ключ действует 180 дней, потом создать новый',
+  leaving: 'Легко: код уже в вашем репозитории; агента достаточно остановить и отозвать ключ',
+  steps: [
+    { key: 'machine', kind: 'manual', title: 'Выберите, где запустить агента', text: ['Подойдёт любой компьютер или сервер внутри сети, откуда видны ваш git и сервер приложения, а наружу открывается HTTPS.', 'На нём нужен Node.js 22 и git — или Docker.'] },
+    { key: 'agent', kind: 'network_agent', title: 'Создайте ключ и запустите агента', text: ['На странице «Пакет для разработки» в блоке «Агент в вашей сети» нажмите «Создать ключ». Ключ покажут один раз.', 'Скачайте программу и запустите её командой оттуда, указав адрес внутреннего репозитория, команду выкладки и адрес приложения — только то, что нужно.'] },
+    { key: 'verify', kind: 'manual', title: 'Проверьте связь', text: ['Когда агент подключится, в блоке появится «На связи». Нажмите «Проверить приложение» — агент спросит его изнутри сети, и результат попадёт в подготовку к запуску.'] },
+  ],
+};
+
 export function codeHostingCard(projectType: string | null | undefined): ChoiceCard {
   const card = choiceCards.code_hosting;
   if (projectType !== 'web_app') return card;
   return {
     ...card,
+    options: [
+      ...card.options.map((option) => (option.key === 'ssh' ? { ...option, limits: option.limits.map((limit) => (limit === 'Сервер должен быть доступен из интернета' ? 'Сервер должен быть доступен из интернета; если он во внутренней сети, выберите «Агент в вашей сети»' : limit)) } : option)),
+      networkAgentOption,
+    ],
     question: 'Где будет лежать код вашего приложения?',
     why: 'Код приложения пишет ИИ-агент, а запускаете его вы — на Render или своём сервере. Они берут код из репозитория, поэтому без него приложение не запустить; архив подойдёт только чтобы посмотреть код.',
   };

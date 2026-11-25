@@ -34,7 +34,7 @@ export function normalizeLaunch(raw: unknown): LaunchChecklist {
 /** What the platform knows when the checklist is read: the test plan's state and the last deployment check. */
 export interface LaunchFacts {
   readiness: { blocking: { total: number; passed: number }; scenarios: { total: number; works: number }; openRemarks: number } | null;
-  deployment: { url: string; ok: boolean; database: string | null; checkedAt: string } | null;
+  deployment: { url: string; ok: boolean; database: string | null; checkedAt: string; checkedVia?: string } | null;
   features: AppFeatures | null;
   idea: IdeaReview | null;
   design: ArchitectureDesign | null;

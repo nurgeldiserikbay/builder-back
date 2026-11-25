@@ -4848,6 +4848,126 @@ paths:
       responses:
         '200': { description: 'status of its run; files[] (path, content)' }
         '404': { description: 'PROJECT_NOT_FOUND, STAGE_NOT_FOUND, STARTER_NOT_BUILT' }
+  /projects/{projectId}/network-agent:
+    get:
+      tags: [Journey]
+      operationId: getNetworkAgent
+      summary: «Агент в вашей сети» of a web application — the agent, its last jobs and what a push would send
+      description: 'agent (id, name, state waiting | online | offline | expired, tokenHint, version, appUrl, capabilities { check, push, deploy, shareOutput }, lastSeenAt, expiresAt, createdAt) or null; jobs[] (id, kind check | push | deploy, status queued | running | succeeded | failed | expired, error, result, taskId, branch, createdAt, startedAt, finishedAt); canManage; pushTask (the newest agent task with code) or null; apiBase (PUBLIC_API_URL/api/v1 or null); programVersion; limits. Project members only; 404 NETWORK_AGENT_NOT_AVAILABLE for other project types.'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'data as described' }
+        '404': { description: 'PROJECT_NOT_FOUND, NETWORK_AGENT_NOT_AVAILABLE' }
+    post:
+      tags: [Journey]
+      operationId: createNetworkAgentKey
+      summary: A new key for the project's agent; an earlier key stops working at once
+      description: 'The key (bpa_…) is in this answer only; BuildPath keeps its SHA-256. It lives 180 days. Owners and managers; 10 keys an hour per project (429 NETWORK_AGENT_RATE_LIMITED).'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { name: { type: string, maxLength: 60 } } }
+      responses:
+        '201': { description: 'data: token, agent' }
+        '403': { description: 'STAGE_ACCEPT_FORBIDDEN' }
+    delete:
+      tags: [Journey]
+      operationId: revokeNetworkAgentKey
+      summary: Revoke the agent's key; its waiting jobs expire
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'the same data as GET' }
+        '404': { description: 'NETWORK_AGENT_NOT_FOUND' }
+  /projects/{projectId}/network-agent/jobs:
+    post:
+      tags: [Journey]
+      operationId: startNetworkAgentJob
+      summary: Ask the agent to check the application, push an agent task's code, or run the owner's deploy command
+      description: 'Only these kinds exist: the agent does them against targets set on its side (APP_URL, GIT_REMOTE, DEPLOY_COMMAND); no command, address or remote is ever sent. push and deploy need confirm true. A succeeded or failed check becomes the application''s deployment check (checkedVia network_agent). 400 NETWORK_AGENT_JOB_KIND_INVALID, CONFIRMATION_REQUIRED; 404 NETWORK_AGENT_NOT_FOUND, AGENT_TASK_NOT_FOUND; 409 NETWORK_AGENT_KEY_EXPIRED, NETWORK_AGENT_CANNOT_DO (the agent was not set up for it), NETWORK_AGENT_JOB_WAITING, AGENT_TASK_NO_FILES, AGENT_TASK_FILES_CHANGED; 429 NETWORK_AGENT_RATE_LIMITED (30 an hour).'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [check, push, deploy] }
+                confirm: { type: boolean }
+                taskId: { type: string, format: uuid, description: 'push: the agent task whose code is sent, to branch buildpath/agent-<first 8>' }
+      responses:
+        '202': { description: 'data: job' }
+  /projects/{projectId}/network-agent/program:
+    get:
+      tags: [Journey]
+      operationId: downloadNetworkAgentProgram
+      summary: The agent program (one file, Node.js 22 and git) to run inside the owner's network
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'text/javascript, buildpath-agent.mjs' }
+  /network-agent/hello:
+    post:
+      tags: [Journey]
+      operationId: networkAgentHello
+      summary: The agent introduces itself (Authorization Bearer bpa_… key, no session)
+      description: 'Body: version, capabilities { check, push, deploy, shareOutput }, appUrl (origin only). Keeps only these. 401 NETWORK_AGENT_KEY_INVALID; 403 NETWORK_AGENT_KEY_REVOKED, NETWORK_AGENT_KEY_EXPIRED, NETWORK_AGENT_PROJECT_INACTIVE — the agent stops; 429 NETWORK_AGENT_RATE_LIMITED.'
+      x-implementation-status: implemented
+      security: []
+      responses:
+        '200': { description: 'waitMs, latestVersion' }
+  /network-agent/jobs/next:
+    post:
+      tags: [Journey]
+      operationId: networkAgentNextJob
+      summary: The agent waits up to 25 s for its next job; each job is handed out once
+      x-implementation-status: implemented
+      security: []
+      responses:
+        '200': { description: 'job { id, kind, payload } or null. payload: check {}; push { taskId, branch, message, removed[] }; deploy { branch | null }' }
+  /network-agent/jobs/{jobId}/files:
+    get:
+      tags: [Journey]
+      operationId: networkAgentJobFiles
+      summary: The code of a running push job (paths inside the project only)
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - { in: path, name: jobId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'files[] (path, content)' }
+        '409': { description: 'NETWORK_AGENT_JOB_NOT_RUNNING, NETWORK_AGENT_JOB_HAS_NO_FILES, AGENT_TASK_FILES_CHANGED' }
+  /network-agent/jobs/{jobId}/result:
+    post:
+      tags: [Journey]
+      operationId: networkAgentJobResult
+      summary: The agent reports a job; read strictly by kind
+      description: 'check: ok, status, database, ms, error; push: ok, branch, commit, error; deploy: ok, exitCode, output (≤ 4000, only when the owner allowed sharing it), error. error is an UPPER_CASE code. A job taken and not reported in 20 minutes fails (AGENT_DID_NOT_REPORT); one not taken in an hour expires (AGENT_DID_NOT_TAKE).'
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - { in: path, name: jobId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'ok' }
+        '409': { description: 'NETWORK_AGENT_JOB_NOT_RUNNING' }
   /projects/{projectId}/agent/tasks:
     get:
       tags: [Journey]
