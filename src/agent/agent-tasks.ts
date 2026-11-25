@@ -419,7 +419,7 @@ export class AgentTasksService {
     return {
       data: {
         configured, profile: APP_PROFILE, limits: agentLimits(), repository,
-        deployment: await this.prisma.appDeployment.findUnique({ where: { projectId }, select: { url: true, ok: true, status: true, database: true, error: true, checkedAt: true } }),
+        deployment: await this.prisma.appDeployment.findUnique({ where: { projectId }, select: { url: true, ok: true, status: true, database: true, error: true, checkedAt: true, checkedVia: true } }),
         canStart: configured && this.core.canWrite(ctx, via) && Boolean(stage.currentVersionId) && !active && !anyActive && (!module || inputsSatisfied(ctx.route, ctx.dep, via)),
         // Another task of the project is running: one at a time per project.
         busy: anyActive && !active,
@@ -572,8 +572,8 @@ export class AgentTasksService {
     if (!origin) throw new BadRequestException('APP_URL_INVALID');
     const local = /^http:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(origin);
     const answer = await checkAppHealth(origin, allowLocal && local);
-    const data = { url: origin, ok: answer.ok, status: answer.status, database: answer.database, error: answer.error, checkedAt: new Date(), checkedByUserId: userId };
-    const saved = await this.prisma.appDeployment.upsert({ where: { projectId }, create: { projectId, ...data }, update: data, select: { url: true, ok: true, status: true, database: true, error: true, checkedAt: true } });
+    const data = { url: origin, ok: answer.ok, status: answer.status, database: answer.database, error: answer.error, checkedAt: new Date(), checkedByUserId: userId, checkedVia: 'platform' };
+    const saved = await this.prisma.appDeployment.upsert({ where: { projectId }, create: { projectId, ...data }, update: data, select: { url: true, ok: true, status: true, database: true, error: true, checkedAt: true, checkedVia: true } });
     await this.core.event(this.prisma, projectId, userId, 'app_deployment_checked', 'handoff', { url: origin, ok: answer.ok, error: answer.error, database: answer.database });
     return { data: saved };
   }

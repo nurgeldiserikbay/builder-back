@@ -134,7 +134,7 @@ export class ChoicesService {
     return {
       data: {
         card: cardKey === 'code_hosting' && githubOauthConfig() && this.key()
-          ? { ...codeHostingCard(access.projectType), options: choiceCards[cardKey].options.map((option) => (option.key === 'github' ? { ...option, steps: githubOauthSteps } : option)) }
+          ? { ...codeHostingCard(access.projectType), options: codeHostingCard(access.projectType).options.map((option) => (option.key === 'github' ? { ...option, steps: githubOauthSteps } : option)) }
           : cardKey === 'technologies' ? technologiesCard(access.projectType) : cardKey === 'code_hosting' ? codeHostingCard(access.projectType) : choiceCards[cardKey],
         recommendation: recommend(cardKey, access),
         choice: choice ? { optionKey: choice.optionKey, reason: choice.reason, stepsDone: choice.stepsDone, chosenAt: choice.chosenAt, cardVersion: choice.cardVersion, verification: choice.verification ?? null } : null,
@@ -149,8 +149,8 @@ export class ChoicesService {
 
   async choose(userId: string, projectId: string, cardKey: string, optionKey: string, reason: string | null) {
     if (!isCard(cardKey)) throw new NotFoundException('CHOICE_CARD_NOT_FOUND');
-    await this.access(userId, projectId, true);
-    const card = choiceCards[cardKey];
+    const access = await this.access(userId, projectId, true);
+    const card = cardKey === 'code_hosting' ? codeHostingCard(access.projectType) : choiceCards[cardKey];
     if (!card.options.some((option) => option.key === optionKey)) throw new BadRequestException('CHOICE_OPTION_INVALID');
     if ((await this.requirementsMet(projectId, cardKey))[optionKey] === false) throw new ConflictException('CHOICE_REQUIREMENT_NOT_MET');
     const previous = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey } }, select: { optionKey: true } });
@@ -167,12 +167,13 @@ export class ChoicesService {
 
   async markStep(userId: string, projectId: string, cardKey: string, stepKey: string, done: boolean) {
     if (!isCard(cardKey)) throw new NotFoundException('CHOICE_CARD_NOT_FOUND');
-    await this.access(userId, projectId, true);
+    const access = await this.access(userId, projectId, true);
     const choice = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey } } });
     if (!choice) throw new ConflictException('CHOICE_NOT_MADE');
-    const step = choiceCards[cardKey].options.find((option) => option.key === choice.optionKey)?.steps.find((item) => item.key === stepKey);
+    const card = cardKey === 'code_hosting' ? codeHostingCard(access.projectType) : choiceCards[cardKey];
+    const step = card.options.find((option) => option.key === choice.optionKey)?.steps.find((item) => item.key === stepKey);
     // Steps that BuildPath checks itself cannot be ticked off by hand.
-    if (!step || step.kind === 'connect' || step.kind === 'verify' || step.kind === 'domain' || step.kind === 'hosting_connect' || step.kind === 'hosting_deploy') throw new BadRequestException('CHOICE_STEP_INVALID');
+    if (!step || step.kind === 'connect' || step.kind === 'verify' || step.kind === 'domain' || step.kind === 'hosting_connect' || step.kind === 'hosting_deploy' || step.kind === 'network_agent') throw new BadRequestException('CHOICE_STEP_INVALID');
     const steps = new Set(choice.stepsDone);
     if (done) steps.add(stepKey); else steps.delete(stepKey);
     await this.prisma.projectChoice.update({ where: { id: choice.id }, data: { stepsDone: [...steps] } });

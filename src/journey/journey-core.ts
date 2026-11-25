@@ -279,7 +279,7 @@ export class JourneyCore {
     const inputs = await this.acceptedInputs(ctx, key);
     let design: ArchitectureDesign | null = null;
     try { design = techPlanDesign(inputs.techplan?.content) ?? null; } catch { design = null; }
-    const deployment = await this.prisma.appDeployment.findUnique({ where: { projectId: ctx.project.id }, select: { url: true, ok: true, database: true, checkedAt: true } });
+    const deployment = await this.prisma.appDeployment.findUnique({ where: { projectId: ctx.project.id }, select: { url: true, ok: true, database: true, checkedAt: true, checkedVia: true } });
     return {
       readiness: await testPlanReadiness(this.prisma, ctx.project.id),
       deployment: deployment ? { ...deployment, checkedAt: deployment.checkedAt.toISOString() } : null,
