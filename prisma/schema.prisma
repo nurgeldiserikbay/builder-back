@@ -390,6 +390,7 @@ model Project {
   /// Owner's cap on AI spending for the whole project, in tiyn; null — no cap.
   aiSpendLimitTiyn  Int?           @map("ai_spend_limit_tiyn")
   changeProposals ChangeProposal[]
+  planTasks       PlanTaskState[]
   stagePlaybooks  StagePlaybook[]
   hostingConnection HostingConnection?
 }
@@ -2346,4 +2347,36 @@ model LoginEvent {
 
   @@index([userId, createdAt(sort: Desc)], map: "login_events_user_created_idx")
   @@map("login_events")
+}
+
+enum PlanTaskStatus {
+  not_started
+  in_progress
+  review
+  done
+  done_with_note
+  blocked
+}
+
+/// Progress of one task of the accepted «План реализации» (PRODUCT_LIFECYCLE §4.8), by the task key of the plan.
+/// The plan itself is a versioned stage result; how far each task got changes daily and lives here.
+model PlanTaskState {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String         @map("project_id") @db.Uuid
+  taskKey         String         @map("task_key") @db.VarChar(32)
+  status          PlanTaskStatus @default(not_started)
+  /// A project member or specialist doing it; null means nobody yet.
+  assigneeUserId  String?        @map("assignee_user_id") @db.Uuid
+  dueDate         DateTime?      @map("due_date") @db.Date
+  /// Required for «готово с замечанием»: why it counts as done without green checks.
+  note            String?        @db.VarChar(500)
+  /// For «заблокирована»: what or whom the task waits for.
+  blockedBy       String?        @map("blocked_by") @db.VarChar(300)
+  updatedByUserId String?        @map("updated_by_user_id") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, taskKey], map: "plan_task_states_project_task_key")
+  @@map("plan_task_states")
 }

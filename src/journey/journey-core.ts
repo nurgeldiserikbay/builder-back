@@ -1,5 +1,6 @@
 import type { ArchitectureDesign } from './architecture.js';
 import type { ConceptInputs } from './concept.js';
+import type { Contracts } from './contracts.js';
 import type { IdeaReview } from './idea.js';
 import type { Suggestions } from './suggestions.js';
 import { buildAppPlan, type AppFeatures, type AppScreens } from './webapp.js';
@@ -206,7 +207,12 @@ export class JourneyCore {
     };
   }
 
-  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs; design?: ArchitectureDesign | null }> {
+  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null }> {
+    // The plan is checked against the ТЗ (every must feature planned) and the contracts (every module implemented).
+    if (key === 'roadmap') {
+      const inputs = await this.acceptedInputs(ctx, key);
+      return { sitemap: null, features: (inputs.features?.content as AppFeatures | undefined) ?? null, contracts: (inputs.contracts?.content as Contracts | undefined) ?? null };
+    }
     // Contracts are checked against the ТЗ (coverage, rights) and the architecture's schema (owners of records).
     if (key === 'contracts') {
       const inputs = await this.acceptedInputs(ctx, key);

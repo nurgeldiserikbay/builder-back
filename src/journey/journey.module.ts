@@ -14,11 +14,12 @@ import { CommentsService } from './comments.service.js';
 import { StageReviewService } from './stage-review.service.js';
 import { ChangeProposalsService } from './change-proposals.service.js';
 import { PlaybooksService } from './playbooks.service.js';
+import { RoadmapProgressService } from './roadmap-progress.service.js';
 
 @Module({
   imports: [AuthModule, CatalogModule],
   controllers: [JourneyController, InviteInfoController],
-  providers: [JourneyCore, StageAiService, InterviewService, ChangeNoticesService, JourneyService, SpecialistsService, WorktimeService, ChangeDeadlinesService, CommentsService, StageReviewService, ChangeProposalsService, PlaybooksService],
+  providers: [JourneyCore, StageAiService, InterviewService, ChangeNoticesService, JourneyService, SpecialistsService, WorktimeService, ChangeDeadlinesService, CommentsService, StageReviewService, ChangeProposalsService, PlaybooksService, RoadmapProgressService],
   exports: [JourneyService, SpecialistsService, WorktimeService, JourneyCore, CommentsService, StageReviewService, InterviewService],
 })
 export class JourneyModule {}

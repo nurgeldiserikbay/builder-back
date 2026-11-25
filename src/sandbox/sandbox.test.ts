@@ -176,6 +176,8 @@ describe('starter code check (database)', async () => {
     await accept('techplan');
     await journey.saveDraft(owner.id, projectId, 'contracts', { content: ((await journey.stage(owner.id, projectId, 'contracts')).data.options.contracts as { template: unknown }).template, baseVersionId: null });
     await accept('contracts');
+    await journey.saveDraft(owner.id, projectId, 'roadmap', { content: ((await journey.stage(owner.id, projectId, 'roadmap')).data.options.roadmap as { template: unknown }).template, baseVersionId: null });
+    await accept('roadmap');
 
     const runner = new SandboxRunner(prisma!);
     const service = new StarterChecksService(prisma!, core, runner);

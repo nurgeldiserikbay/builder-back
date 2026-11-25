@@ -115,6 +115,11 @@ export function artifactSummary(type: string, content: unknown): string {
     const value = content as { screens?: Array<{ title: string }> };
     return tr("Экраны: {0}", [(value.screens ?? []).map((screen) => screen.title).join(' · ')]);
   }
+  if (type === 'roadmap') {
+    const value = content as { modules?: Array<{ name: string; tasks?: Array<{ hours?: number }> }> };
+    const hours = (value.modules ?? []).flatMap((module) => module.tasks ?? []).reduce((sum, task) => sum + (task.hours ?? 0), 0);
+    return [tr("Модули: {0}", [(value.modules ?? []).map((module) => module.name).join(' · ') || '—']), tr("Оценка: {0} ч", [hours])].join('\n');
+  }
   if (type === 'contracts') {
     const value = content as { modules?: Array<{ name: string }>; operations?: unknown[]; events?: unknown[] };
     return [tr("Модули: {0}", [(value.modules ?? []).map((module) => module.name).join(' · ') || '—']), tr("Операций API: {0}, событий: {1}", [(value.operations ?? []).length, (value.events ?? []).length])].join('\n');

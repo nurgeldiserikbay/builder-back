@@ -2,6 +2,7 @@
 // (TECHNICAL_SPECIFICATION.md §6 capability manifest): it takes the project to a complete, checked package for a developer —
 // roles and functions with acceptance criteria, screens with a clickable prototype, architecture with a data model and an
 // API contract — all derived deterministically from accepted stages, so the package always matches what was agreed.
+import { roadmapMarkdown, type Roadmap } from './roadmap.js';
 import { contractsMarkdown, contractsMigration, contractsOpenApi, type Contracts } from './contracts.js';
 import { COMPONENT_CATALOG, expandedSchema, fieldTypeLabels as designFieldLabels, templateDesign, type ArchitectureDesign } from './architecture.js';
 import { chosenForSpec, type Suggestions } from './suggestions.js';
@@ -517,7 +518,7 @@ export function handoffChecks(input: { features: AppFeatures | null; screens: Ap
   return checks;
 }
 
-export function buildHandoff(input: { brief: Brief | null; process: BusinessProcess | null; features: AppFeatures; screens: AppScreens; plan: TechPlan; contracts?: Contracts | null; locale: string; sourceVersionIds: Record<string, string> }): HandoffArtifact {
+export function buildHandoff(input: { brief: Brief | null; process: BusinessProcess | null; features: AppFeatures; screens: AppScreens; plan: TechPlan; contracts?: Contracts | null; roadmap?: Roadmap | null; locale: string; sourceVersionIds: Record<string, string> }): HandoffArtifact {
   return runWithLocale(contentLocale(input.locale), () => {
     const name = input.brief?.businessName || tr('Приложение');
     const roleName = (key: string) => input.features.roles.find((role) => role.key === key)?.name ?? key;
@@ -573,6 +574,7 @@ export function buildHandoff(input: { brief: Brief | null; process: BusinessProc
       `- permissions.md — ${tr('права по ролям')}`, `- data-model.md — ${tr('схема данных (Mermaid)')}`, `- user-stories.md — ${tr('пользовательские истории')}`,
       ...(contractFiles.length ? [`- api.yaml — ${tr('контракт API (OpenAPI 3.1): операции, права по ролям, ошибки')}`, `- contracts.md — ${tr('модули, события и интеграции; что делать при сбое сервисов')}`, `- schema.sql — ${tr('первая миграция базы данных (PostgreSQL)')}`]
         : [`- api.yaml — ${tr('черновик контракта API (OpenAPI 3.1)')}`]),
+      ...(input.roadmap ? [`- plan.md — ${tr('план реализации: модули, порядок, оценки, риски')}`] : []),
       `- prototype/ — ${tr('кликабельный прототип экранов')}`, ''].join('\n');
     return {
       packageVersion: WEBAPP_VERSION,
@@ -583,6 +585,7 @@ export function buildHandoff(input: { brief: Brief | null; process: BusinessProc
         { name: 'data-model.md', mimeType: 'text/markdown', content: `# ${tr('Схема данных')}\n\n${er}\n` },
         { name: 'user-stories.md', mimeType: 'text/markdown', content: stories },
         ...(contractFiles.length ? contractFiles : [{ name: 'api.yaml', mimeType: 'application/yaml', content: input.plan.api }]),
+        ...(input.roadmap ? [{ name: 'plan.md', mimeType: 'text/markdown', content: roadmapMarkdown(input.roadmap, input.features) }] : []),
         ...prototype,
       ],
       checks: handoffChecks({ features: input.features, screens: input.screens, plan: input.plan }),

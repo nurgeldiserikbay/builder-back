@@ -20,12 +20,13 @@ import { ChangeNoticesService } from './change-notices.service.js';
 import { StageAiService } from './stage-ai.service.js';
 import { WorktimeService } from './worktime.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
+import { RoadmapProgressService } from './roadmap-progress.service.js';
 
 const brief: Brief = { businessName: 'Сервис Клин', whatYouDo: 'Уборка квартир по заявкам', audience: 'Жители города', city: 'Алматы', mainAction: 'form', phone: '+7 701 000 00 00', messenger: null, email: null, address: null, tone: 'friendly' };
 
 describe('web application route', () => {
   it('the route goes from functions to screens, architecture and the package', () => {
-    assert.deepEqual(projectTypes.web_app.stages, ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'handoff']);
+    assert.deepEqual(projectTypes.web_app.stages, ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'handoff']);
     assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'techplan'), ['goal', 'process', 'features', 'screens']);
     assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'screens'), ['features']);
   });
@@ -192,10 +193,32 @@ describe('web application route (database)', async () => {
     const files = ((await journey.stage(owner.id, projectId, 'contracts')).data.options.contracts as unknown as { files: Array<{ name: string; content: string }> }).files;
     assert.ok(files.find((file) => file.name === 'schema.sql')!.content.includes('CREATE TABLE "review"'));
     await accept('contracts');
+    // The plan starts from the platform's draft by the contracts; after acceptance its tasks are tracked.
+    const roadmap = (await journey.stage(owner.id, projectId, 'roadmap')).data.options.roadmap as unknown as { template: { modules: Array<{ key: string }> } };
+    assert.equal(roadmap.template.modules[0]!.key, 'setup');
+    await journey.saveDraft(owner.id, projectId, 'roadmap', { content: roadmap.template, baseVersionId: null });
+    await accept('roadmap');
+    const progress = new RoadmapProgressService(prisma!, core);
+    const first = (await progress.view(owner.id, projectId)).data;
+    assert.equal(first.progress, 0);
+    assert.ok(first.criticalPath[0] === 'setup' && first.next);
+    // «Готово» needs green checks; without them a task closes only with a written reason.
+    await assert.rejects(progress.update(owner.id, projectId, 'setup_repo', { status: 'done' }), /TASK_NEEDS_CHECKS/);
+    await assert.rejects(progress.update(owner.id, projectId, 'setup_repo', { status: 'done_with_note', note: 'ок' }), /TASK_NOTE_REQUIRED/);
+    await assert.rejects(progress.update(owner.id, projectId, 'setup_db', { status: 'blocked' }), /TASK_BLOCKER_REQUIRED/);
+    const after = (await progress.update(owner.id, projectId, 'setup_repo', { status: 'done_with_note', note: 'Проверил сборку руками, тестов ещё нет', assigneeUserId: owner.id, dueDate: '2026-01-05' })).data;
+    const setup = after.modules.find((module) => module.key === 'setup')!;
+    // Progress is by estimated hours, not by the number of tasks.
+    assert.equal(setup.progress, Math.round((setup.tasks[0]!.hours / setup.hoursTotal) * 100));
+    assert.equal(after.progress, Math.round((setup.tasks[0]!.hours / after.hoursTotal) * 100));
+    await progress.update(owner.id, projectId, 'setup_db', { status: 'blocked', blockedBy: 'Ждём доступ к базе от владельца' });
+    assert.deepEqual((await progress.view(owner.id, projectId)).data.blocked.map((task) => task.key), ['setup_db']);
+    await assert.rejects(progress.update(owner.id, projectId, 'nope', { status: 'in_progress' }), /TASK_NOT_FOUND/);
     const built = await journey.buildHandoff(owner.id, projectId);
     assert.deepEqual(built.data.checks.filter((check) => check.status === 'failed'), []);
     const view = await journey.stage(owner.id, projectId, 'handoff');
     assert.ok((view.data.current!.content as { files: Array<{ name: string }> }).files.some((file) => file.name === 'schema.sql'));
+    assert.ok((view.data.current!.content as { files: Array<{ name: string }> }).files.some((file) => file.name === 'plan.md'));
     assert.ok((view.data.current!.content as { files: Array<{ name: string }> }).files.some((file) => file.name === 'spec.md'));
     await assert.rejects(journey.saveDraft(owner.id, projectId, 'handoff', { content: {}, baseVersionId: built.data.versionId }), /STAGE_NOT_EDITABLE/);
     assert.ok((await journey.handoffFiles(owner.id, projectId)).data.files.some((file) => file.name === 'README.md'));
