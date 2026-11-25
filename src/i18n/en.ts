@@ -2495,7 +2495,7 @@ export const en: Record<string, string> = {
   "Что прочитает клиент и как это выглядит.": "What the client will read and how it looks.",
   "Готовый результат и отчёт о проверках.": "The finished result and a check report.",
   "Запуск": "Launch",
-  "Сайт работает по своему адресу и принимает клиентов.": "The site runs at its own address and takes clients.",
+  "Продукт работает по своему адресу и принимает клиентов.": "The product runs at its own address and takes clients.",
   "После запуска": "After launch",
   "Заявки, статистика, правки и следующие версии.": "Requests, statistics, edits and next versions.",
   "Если не решить, кто ваш клиент и что он должен сделать, сайт получится «обо всём» и не будет приносить заявки.": "If you do not decide who your client is and what they should do, the site ends up being «about everything» and brings no requests.",
