@@ -26,7 +26,7 @@ const brief: Brief = { businessName: 'Сервис Клин', whatYouDo: 'Убо
 
 describe('web application route', () => {
   it('the route goes from functions to screens, architecture and the package', () => {
-    assert.deepEqual(projectTypes.web_app.stages, ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'handoff']);
+    assert.deepEqual(projectTypes.web_app.stages, ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan', 'handoff']);
     assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'techplan'), ['goal', 'process', 'features', 'screens']);
     assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'screens'), ['features']);
   });
@@ -214,11 +214,28 @@ describe('web application route (database)', async () => {
     await progress.update(owner.id, projectId, 'setup_db', { status: 'blocked', blockedBy: 'Ждём доступ к базе от владельца' });
     assert.deepEqual((await progress.view(owner.id, projectId)).data.blocked.map((task) => task.key), ['setup_db']);
     await assert.rejects(progress.update(owner.id, projectId, 'nope', { status: 'in_progress' }), /TASK_NOT_FOUND/);
+    // The test plan: the platform's cases, plus one checked by hand for «setup_env», so that task can become «готова».
+    const testplan = (await journey.stage(owner.id, projectId, 'testplan')).data.options.testplan as unknown as { template: { cases: Array<{ key: string; task: string | null; method: string; class: string }> } };
+    for (const kind of ['normal', 'rights', 'security']) assert.ok(testplan.template.cases.some((item) => item.class === kind), kind);
+    const cases = [...testplan.template.cases.filter((item) => item.task !== 'setup_env'), { key: 'env_check', title: 'Тестовая версия открывается', class: 'normal', given: 'Выкладка сделана', steps: ['Открыть адрес тестовой версии'], expected: 'Открывается экран входа', task: 'setup_env', method: 'human', blocking: true }];
+    await journey.saveDraft(owner.id, projectId, 'testplan', { content: { ...testplan.template, cases }, baseVersionId: null });
+    await accept('testplan');
+    const auto = cases.find((item) => item.method === 'auto')!;
+    await assert.rejects(progress.recordCase(owner.id, projectId, auto.key, { status: 'passed' }), /CASE_AUTOMATIC/);
+    await assert.rejects(progress.update(owner.id, projectId, 'setup_env', { status: 'done' }), /TASK_CHECKS_NOT_PASSED/);
+    await assert.rejects(progress.recordCase(owner.id, projectId, 'env_check', { status: 'failed' }), /CASE_NOTE_REQUIRED/);
+    await progress.recordCase(owner.id, projectId, 'env_check', { status: 'passed' });
+    const closed = (await progress.update(owner.id, projectId, 'setup_env', { status: 'done' })).data;
+    assert.deepEqual(closed.modules[0]!.tasks.find((task) => task.key === 'setup_env')!.checks, { total: 1, passed: 1, failed: 0 });
+    // A task whose cases are automatic waits for the test runs.
+    const waiting = closed.modules.flatMap((module) => module.tasks).find((task) => task.checks.total > 0 && task.checks.passed < task.checks.total)!;
+    await assert.rejects(progress.update(owner.id, projectId, waiting.key, { status: 'done' }), /TASK_CHECKS_NOT_PASSED/);
     const built = await journey.buildHandoff(owner.id, projectId);
     assert.deepEqual(built.data.checks.filter((check) => check.status === 'failed'), []);
     const view = await journey.stage(owner.id, projectId, 'handoff');
     assert.ok((view.data.current!.content as { files: Array<{ name: string }> }).files.some((file) => file.name === 'schema.sql'));
     assert.ok((view.data.current!.content as { files: Array<{ name: string }> }).files.some((file) => file.name === 'plan.md'));
+    assert.ok((view.data.current!.content as { files: Array<{ name: string }> }).files.some((file) => file.name === 'test-plan.md'));
     assert.ok((view.data.current!.content as { files: Array<{ name: string }> }).files.some((file) => file.name === 'spec.md'));
     await assert.rejects(journey.saveDraft(owner.id, projectId, 'handoff', { content: {}, baseVersionId: built.data.versionId }), /STAGE_NOT_EDITABLE/);
     assert.ok((await journey.handoffFiles(owner.id, projectId)).data.files.some((file) => file.name === 'README.md'));

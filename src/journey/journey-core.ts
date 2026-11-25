@@ -208,6 +208,13 @@ export class JourneyCore {
   }
 
   async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null }> {
+    // The test plan is checked against the ТЗ (functions, rights) and the architecture's threats.
+    if (key === 'testplan') {
+      const inputs = await this.acceptedInputs(ctx, key);
+      let design: ArchitectureDesign | null = null;
+      try { design = techPlanDesign(inputs.techplan?.content) ?? null; } catch { design = null; }
+      return { sitemap: null, features: (inputs.features?.content as AppFeatures | undefined) ?? null, design };
+    }
     // The plan is checked against the ТЗ (every must feature planned) and the contracts (every module implemented).
     if (key === 'roadmap') {
       const inputs = await this.acceptedInputs(ctx, key);

@@ -1,3 +1,4 @@
+import { CASE_CLASSES, CASE_METHODS, TESTPLAN_LIMITS, normalizeTestPlan, templateTestPlan, testPlanMarkdown, type TestPlan } from './testplan.js';
 import { EXECUTORS, ROADMAP_LIMITS, normalizeRoadmap, roadmapMarkdown, templateRoadmap, type Roadmap } from './roadmap.js';
 import { CHANNELS, CONTRACT_LIMITS, METHODS, contractsMarkdown, contractsMigration, contractsOpenApi, normalizeContracts, templateContracts, type Contracts } from './contracts.js';
 import { stageRequests, UNSETTLED_REQUESTS } from './stage-requests.js';
@@ -238,6 +239,7 @@ export class JourneyService {
     const concept = definition.artifactType === 'concept' ? await this.conceptView(ctx, stageKey, current?.content ?? null) : null;
     const contracts = definition.artifactType === 'contracts' ? await this.contractsView(ctx, stageKey, current?.content ?? null) : null;
     const roadmap = definition.artifactType === 'roadmap' ? await this.roadmapView(ctx, stageKey, current?.content ?? null) : null;
+    const testplan = definition.artifactType === 'testplan' ? await this.testPlanView(ctx, stageKey, current?.content ?? null) : null;
     const techPlanOutdated = Boolean(techPlanPreview && current && !sameTechPlan(techPlanPreview, current.content as unknown as TechPlan));
     const scheduleTemplate = definition.artifactType === 'schedule' && !current
       ? await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSchedule(inputs.offer?.content as Offer | undefined ?? null))) : null;
@@ -332,6 +334,7 @@ export class JourneyService {
           ...(concept ? { concept } : {}),
           ...(contracts ? { contracts } : {}),
           ...(roadmap ? { roadmap } : {}),
+          ...(testplan ? { testplan } : {}),
           ...(definition.artifactType === 'process' ? { process: { capabilities: capabilitiesFor(ctx.type.key), actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS, situations: { version: SITUATIONS_VERSION, items: situationsFor(ctx.type.key) } } } : {}),
           ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.core.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
@@ -562,7 +565,7 @@ export class JourneyService {
     const artifact = buildHandoffPackage({
       brief: (inputs.goal?.content as Brief | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
       features: inputs.features!.content as AppFeatures, screens: inputs.screens!.content as AppScreens, plan: inputs.techplan!.content as TechPlan,
-      contracts: (inputs.contracts?.content as Contracts | undefined) ?? null, roadmap: (inputs.roadmap?.content as Roadmap | undefined) ?? null, locale: ctx.project.locale, sourceVersionIds: Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.versionId])),
+      contracts: (inputs.contracts?.content as Contracts | undefined) ?? null, roadmap: (inputs.roadmap?.content as Roadmap | undefined) ?? null, testplan: (inputs.testplan?.content as TestPlan | undefined) ?? null, locale: ctx.project.locale, sourceVersionIds: Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.versionId])),
     });
     const version = await this.prisma.$transaction(async (tx) => {
       const created = await this.core.createVersion(tx, { projectId, stage, artifactType: 'handoff', content: artifact, origin: 'compiled', note: 'Пакет из принятых этапов', userId });
@@ -844,6 +847,34 @@ export class JourneyService {
    * What the contracts editor needs: the first draft from the accepted architecture and ТЗ (also for «Собрать заново»), the
    * names it refers to, and the files the current version turns into, so the owner reads what the developer gets.
    */
+  /** The test plan editor: the platform's draft, what cases can refer to, the document, and results once approved. */
+  private async testPlanView(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: StageKey, content: unknown) {
+    const satisfied = inputsSatisfied(ctx.route, ctx.dep, key);
+    const inputs = satisfied ? await this.core.acceptedInputs(ctx, key) : {};
+    const features = (inputs.features?.content as AppFeatures | undefined) ?? null;
+    const contracts = (inputs.contracts?.content as Contracts | undefined) ?? null;
+    const roadmap = (inputs.roadmap?.content as Roadmap | undefined) ?? null;
+    const process = (inputs.process?.content as BusinessProcess | undefined) ?? null;
+    const design = techPlanDesignOf(inputs.techplan?.content);
+    const template = features ? inProject(ctx, () => templateTestPlan({ features, contracts, design, roadmap, process })) : null;
+    let current: TestPlan | null = null;
+    try { current = content ? normalizeTestPlan(content) : null; } catch { current = null; }
+    const stage = this.core.stageOf(ctx, key);
+    const approved = stage.approvedVersionId ? await this.core.versionContent(stage.approvedVersionId) : null;
+    // A result recorded against an older plan version is shown as stale: the case may have changed since.
+    const results = approved ? (await this.prisma.planCaseResult.findMany({ where: { projectId: ctx.project.id }, select: { caseKey: true, status: true, note: true, planVersion: true } }))
+      .map((row) => ({ ...row, stale: row.planVersion !== approved.versionNumber })) : [];
+    return {
+      template, limits: TESTPLAN_LIMITS, classes: CASE_CLASSES, methods: CASE_METHODS, missing: satisfied ? null : 'inputs',
+      markdown: current ? inProject(ctx, () => testPlanMarkdown(current!, features)) : null,
+      roles: features?.roles.map((role) => ({ key: role.key, name: role.name })) ?? [],
+      features: features?.features.map((feature) => ({ key: feature.key, title: feature.title, priority: feature.priority })) ?? [],
+      tasks: roadmap?.modules.flatMap((module) => module.tasks.map((task) => ({ key: task.key, title: task.title, module: module.name }))) ?? [],
+      threats: design?.threats.map((threat) => ({ key: threat.key, how: threat.how })) ?? [],
+      approved: Boolean(stage.approvedVersionId), results,
+    };
+  }
+
   /** The plan editor: the platform's first plan from the accepted contracts, ТЗ and schema, and the plan as a document. */
   private async roadmapView(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: StageKey, content: unknown) {
     const satisfied = inputsSatisfied(ctx.route, ctx.dep, key);

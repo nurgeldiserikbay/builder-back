@@ -391,6 +391,7 @@ model Project {
   aiSpendLimitTiyn  Int?           @map("ai_spend_limit_tiyn")
   changeProposals ChangeProposal[]
   planTasks       PlanTaskState[]
+  caseResults     PlanCaseResult[]
   stagePlaybooks  StagePlaybook[]
   hostingConnection HostingConnection?
 }
@@ -2379,4 +2380,28 @@ model PlanTaskState {
 
   @@unique([projectId, taskKey], map: "plan_task_states_project_task_key")
   @@map("plan_task_states")
+}
+
+enum PlanCaseStatus {
+  passed
+  failed
+}
+
+/// The latest result of one test case of the accepted «План проверки» (PRODUCT_LIFECYCLE §4.10). A person records cases
+/// checked by hand or in a browser; automatic cases get results only from test runs. History is in the project log.
+model PlanCaseResult {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId    String         @map("project_id") @db.Uuid
+  caseKey      String         @map("case_key") @db.VarChar(32)
+  status       PlanCaseStatus
+  /// What was seen; required when the case failed.
+  note         String?        @db.VarChar(500)
+  /// The test plan version the case was checked against.
+  planVersion  Int            @map("plan_version")
+  byUserId     String?        @map("by_user_id") @db.Uuid
+  updatedAt    DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project      Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, caseKey], map: "plan_case_results_project_case_key")
+  @@map("plan_case_results")
 }

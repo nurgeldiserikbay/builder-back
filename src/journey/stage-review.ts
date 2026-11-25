@@ -4,6 +4,7 @@
 import { designIssues, type ArchitectureDesign } from './architecture.js';
 import { contractIssues, type Contracts } from './contracts.js';
 import { roadmapIssues, type Roadmap } from './roadmap.js';
+import { testPlanIssues, type TestPlan } from './testplan.js';
 import { coverage, productSteps } from './spec-extras.js';
 import { conceptDocument, undefinedTerms, type Concept, type ConceptInputs } from './concept.js';
 import { FIRST_VERSION_EXTRAS, type Suggestions } from './suggestions.js';
@@ -666,6 +667,9 @@ export function reviewStage(type: string, content: unknown, context: { features?
         code: issue.code, severity: issue.severity, category: issue.code.startsWith('ARCH_THREAT') ? 'security' : 'logic', target: issue.target, where: tr('Архитектура'), message: issue.message, fix: issue.fix,
       });
     }
+    if (type === 'testplan') for (const issue of testPlanIssues(content as TestPlan, context.features ?? null, context.design ?? null)) push({
+      code: issue.code, severity: issue.severity, category: issue.code === 'TESTPLAN_THREAT_UNCOVERED' || issue.code === 'TESTPLAN_SENSITIVE_UNCOVERED' ? 'security' : 'logic', target: issue.target, where: tr('План проверки'), message: issue.message, fix: issue.fix,
+    });
     if (type === 'roadmap') for (const issue of roadmapIssues(content as Roadmap, context.features ?? null, context.contracts ?? null)) push({
       code: issue.code, severity: issue.severity, category: 'logic', target: issue.target, where: tr('План реализации'), message: issue.message, fix: issue.fix,
     });
