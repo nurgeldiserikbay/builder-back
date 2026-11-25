@@ -135,6 +135,8 @@ export function templateRoadmap(input: { contracts: Contracts; features: AppFeat
     modules.push({ key: 'notify', name: tr('Уведомления и интеграции'), summary: tr('События из контрактов и вызовы внешних сервисов.'), contractModule: null,
       dependsOn: modules.filter((module) => module.contractModule).map((module) => module.key), executor: contracts.integrations.some((item) => PAYMENT.test(item.service)) ? 'specialist' : 'ai_supervised', tasks });
   }
+  // Keep only direct needs: «Заявки» after «Аккаунты» already means after «Каркас», so the graph shows one arrow, not two.
+  for (const module of modules) module.dependsOn = module.dependsOn.filter((key) => !module.dependsOn.some((other) => other !== key && dependsOnPath(modules, other, key)));
   const risks: RoadmapRisk[] = (idea?.risks ?? []).filter((risk) => risk.impact !== 'low' || risk.decision === 'open').map((risk) => ({ key: risk.key, text: risk.text, action: risk.note, module: null }));
   return normalizeRoadmap({ modules: modules.map((module) => ({ ...module, tasks: module.tasks.slice(0, ROADMAP_LIMITS.tasks) })), risks, hoursPerDay: 6, notes: '' });
 }
