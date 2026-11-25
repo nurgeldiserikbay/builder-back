@@ -3,6 +3,7 @@
 // A blocking finding stops acceptance until it is fixed or the owner explains in writing why the stage goes on anyway.
 import { designIssues, type ArchitectureDesign } from './architecture.js';
 import { contractIssues, type Contracts } from './contracts.js';
+import { roadmapIssues, type Roadmap } from './roadmap.js';
 import { coverage, productSteps } from './spec-extras.js';
 import { conceptDocument, undefinedTerms, type Concept, type ConceptInputs } from './concept.js';
 import { FIRST_VERSION_EXTRAS, type Suggestions } from './suggestions.js';
@@ -646,7 +647,7 @@ function situationsReview(process: BusinessProcess, projectType: string | null |
 }
 
 /** Review of one stage result. Types without rules yet get an empty review with the full score. */
-export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null; process?: BusinessProcess | null; projectType?: string | null; concept?: ConceptInputs; design?: ArchitectureDesign | null } = {}): StageReview {
+export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null; process?: BusinessProcess | null; projectType?: string | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null } = {}): StageReview {
   const found: ReviewFinding[] = [];
   const counts = new Map<string, number>();
   const push: Push = (finding) => {
@@ -665,6 +666,9 @@ export function reviewStage(type: string, content: unknown, context: { features?
         code: issue.code, severity: issue.severity, category: issue.code.startsWith('ARCH_THREAT') ? 'security' : 'logic', target: issue.target, where: tr('Архитектура'), message: issue.message, fix: issue.fix,
       });
     }
+    if (type === 'roadmap') for (const issue of roadmapIssues(content as Roadmap, context.features ?? null, context.contracts ?? null)) push({
+      code: issue.code, severity: issue.severity, category: 'logic', target: issue.target, where: tr('План реализации'), message: issue.message, fix: issue.fix,
+    });
     if (type === 'contracts') for (const issue of contractIssues(content as Contracts, context.features ?? null, context.design ?? null)) push({
       code: issue.code, severity: issue.severity, category: issue.code === 'CONTRACT_OPERATION_OPEN' || issue.code === 'CONTRACT_ROLE_NOT_ALLOWED' ? 'security' : 'logic', target: issue.target, where: tr('Контракты'), message: issue.message, fix: issue.fix,
     });

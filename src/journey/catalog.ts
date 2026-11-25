@@ -1,10 +1,10 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.13.0';
+export const ROUTE_CATALOG_VERSION = '1.14.0';
 
-export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'content' | 'design' | 'build' | 'handoff';
-export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'content' | 'design' | 'site' | 'handoff';
+export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'content' | 'design' | 'build' | 'handoff';
+export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'content' | 'design' | 'site' | 'handoff';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking' | 'web_app';
 
@@ -441,6 +441,24 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     contract: { explanation: 'Контракт — то, на что опираются все, кто пишет код: пока он не меняется, модули можно делать одновременно. Любое изменение — новая версия с уведомлением тем, кто на неё опирается.' },
     playbook: { version: '1.0.0', instructions: [] },
   },
+  roadmap: {
+    key: 'roadmap',
+    version: '1.0.0',
+    title: 'План реализации',
+    purpose: 'Разделим работу на модули по контрактам и решим, в каком порядке их делать: что можно параллельно, что идёт в первую версию, сколько это часов и запросов к ИИ и кто делает каждый модуль. После утверждения план становится рабочим инструментом: у каждой задачи — статус, исполнитель и срок, а прогресс считается по оценкам.',
+    outcome: 'Модули с задачами, граф зависимостей с критическим путём, выпуски, оценка часов и запросов к ИИ, исполнители, риски; затем — ход работ.',
+    artifactType: 'roadmap',
+    inputs: ['idea', 'features', 'techplan', 'contracts'],
+    ai: {
+      level: 'none',
+      whatItDoes: 'Первый вариант платформа строит сама по контрактам, ТЗ и схеме данных: модуль на каждый модуль контрактов, задачи из операций, функций, событий и интеграций, порядок — из связей данных. Граф, критический путь и срок пересчитываются сами.',
+      instructionExamples: [],
+    },
+    acceptance: ['В зависимостях нет циклов', 'Каждая обязательная функция в каком-то модуле', 'У каждого модуля есть исполнитель и оценка', 'Срок и бюджет вас устраивают'],
+    acceptExplanation: 'Утверждённый план — договорённость о порядке работ и бюджете. Дальше в нём отмечают ход работ: статусы задач, исполнителей и сроки.',
+    importHint: null,
+    playbook: { version: '1.0.0', instructions: [] },
+  },
   content: {
     key: 'content',
     version: '1.0.0',
@@ -519,7 +537,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     purpose: 'Соберём всё, что нужно для кода: техническое задание с критериями приёмки, права по ролям, схему данных, черновик контракта API и прототип экранов. По пакету ИИ-агент пишет всё приложение — экраны, вход, базу данных и тесты, — а BuildPath проверяет его и отправляет в ваш репозиторий. Разработчик может продолжить с этого же пакета.',
     outcome: 'Архив с ТЗ, правами, схемой данных, контрактом API и прототипом; проверка полноты.',
     artifactType: 'handoff',
-    inputs: ['goal', 'process', 'features', 'screens', 'techplan', 'contracts'],
+    inputs: ['goal', 'process', 'features', 'screens', 'techplan', 'contracts', 'roadmap'],
     ai: {
       level: 'none',
       whatItDoes: 'Пакет собирает платформа по принятым этапам, без ИИ: он всегда совпадает с тем, о чём вы договорились.',
@@ -584,7 +602,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Приложение со входом, ролями и своей логикой: кабинет клиента, учёт заявок, внутренняя система. BuildPath доведёт его до полного пакета — функции, экраны с прототипом, архитектуру и контракт API, — а ИИ-агент напишет по нему код приложения.',
     goodFor: 'Тем, кому нужен личный кабинет, учёт или внутренний сервис.',
     examples: ['Кабинет клиента сервиса', 'Учёт заявок и выездов', 'Запись на курсы с кабинетом ученика', 'Внутренняя система для сотрудников'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'handoff'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'handoff'],
     resultExplanation: 'Пакет для разработки — техническое задание, права по ролям, схема данных, контракт API и кликабельный прототип — и код всего приложения, который пишет ИИ-агент и проверяет платформа. Запускаете вы: на своём Render или сервере.',
   },
 };

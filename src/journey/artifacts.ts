@@ -1,3 +1,4 @@
+import { normalizeRoadmap, roadmapIssues, type Roadmap } from './roadmap.js';
 import { contractIssues, normalizeContracts, type Contracts } from './contracts.js';
 import { conceptIssues, normalizeConcept, type Concept } from './concept.js';
 import { ideaIssues, normalizeIdea, type IdeaReview } from './idea.js';
@@ -222,6 +223,7 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown, projectType?
     case 'features': return normalizeFeatures(raw);
     case 'screens': return normalizeScreens(raw);
     case 'contracts': return normalizeContracts(raw);
+    case 'roadmap': return normalizeRoadmap(raw);
     default: throw new ArtifactValidationError('ARTIFACT_NOT_EDITABLE');
   }
 }
@@ -243,6 +245,7 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'features') return ['summary', 'roles', 'features', 'sensitivity', 'integrations', 'requirements', 'limits', 'questions', 'access', 'quality', 'services'];
   if (type === 'screens') return ['screens'];
   if (type === 'contracts') return ['modules', 'operations', 'events', 'integrations'];
+  if (type === 'roadmap') return ['modules', 'risks', 'hoursPerDay', 'notes'];
   return [];
 }
 
@@ -335,6 +338,11 @@ export function completenessIssues(type: ArtifactType, content: unknown, context
   if (type === 'idea') issues.push(...ideaIssues(content as IdeaReview));
   if (type === 'suggestions') issues.push(...suggestionsIssues(content as Suggestions));
   if (type === 'concept') issues.push(...conceptIssues(content as Concept));
+  if (type === 'roadmap') {
+    const value = content as Roadmap;
+    if (!value.modules.length) issues.push({ key: 'modules', message: tr('Добавьте хотя бы один модуль.') });
+    for (const issue of roadmapIssues(value, null, null).filter((item) => item.severity === 'blocking')) issues.push({ key: 'modules', message: issue.message });
+  }
   if (type === 'contracts') {
     const value = content as Contracts;
     if (!value.operations.length) issues.push({ key: 'operations', message: tr('Добавьте хотя бы одну операцию API.') });

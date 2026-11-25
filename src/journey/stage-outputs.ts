@@ -15,12 +15,13 @@ import type { Sitemap } from './sitemap.js';
 import type { TechPlan } from './techplan.js';
 import type { ArchitectureDesign } from './architecture.js';
 import { contractIssues, type Contracts } from './contracts.js';
+import { roadmapIssues, scheduleOf, type Roadmap } from './roadmap.js';
 import type { AppFeatures, AppScreens } from './webapp.js';
 
 export const OUTPUTS_VERSION = '1.0.0';
 export type OutputLevel = 'required' | 'recommended';
 interface OutputItem<T> { key: string; text: () => string; level: OutputLevel; met: (content: T, context: OutputContext) => boolean }
-export interface OutputContext { features?: AppFeatures | null; design?: ArchitectureDesign | null }
+export interface OutputContext { features?: AppFeatures | null; design?: ArchitectureDesign | null; contracts?: Contracts | null }
 
 const PLACEHOLDER = /\[[^\]]{1,80}\]/;
 const filled = (value: string | null | undefined) => Boolean(value?.trim());
@@ -120,8 +121,16 @@ const contracts: OutputItem<Contracts>[] = [
   { key: 'fallbacks', level: 'recommended', text: () => tr('Для внешних сервисов сказано, что делать при сбое'), met: (c, context) => !['CONTRACT_INTEGRATION_NO_FALLBACK', 'CONTRACT_SERVICE_MISSING'].some((code) => contractCodes(c, context).has(code)) },
 ];
 
+const roadmapCodes = (value: Roadmap, context: OutputContext) => new Set(roadmapIssues(value, context.features ?? null, context.contracts ?? null).map((issue) => issue.code));
+const roadmap: OutputItem<Roadmap>[] = [
+  { key: 'order', level: 'required', text: () => tr('Порядок без циклов — по нему модули отдают исполнителям'), met: (r) => r.modules.length > 0 && scheduleOf(r) !== null },
+  { key: 'coverage', level: 'required', text: () => tr('Каждая обязательная функция и каждый модуль контрактов в плане'), met: (r, context) => !['ROADMAP_FEATURE_MISSING', 'ROADMAP_CONTRACT_MODULE_MISSING'].some((code) => roadmapCodes(r, context).has(code)) },
+  { key: 'estimates', level: 'required', text: () => tr('У задач есть оценки — по ним считаются срок и прогресс'), met: (r) => r.modules.every((module) => module.tasks.length > 0 && module.tasks.every((task) => task.hours > 0)) },
+  { key: 'risks', level: 'recommended', text: () => tr('Риски с действиями'), met: (r) => r.risks.length > 0 && r.risks.every((risk) => Boolean(risk.action)) },
+];
+
 const OUTPUTS: Partial<Record<ArtifactType, OutputItem<never>[]>> = {
-  brief, idea, suggestions, concept, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan, contracts,
+  brief, idea, suggestions, concept, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan, contracts, roadmap,
 } as unknown as Partial<Record<ArtifactType, OutputItem<never>[]>>;
 
 export interface StageOutputItem { key: string; text: string; level: OutputLevel; met: boolean }
