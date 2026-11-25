@@ -393,6 +393,7 @@ model Project {
   planTasks       PlanTaskState[]
   caseResults     PlanCaseResult[]
   caseAcceptances PlanCaseAcceptance[]
+  browserCaseRuns BrowserCaseRun[]
   stagePlaybooks  StagePlaybook[]
   hostingConnection HostingConnection?
 }
@@ -2437,4 +2438,29 @@ model PlanCaseAcceptance {
 
   @@unique([projectId, caseKey], map: "plan_case_acceptances_project_case_key")
   @@map("plan_case_acceptances")
+}
+
+/// «ИИ-агент в браузере»: the cases of the test plan marked ai_browser, checked by the agent in the preview of one agent
+/// task, in a real Chromium with no network. results: [{ key, status passed | failed | cannot_check, observed, turns }].
+model BrowserCaseRun {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId         String    @map("project_id") @db.Uuid
+  agentTaskId       String    @map("agent_task_id") @db.Uuid
+  planVersion       Int       @map("plan_version")
+  status            String    @default("queued") @db.VarChar(20)
+  caseKeys          String[]  @map("case_keys") @db.VarChar(32)
+  results           Json      @default("[]")
+  model             String?   @db.VarChar(80)
+  turns             Int       @default(0)
+  costTiyn          Int       @default(0) @map("cost_tiyn")
+  errorCode         String?   @map("error_code") @db.VarChar(60)
+  requestedByUserId String    @map("requested_by_user_id") @db.Uuid
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  startedAt         DateTime? @map("started_at") @db.Timestamptz(3)
+  finishedAt        DateTime? @map("finished_at") @db.Timestamptz(3)
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt(sort: Desc)], map: "browser_case_runs_project_idx")
+  @@index([status, createdAt], map: "browser_case_runs_status_idx")
+  @@map("browser_case_runs")
 }

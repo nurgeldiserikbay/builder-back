@@ -5,10 +5,11 @@ import { AnalysisRunner } from '../analysis/analysis-runner.js';
 import { BrowserCheckRunner } from '../quality/browser-checks.js';
 import { SandboxRunner } from '../sandbox/starter-checks.js';
 import { AgentRunner } from '../agent/agent-tasks.js';
+import { BrowserCaseRunner } from '../agent/browser-case-runs.js';
 
 @Module({
   imports: [DatabaseModule],
-  providers: [ReviewWorker, AnalysisRunner, BrowserCheckRunner, SandboxRunner, AgentRunner],
-  exports: [ReviewWorker, AnalysisRunner, BrowserCheckRunner, SandboxRunner, AgentRunner],
+  providers: [ReviewWorker, AnalysisRunner, BrowserCheckRunner, SandboxRunner, AgentRunner, BrowserCaseRunner],
+  exports: [ReviewWorker, AnalysisRunner, BrowserCheckRunner, SandboxRunner, AgentRunner, BrowserCaseRunner],
 })
 export class ReviewWorkerModule {}
