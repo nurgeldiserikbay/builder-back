@@ -860,7 +860,10 @@ export class JourneyService {
     let current: TestPlan | null = null;
     try { current = content ? normalizeTestPlan(content) : null; } catch { current = null; }
     const stage = this.core.stageOf(ctx, key);
-    const results = stage.approvedVersionId ? await this.prisma.planCaseResult.findMany({ where: { projectId: ctx.project.id }, select: { caseKey: true, status: true, note: true, planVersion: true } }) : [];
+    const approved = stage.approvedVersionId ? await this.core.versionContent(stage.approvedVersionId) : null;
+    // A result recorded against an older plan version is shown as stale: the case may have changed since.
+    const results = approved ? (await this.prisma.planCaseResult.findMany({ where: { projectId: ctx.project.id }, select: { caseKey: true, status: true, note: true, planVersion: true } }))
+      .map((row) => ({ ...row, stale: row.planVersion !== approved.versionNumber })) : [];
     return {
       template, limits: TESTPLAN_LIMITS, classes: CASE_CLASSES, methods: CASE_METHODS, missing: satisfied ? null : 'inputs',
       markdown: current ? inProject(ctx, () => testPlanMarkdown(current!, features)) : null,
