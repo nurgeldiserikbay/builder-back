@@ -33,7 +33,7 @@ export class RoadmapProgressService {
 
   /** Cases of the accepted test plan with their latest results; empty when there is no accepted test plan. */
   async cases(ctx: Awaited<ReturnType<JourneyCore['load']>>, projectId: string) {
-    if (!ctx.route.includes('testplan')) return { plan: null, cases: [] as Array<TestPlan['cases'][number] & { result: { status: 'passed' | 'failed'; note: string | null; stale: boolean } | null }> };
+    if (!ctx.route.includes('testplan')) return { plan: null, cases: [] as Array<TestPlan['cases'][number] & { result: { status: 'passed' | 'failed'; note: string | null; source: string; stale: boolean } | null }> };
     const stage = this.core.stageOf(ctx, 'testplan');
     const version = stage.approvedVersionId ? await this.core.versionContent(stage.approvedVersionId) : null;
     if (!version) return { plan: null, cases: [] };
@@ -44,7 +44,7 @@ export class RoadmapProgressService {
       cases: plan.cases.map((item) => {
         const row = rows.find((result) => result.caseKey === item.key);
         // A result recorded against an older plan version still shows, but a changed case has to be checked again.
-        return { ...item, result: row ? { status: row.status, note: row.note, stale: row.planVersion !== version.versionNumber } : null };
+        return { ...item, result: row ? { status: row.status, note: row.note, source: row.source, stale: row.planVersion !== version.versionNumber } : null };
       }),
     };
   }
