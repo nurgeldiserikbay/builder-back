@@ -1,6 +1,7 @@
 // Quality review of a stage result: deterministic rules for logic gaps and weak spots that a later stage would trip over.
 // Completeness (artifacts.ts) says what is missing; the review says what does not fit together or is risky.
 // A blocking finding stops acceptance until it is fixed or the owner explains in writing why the stage goes on anyway.
+import { FIRST_VERSION_EXTRAS, type Suggestions } from './suggestions.js';
 import { measurable, type IdeaReview } from './idea.js';
 import { tr } from '../i18n/i18n.js';
 import { keywords } from '../analysis/requirements-match.js';
@@ -78,6 +79,37 @@ function briefReview(brief: Brief, push: Push) {
  * the idea. The rest is advice: goals without a number, alternatives the AI suggested and nobody confirmed, a problem that
  * describes the product instead of the pain.
  */
+function suggestionsReview(value: Suggestions, push: Push) {
+  const now = value.items.filter((item) => item.decision === 'now');
+  if (now.length > FIRST_VERSION_EXTRAS) push({
+    code: 'SUGGESTIONS_FIRST_VERSION_GROWS', severity: 'important', category: 'logic', target: 'items', where: tr('Первая версия'), ownerDecides: true,
+    message: tr('В первую версию выбрано {0} дополнительных возможностей — она станет дольше и дороже.', [now.length]),
+    fix: tr('Оставьте в первой версии то, без чего продукт не работает; остальное — «потом». Добавить после запуска проще, чем убрать.'),
+  });
+  for (const item of value.items) {
+    if (item.source === 'ai' && !item.basis) push({
+      code: 'SUGGESTION_NO_BASIS', severity: 'important', category: 'logic', target: item.key, where: tr('Предложения функций'),
+      message: tr('ИИ предложил «{0}», но не объяснил, из какого шага или цели это следует.', [item.title]),
+      fix: tr('Уберите предложение или напишите, зачем оно нужно вашему делу.'),
+    });
+    if (item.decision === 'now' && item.support === 'not_yet') push({
+      code: 'SUGGESTION_NOT_BUILT_YET', severity: 'minor', category: 'logic', target: item.key, where: tr('Предложения функций'), ownerDecides: true,
+      message: tr('«{0}» платформа пока не делает — в ТЗ это будет задачей для разработчика.', [item.title]),
+      fix: tr('Оставьте, если готовы привлечь разработчика, или перенесите в «потом».'),
+    });
+    if (item.decision === 'now' && item.support === 'account') push({
+      code: 'SUGGESTION_NEEDS_ACCOUNT', severity: 'minor', category: 'logic', target: item.key, where: tr('Предложения функций'), ownerDecides: true,
+      message: tr('Для «{0}» нужен ваш аккаунт в стороннем сервисе; у сервиса могут быть свои тарифы.', [item.title]),
+      fix: tr('Подключим только с вашего согласия, когда дойдём до запуска.'),
+    });
+    if (item.decision === 'no' && !item.reason) push({
+      code: 'SUGGESTION_NO_REASON', severity: 'minor', category: 'clarity', target: item.key, where: tr('Предложения функций'),
+      message: tr('Для «{0}» не записано, почему не нужно.', [item.title]),
+      fix: tr('Одной фразой: «клиенты платят на месте», «филиал один». Через полгода это поможет не спорить заново.'),
+    });
+  }
+}
+
 function ideaReview(idea: IdeaReview, push: Push) {
   for (const risk of idea.risks) {
     if (risk.impact === 'high' && risk.decision === 'open') push({
@@ -568,6 +600,7 @@ export function reviewStage(type: string, content: unknown, context: { features?
   if (content && typeof content === 'object') {
     if (type === 'brief') briefReview(content as Brief, push);
     if (type === 'idea') ideaReview(content as IdeaReview, push);
+    if (type === 'suggestions') suggestionsReview(content as Suggestions, push);
     if (type === 'process') { processReview(content as BusinessProcess, push); situationsReview(content as BusinessProcess, context.projectType, push); }
     if (type === 'features') featuresReview(content as AppFeatures, context.process ?? null, push, context.projectType && context.projectType !== 'web_app' ? 'site' : 'app');
     if (type === 'screens') screensReview(content as AppScreens, context.features ?? null, push);

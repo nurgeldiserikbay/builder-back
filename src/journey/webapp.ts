@@ -2,6 +2,7 @@
 // (TECHNICAL_SPECIFICATION.md §6 capability manifest): it takes the project to a complete, checked package for a developer —
 // roles and functions with acceptance criteria, screens with a clickable prototype, architecture with a data model and an
 // API contract — all derived deterministically from accepted stages, so the package always matches what was agreed.
+import { chosenForSpec, type Suggestions } from './suggestions.js';
 import { keywords } from '../analysis/requirements-match.js';
 import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { ArtifactValidationError, type Brief } from './artifacts.js';
@@ -167,7 +168,7 @@ export function fieldKind(name: string): FieldKind {
  * A first ТЗ without AI from the brief and the process. An app gets accounts and consent at sign-up; a website has no
  * accounts — its visitors leave contacts in a form, so consent there is the privacy feature.
  */
-export function templateFeatures(brief: Brief | null, process: BusinessProcess | null, kind: 'app' | 'site' = 'app'): AppFeatures {
+export function templateFeatures(brief: Brief | null, process: BusinessProcess | null, kind: 'app' | 'site' = 'app', suggestions: Suggestions | null = null): AppFeatures {
   const people = (process?.actors ?? []).filter((actor) => actor.kind === 'client' || actor.kind === 'business' || actor.kind === 'staff');
   const roles: AppRole[] = people.length
     ? people.slice(0, APP_LIMITS.roles).map((actor) => ({
@@ -198,6 +199,11 @@ export function templateFeatures(brief: Brief | null, process: BusinessProcess |
       key: `f_${scenario.key}`.slice(0, 24), title: scenario.title.slice(0, 80), description: scenario.goal.slice(0, 400), roles: actors.length ? actors : [roles[0]!.key], priority: features.length <= 4 ? 'must' : 'should',
       acceptance: scenario.steps.filter((step) => step.capability !== 'offline').slice(0, APP_LIMITS.acceptance).map((step) => tr('{0}: {1}', [process!.actors.find((actor) => actor.key === step.actor)?.name ?? step.actor, step.action]).slice(0, 200)),
     });
+  }
+  // What the owner chose in «Предложения функций»: «в первую версию» is a must, «потом» stays in the ТЗ as later.
+  for (const chosen of chosenForSpec(suggestions)) {
+    if (features.length >= APP_LIMITS.features) break;
+    features.push({ key: chosen.key, title: chosen.title.slice(0, 80), description: chosen.description.slice(0, 400), roles: [roles[0]!.key], priority: chosen.priority, data: [], acceptance: chosen.acceptance });
   }
   // A record no scenario names by word goes to the first scenario's feature, so every record has an owner to check.
   const first = features[kind === 'app' ? 2 : 1] ?? features[0]!;

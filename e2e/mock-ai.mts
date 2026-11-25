@@ -76,6 +76,12 @@ function stageAnswer(name: string, system: string, user: Json, schema: Json): un
   switch (name) {
     case 'buildpath_brief': return brief(appGuidance);
     case 'buildpath_process': return user.instruction && user.currentDraft ? changedProcess(user.currentDraft as Json) : templateProcess('web_app', confirmedBrief ?? brief(true));
+    // Feature suggestions: two from the catalog with the wrong «support» (the platform corrects it) and one of its own.
+    case 'buildpath_suggestions': return { items: [
+      { key: 'reminders', title: 'Напоминание клиенту о записи', value: 'Меньше клиентов забывают и не приходят.', basis: 'Сценарий «Запись»: клиент записывается', source: 'catalog', catalogKey: 'reminders', support: 'site', effort: 'medium', decision: '', reason: '' },
+      { key: 'reviews', title: 'Отзывы клиентов', value: 'Новым клиентам проще решиться.', basis: 'Обычно есть у таких проектов', source: 'catalog', catalogKey: 'reviews', support: 'site', effort: 'small', decision: '', reason: '' },
+      { key: 'loyalty', title: 'Бонусы за повторный визит', value: 'Клиенты возвращаются чаще.', basis: 'Цель: повторные визиты у 30% клиентов', source: 'ai', catalogKey: null, support: 'site', effort: 'medium', decision: '', reason: '' },
+    ] };
     case 'buildpath_features': return templateFeatures(confirmedBrief ?? brief(true), (inputs.process ?? null) as never);
     case 'buildpath_screens': return templateScreens((inputs.features ?? null) as never);
     case 'buildpath_interview': return interview(user, schema);

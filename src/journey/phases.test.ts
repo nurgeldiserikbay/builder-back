@@ -40,7 +40,7 @@ describe('phases of the common path', () => {
     const live = phasesOf(route('landing', all), { applies: true, live: true });
     assert.equal(live.find((phase) => phase.key === 'launch')?.status, 'done');
     assert.equal(live.find((phase) => phase.key === 'after')?.status, 'current');
-    const half = phasesOf(route('landing', ['goal', 'idea', 'process', 'features']), { applies: true, live: false });
+    const half = phasesOf(route('landing', ['goal', 'idea', 'process', 'suggestions', 'features']), { applies: true, live: false });
     assert.equal(half.find((phase) => phase.key === 'idea')?.status, 'done');
     assert.equal(half.find((phase) => phase.status === 'current')?.key, 'tech');
   });

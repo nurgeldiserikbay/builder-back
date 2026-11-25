@@ -3,7 +3,8 @@ import { tr } from '../i18n/i18n.js';
 import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { WorktimeService } from './worktime.service.js';
 import { templateProcess } from './process.js';
-import { templateIdea } from './idea.js';
+import { templateIdea, type IdeaReview } from './idea.js';
+import { templateSuggestions, type Suggestions } from './suggestions.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { stageFor, stageDefinitions, type StageKey } from './catalog.js';
 import { ArtifactValidationError, changedKeys, completenessIssues, defaultDesign, emptyBrief, lockableKeys, mergeProposal, normalizeArtifact, normalizeContent, templateContent, type Brief, type ContentArtifact, type Offer } from './artifacts.js';
@@ -16,7 +17,7 @@ import { normalizeAiOutput } from './ai-normalize.js';
 import { reviewStage, type ReviewFinding } from './stage-review.js';
 import { canEdit, inputsSatisfied } from './stage-state.js';
 import { JourneyCore } from './journey-core.js';
-import { inProject, Access, notEditableCode } from './journey-core.js';
+import { inProject, Access, notEditableCode, normalizeFor } from './journey-core.js';
 
 type GenerateInput = { instruction: string | null; saveAs: 'one_off' | 'stage_rule' | 'project_rule'; targetKey: string | null; source?: 'app' | 'telegram'; conversation?: Record<string, string> | null };
 export type AiProposal = { proposalId: string; baseVersionId: string | null; content: unknown; changed: string[]; issues: Array<{ key: string; message: string }>; findings: ReviewFinding[]; blockedByLocks: string[] };
@@ -66,10 +67,11 @@ export class StageAiService {
       else if (stageKey === 'design') draft = defaultDesign;
       else if (stageKey === 'idea') draft = templateIdea((inputs.goal?.content as Brief | undefined) ?? null);
       else if (stageKey === 'process') draft = inProject(ctx, () => templateProcess(ctx.type.key, (inputs.goal?.content as Brief | undefined) ?? null));
-      else if (stageKey === 'features') draft = inProject(ctx, () => templateFeatures((inputs.goal?.content as Brief | undefined) ?? null, (inputs.process?.content as BusinessProcess | undefined) ?? null, ctx.type.key === 'web_app' ? 'app' : 'site'));
+      else if (stageKey === 'features') draft = inProject(ctx, () => templateFeatures((inputs.goal?.content as Brief | undefined) ?? null, (inputs.process?.content as BusinessProcess | undefined) ?? null, ctx.type.key === 'web_app' ? 'app' : 'site', (inputs.suggestions?.content as Suggestions | undefined) ?? null));
+      else if (stageKey === 'suggestions') draft = inProject(ctx, () => templateSuggestions(ctx.type.key, (inputs.idea?.content as IdeaReview | undefined) ?? null, (inputs.process?.content as BusinessProcess | undefined) ?? null));
       else if (stageKey === 'screens') draft = inProject(ctx, () => templateScreens((inputs.features?.content as AppFeatures | undefined) ?? null));
       else throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
-      const merged = inProject(ctx, () => normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, draft, stage.lockedKeys, null)));
+      const merged = inProject(ctx, () => normalizeFor(ctx, definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, draft, stage.lockedKeys, null)));
       const version = await this.prisma.$transaction(async (tx) => {
         const run = await tx.generationRun.create({ data: {
           projectId, stageId: stage.id, requestedByUserId: userId, provider: 'template', model: null, playbookVersion: definition.playbook.version,
@@ -126,9 +128,9 @@ export class StageAiService {
         const baseContent = base!.content as ContentArtifact;
         proposal = input.targetKey === 'seo' ? baseContent : normalizeContent({ sections: [{ ...(section as object), key: input.targetKey }], seo: baseContent.seo });
       } else {
-        proposal = inProject(ctx, () => normalizeAiOutput(raw, (value) => normalizeArtifact(definition.artifactType, value)));
+        proposal = inProject(ctx, () => normalizeAiOutput(raw, (value) => normalizeFor(ctx, definition.artifactType, value)));
       }
-      merged = inProject(ctx, () => normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, proposal, stage.lockedKeys, input.targetKey)));
+      merged = inProject(ctx, () => normalizeFor(ctx, definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, proposal, stage.lockedKeys, input.targetKey)));
     } catch (error) {
       const code = error instanceof StageAiError ? error.code : error instanceof ArtifactValidationError ? 'AI_OUTPUT_REJECTED' : 'AI_FAILED';
       await recordFailure(code);
@@ -142,7 +144,7 @@ export class StageAiService {
     if (fresh && fresh.currentVersionId !== baseId) {
       const latest = await this.core.versionContent(fresh.currentVersionId);
       try {
-        merged = inProject(ctx, () => normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, latest?.content ?? null, proposal, fresh.lockedKeys, input.targetKey)));
+        merged = inProject(ctx, () => normalizeFor(ctx, definition.artifactType, mergeProposal(definition.artifactType, latest?.content ?? null, proposal, fresh.lockedKeys, input.targetKey)));
         baseId = latest?.id ?? null;
       } catch { /* keep the answer merged on the version it was asked for */ }
     }
@@ -165,7 +167,7 @@ export class StageAiService {
       // preview does not quietly look smaller than the answer.
       let blockedByLocks: string[] = [];
       try {
-        const unlocked = inProject(ctx, () => normalizeArtifact(definition.artifactType, mergeProposal(definition.artifactType, baseContent, proposal, [], input.targetKey)));
+        const unlocked = inProject(ctx, () => normalizeFor(ctx, definition.artifactType, mergeProposal(definition.artifactType, baseContent, proposal, [], input.targetKey)));
         const locked = new Set(stage.lockedKeys);
         blockedByLocks = changedKeys(definition.artifactType, merged, unlocked).filter((key) => locked.has(key));
       } catch { /* the answer does not fit without locks either: nothing to report */ }

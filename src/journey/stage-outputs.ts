@@ -1,6 +1,7 @@
 // What each stage hands over to the stages built on it, written out item by item. Required items are what the next
 // stages cannot work without: acceptance waits for them. Recommended items make the next stages better; they are shown,
 // not enforced. The checks are deliberately small and readable — the quality review (stage-review.ts) goes deeper.
+import type { Suggestions } from './suggestions.js';
 import { tr } from '../i18n/i18n.js';
 import type { Brief, ContentArtifact, DesignArtifact, Offer } from './artifacts.js';
 import type { ArtifactType } from './catalog.js';
@@ -33,6 +34,11 @@ const idea: OutputItem<IdeaReview>[] = [
   { key: 'metrics', level: 'required', text: () => tr('Измеримая цель успеха — по ней выбирают функции первой версии и аналитику'), met: (i) => i.metrics.some((metric) => measurable(metric.text)) },
   { key: 'risks', level: 'recommended', text: () => tr('Риски с решениями — для плана работ'), met: (i) => i.risks.length > 0 && i.risks.every((risk) => risk.decision !== 'open' || risk.impact === 'low') },
   { key: 'value', level: 'recommended', text: () => tr('Почему выберут вас — для текстов и предложений функций'), met: (i) => filled(i.value) },
+];
+
+const suggestions: OutputItem<Suggestions>[] = [
+  { key: 'decisions', level: 'required', text: () => tr('Решение по каждому предложению — из него ТЗ знает, что входит в первую версию'), met: (s) => s.items.every((item) => Boolean(item.decision)) },
+  { key: 'reasons', level: 'recommended', text: () => tr('Причины для «не нужно» — чтобы не спорить об этом заново'), met: (s) => s.items.every((item) => item.decision !== 'no' || filled(item.reason)) },
 ];
 
 const offer: OutputItem<Offer>[] = [
@@ -94,7 +100,7 @@ const techplan: OutputItem<TechPlan>[] = [
 ];
 
 const OUTPUTS: Partial<Record<ArtifactType, OutputItem<never>[]>> = {
-  brief, idea, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan,
+  brief, idea, suggestions, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan,
 } as unknown as Partial<Record<ArtifactType, OutputItem<never>[]>>;
 
 export interface StageOutputItem { key: string; text: string; level: OutputLevel; met: boolean }
