@@ -2124,6 +2124,14 @@ enum ChangeProposalStatus {
   accepted
   rejected
   withdrawn
+  answered
+  resolved
+}
+
+/// change: the earlier stage must change; question: it must answer, changing nothing if the answer is enough.
+enum ChangeProposalKind {
+  change
+  question
 }
 
 /// A specialist's request to change an accepted requirement (an input of their stage); takes effect only after the owner accepts it.
@@ -2134,6 +2142,12 @@ model ChangeProposal {
   targetStageId   String               @map("target_stage_id") @db.Uuid
   authorUserId    String               @map("author_user_id") @db.Uuid
   text            String               @db.VarChar(1000)
+  kind            ChangeProposalKind   @default(change)
+  /// The stage it comes from cannot be accepted until the request is answered, rejected or resolved.
+  blocking        Boolean              @default(false)
+  answer          String?              @db.VarChar(1000)
+  /// The version of the earlier stage, accepted again, that resolved the request.
+  resolvedVersionId String?            @map("resolved_version_id") @db.Uuid
   status          ChangeProposalStatus @default(open)
   decidedByUserId String?              @map("decided_by_user_id") @db.Uuid
   decisionNote    String?              @map("decision_note") @db.VarChar(500)
@@ -2146,6 +2160,7 @@ model ChangeProposal {
   decidedBy       User?                @relation("ProposalDecider", fields: [decidedByUserId], references: [id], onDelete: SetNull)
 
   @@index([projectId, status, createdAt(sort: Desc)], map: "change_proposals_project_status_idx")
+  @@index([fromStageId, status], map: "change_proposals_from_stage_idx")
   @@map("change_proposals")
 }
 

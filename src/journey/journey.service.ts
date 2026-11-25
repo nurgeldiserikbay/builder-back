@@ -1,3 +1,4 @@
+import { stageRequests, UNSETTLED_REQUESTS } from './stage-requests.js';
 import { conceptDocument, importConceptText, normalizeConcept, slugFile, type Concept, type ConceptInputs } from './concept.js';
 import { markdownToDocx } from './docx.js';
 import { ideaMarkdown, importIdeaText, type IdeaReview } from './idea.js';
@@ -225,6 +226,8 @@ export class JourneyService {
     // Schedule has no AI: the editor starts from the accepted services and a typical working day.
     const techPlanPreview = definition.artifactType === 'techplan' && inputsSatisfied(ctx.route, ctx.dep, stageKey)
       ? await this.core.techPlanFor(ctx, stageKey, (current?.content as unknown as TechPlan | undefined)?.ownerNotes ?? null) : null;
+    // Titles are translated like every stage title on this page.
+    const requests = await stageRequests(this.prisma, projectId, stage.id).then((value) => ({ outgoing: value.outgoing.map((item) => ({ ...item, fromTitle: tr(item.fromTitle), targetTitle: tr(item.targetTitle) })), incoming: value.incoming.map((item) => ({ ...item, fromTitle: tr(item.fromTitle), targetTitle: tr(item.targetTitle) })) }));
     const concept = definition.artifactType === 'concept' ? await this.conceptView(ctx, stageKey, current?.content ?? null) : null;
     const techPlanOutdated = Boolean(techPlanPreview && current && !sameTechPlan(techPlanPreview, current.content as unknown as TechPlan));
     const scheduleTemplate = definition.artifactType === 'schedule' && !current
@@ -269,6 +272,7 @@ export class JourneyService {
             opens: dependents.filter((item) => item.opens).map(({ key: itemKey, title }) => ({ key: itemKey, title })),
             willNotify: stage.approvedVersionId ? dependents.filter((item) => item.hasWork).map(({ key: itemKey, title, status }) => ({ key: itemKey, title, status })) : [],
           },
+          requests,
           canReopen: owner && (stage.status === 'approved' || stage.status === 'imported' || stage.status === 'skipped'),
           optional: definition.optional?.why ?? null,
           canSkip: owner && Boolean(definition.optional) && !['approved', 'imported', 'skipped', 'in_review'].includes(stage.status) && editableProject(ctx.project.status),
@@ -602,6 +606,8 @@ export class JourneyService {
     const definition = stageDefinitions[stageKey];
     if (!['in_progress', 'stale', 'changes_requested', 'in_review'].includes(stage.status)) throw new ConflictException('STAGE_NOT_ACCEPTABLE');
     if (stage.currentVersionId !== versionId) throw new ConflictException('STAGE_VERSION_CONFLICT');
+    // A blocker raised to an earlier stage holds this one until it is answered, rejected or fixed there.
+    if (await this.prisma.changeProposal.count({ where: { fromStageId: stage.id, blocking: true, status: { in: [...UNSETTLED_REQUESTS] } } })) throw new ConflictException('STAGE_BLOCKED_BY_REQUEST');
     if (ctx.openNotices.some((notice) => notice.targetKey === stageKey)) throw new ConflictException('CHANGE_NOTICE_OPEN');
     if (this.core.waitingBranches(ctx, stageKey).length) throw new ConflictException('BRANCHES_NOT_ALIGNED');
     if (!inputsSatisfied(ctx.route, ctx.dep, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
@@ -667,6 +673,17 @@ export class JourneyService {
 
   private async afterAccept(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: string, notices: Array<{ targetKey: StageKey }>) {
     const definition = stageDefinitions[key as StageKey];
+    // Requests to change this stage were taken on and the stage is accepted again: they are resolved, their authors told.
+    const stage = this.core.stageOf(ctx, key);
+    const resolved = await this.prisma.changeProposal.findMany({ where: { targetStageId: stage.id, status: 'accepted' }, select: { id: true, authorUserId: true, fromStage: { select: { stageKey: true } } } });
+    if (resolved.length) {
+      const accepted = await this.prisma.projectStage.findUnique({ where: { id: stage.id }, select: { approvedVersionId: true } });
+      await this.prisma.changeProposal.updateMany({ where: { id: { in: resolved.map((row) => row.id) }, status: 'accepted' }, data: { status: 'resolved', resolvedVersionId: accepted?.approvedVersionId ?? null } });
+      for (const row of resolved) {
+        await this.core.event(this.prisma, ctx.project.id, ctx.project.ownerUserId, 'change_request_resolved', key, { proposalId: row.id, fromStageKey: row.fromStage.stageKey });
+        void this.core.notifyUser(row.authorUserId, () => tr('Этап «{0}» исправлен по вашему запросу и принят. Проверьте свой этап «{1}»: он теперь опирается на новую версию.', [tr(definition.title), tr(stageDefinitions[row.fromStage.stageKey as StageKey]?.title ?? row.fromStage.stageKey)])).catch(() => undefined);
+      }
+    }
     for (const notice of notices) await this.changes.notifyChange(ctx, notice.targetKey, () => tr("В проекте «{0}» изменился этап «{1}», на котором построен этап «{2}». Посмотрите, что изменилось, и решите: принять или обсудить. {3}", [ctx.project.name, tr(definition.title), tr(stageTitle(notice.targetKey, ctx.type.key)), this.core.stageLink(ctx.project.id, notice.targetKey)]).trim(), 'target');
   }
 

@@ -5970,12 +5970,14 @@ paths:
     post:
       tags: [Specialists]
       operationId: proposeChange
-      summary: Propose a change to an accepted requirement
+      summary: Raise a question or a needed change to an earlier stage
       description: |
-        A specialist with an active assignment on this stage cannot change accepted requirements through AI instructions; instead they
-        propose a change to an accepted input of their stage (or a result the owner opened to them). Nothing changes until an owner or
-        manager accepts. Owners and managers get a Telegram notice. Up to 10 open proposals per author.
-        400 PROPOSAL_TEXT_INVALID (10–1000 characters), PROPOSAL_TARGET_INVALID; 403 PROPOSAL_ONLY_FOR_SPECIALISTS; 409 PROPOSAL_TARGET_NOT_ACCEPTED, PROPOSAL_LIMIT.
+        «Запрос к этапу». Anyone who may write on this stage — owner, member or assigned specialist — raises a question (kind question)
+        or a needed change (kind change) to an earlier stage: for the team any stage this one is built on, for a specialist the inputs of
+        their stage and results the owner opened to them. blocking true holds this stage: it cannot be accepted (409
+        STAGE_BLOCKED_BY_REQUEST) until the request is answered, rejected or resolved. Nothing changes in the earlier stage by itself.
+        Owners, managers and the specialists of the earlier stage are notified. Up to 10 unsettled requests per author.
+        400 PROPOSAL_TEXT_INVALID (10–1000 characters), PROPOSAL_TARGET_INVALID; 403 STAGE_WRITE_FORBIDDEN; 409 PROPOSAL_TARGET_LOCKED, PROPOSAL_LIMIT.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -5992,6 +5994,8 @@ paths:
               properties:
                 targetStageKey: { type: string }
                 text: { type: string, minLength: 10, maxLength: 1000 }
+                kind: { type: string, enum: [change, question], default: change }
+                blocking: { type: boolean, default: false }
       responses:
         '200':
           description: Created
@@ -6006,9 +6010,11 @@ paths:
     get:
       tags: [Specialists]
       operationId: listChangeProposals
-      summary: Change proposals of a project
+      summary: Requests to earlier stages of a project
       description: |
-        Owners and managers see all (canDecide true); a specialist sees their own. Other members get 403 PROPOSALS_FORBIDDEN.
+        Owners and managers see all (canDecide true); everyone sees their own; a specialist also sees the requests to the stages they
+        work on. Each item has kind, blocking, status (open, accepted, answered, rejected, withdrawn, resolved), answer, canAnswer and
+        canDecide.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -6025,11 +6031,13 @@ paths:
     post:
       tags: [Specialists]
       operationId: decideChangeProposal
-      summary: Accept or decline a change proposal
+      summary: Answer, take on or decline a request to a stage
       description: |
-        Owner or manager. accept reopens the requirement stage if it was accepted and, with applyWithAi, asks the AI to draft the change
-        from the proposal text (generation.ok false with the error code when that fails; the decision stands). The owner then accepts the
-        stage as usual, which notifies the stages built on it. reject closes it with an optional note. The author is notified.
+        answer (note required, 2–1000 characters): a reply that settles a question; the owner, a manager or a specialist with write access
+        to the earlier stage. accept (owner or manager): reopens the earlier stage if it was accepted and, with applyWithAi, asks the AI to
+        draft the change (generation.ok false with the error code when that fails; the decision stands); the request becomes resolved
+        when that stage is accepted again, and the stages built on it get the usual change notices. reject: closed with an optional note.
+        The author is notified. 400 ANSWER_INVALID; 409 PROPOSAL_ALREADY_DECIDED.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -6044,8 +6052,8 @@ paths:
               additionalProperties: false
               required: [decision]
               properties:
-                decision: { type: string, enum: [accept, reject] }
-                note: { type: string, maxLength: 500 }
+                decision: { type: string, enum: [accept, reject, answer] }
+                note: { type: string, maxLength: 1000 }
                 applyWithAi: { type: boolean }
       responses:
         '200':
