@@ -206,7 +206,7 @@ export class RoadmapProgressService {
       if (verdict === 'works') {
         if (fix && !finished(fix.status as TaskStatus)) await tx.planTaskState.update({ where: { id: fix.id }, data: { status: 'done', blockedBy: null, updatedByUserId: userId } });
       } else if (roadmap) {
-        const title = inProject(ctx, () => tr(verdict === 'broken' ? 'Не работает «{0}»: {1}' : 'Замечание к «{0}»: {1}', [item.title, note!])).slice(0, 200);
+        const title = inProject(ctx, () => tr(verdict === 'broken' ? 'Не работает: {0}. Сценарий: {1}' : 'Замечание: {0}. Сценарий: {1}', [note!.replace(/[.。]$/, ''), item.title])).slice(0, 200);
         const reopen = fix && finished(fix.status as TaskStatus);
         await tx.planTaskState.upsert({ where: { projectId_taskKey: { projectId, taskKey: fixKey } },
           create: { projectId, taskKey: fixKey, title, moduleKey, fromCaseKey: caseKey, status: 'not_started', updatedByUserId: userId },

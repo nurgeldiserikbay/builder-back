@@ -251,7 +251,7 @@ describe('web application route (database)', async () => {
     const remarked = await progress.acceptScenario(owner.id, projectId, scenario.key, { verdict: 'remark', note: 'Кнопка сохранения прячется под клавиатурой' });
     assert.equal(remarked.data.readiness.openRemarks, 1);
     const fix = (await progress.view(owner.id, projectId)).data.modules.flatMap((module) => module.tasks).find((task) => task.fromCase === scenario.key)!;
-    assert.match(fix.title, /Замечание к/);
+    assert.match(fix.title, /^Замечание: Кнопка сохранения прячется под клавиатурой\. Сценарий: /);
     assert.equal(fix.status, 'not_started');
     await progress.update(owner.id, projectId, fix.key, { status: 'in_progress' });
     const accepted = await progress.acceptScenario(owner.id, projectId, scenario.key, { verdict: 'works' });
