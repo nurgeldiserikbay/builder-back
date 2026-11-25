@@ -1,6 +1,7 @@
 // Quality review of a stage result: deterministic rules for logic gaps and weak spots that a later stage would trip over.
 // Completeness (artifacts.ts) says what is missing; the review says what does not fit together or is risky.
 // A blocking finding stops acceptance until it is fixed or the owner explains in writing why the stage goes on anyway.
+import { coverage, productSteps } from './spec-extras.js';
 import { conceptDocument, undefinedTerms, type Concept, type ConceptInputs } from './concept.js';
 import { FIRST_VERSION_EXTRAS, type Suggestions } from './suggestions.js';
 import { measurable, type IdeaReview } from './idea.js';
@@ -306,6 +307,40 @@ function processReview(process: BusinessProcess, push: Push) {
     message: tr('Есть онлайн-оплата, но не описано подтверждение оплаты, чек и возврат.'),
     fix: tr('Добавьте шаг подтверждения оплаты и правило возврата денег.'),
   });
+}
+
+/** The checkable parts of the ТЗ: tracing to the process, cases for what must work, access to other people's data. */
+function specExtrasReview(value: AppFeatures, process: BusinessProcess | null, push: Push) {
+  const traced = value.features.some((feature) => (feature.sources ?? []).length > 0);
+  // A ТЗ written before tracing has no sources at all: one finding says so instead of one per step.
+  if (process && !traced && productSteps(process).length) push({
+    code: 'SPEC_NOT_TRACED', severity: 'important', category: 'logic', target: 'features', where: tr('Покрытие процесса'),
+    message: tr('У функций не указано, из каких шагов процесса они вытекают — не видно, всё ли, что делает продукт, описано.'),
+    fix: tr('Отметьте у каждой функции её шаги процесса или попросите ИИ разметить ТЗ.'),
+  });
+  if (process && traced) for (const step of coverage(process, value.features.map((feature) => ({ ...feature, sources: feature.sources ?? [] })))) {
+    if (!step.by.length) push({
+      code: 'SPEC_STEP_NOT_COVERED', severity: 'important', category: 'logic', target: 'features', where: tr('Покрытие процесса'),
+      message: tr('Шаг «{0}» (сценарий «{1}») делает продукт, но ни одна функция ТЗ его не описывает.', [step.action, step.scenario]),
+      fix: tr('Добавьте функцию или отметьте этот шаг у существующей. Если шаг делается вручную — поменяйте это в процессе.'),
+    });
+  }
+  for (const feature of value.features) {
+    if (feature.priority === 'must' && !(feature.cases ?? []).length) push({
+      code: 'SPEC_MUST_NO_CASES', severity: 'minor', category: 'clarity', target: feature.key, where: feature.title,
+      message: tr('У обязательной функции «{0}» нет проверок «Дано / Когда / Тогда» — по ним потом пишут тесты.', [feature.title]),
+      fix: tr('Добавьте обычный путь и случай, когда что-то идёт не так.'),
+    });
+  }
+  const personal = value.sensitivity !== 'normal';
+  const clients = new Set((process?.actors ?? []).filter((actor) => actor.kind === 'client').map((actor) => actor.key));
+  for (const row of value.access ?? []) {
+    if (personal && clients.has(row.role) && row.scope === 'all' && row.actions.includes('view')) push({
+      code: 'SPEC_CLIENT_SEES_ALL', severity: 'important', category: 'security', target: 'access', where: tr('Кто что может'),
+      message: tr('Роль «{0}» видит все записи «{1}», включая чужие, — а в них личные данные.', [value.roles.find((role) => role.key === row.role)?.name ?? row.role, row.data]),
+      fix: tr('Поставьте «только свои» или объясните в ограничениях, почему клиенту нужны чужие записи.'),
+    });
+  }
 }
 
 function featuresReview(value: AppFeatures, process: BusinessProcess | null, push: Push, kind: 'app' | 'site' = 'app') {
@@ -625,6 +660,7 @@ export function reviewStage(type: string, content: unknown, context: { features?
     if (type === 'concept' && context.concept) conceptReview(content as Concept, context.concept, push);
     if (type === 'process') { processReview(content as BusinessProcess, push); situationsReview(content as BusinessProcess, context.projectType, push); }
     if (type === 'features') featuresReview(content as AppFeatures, context.process ?? null, push, context.projectType && context.projectType !== 'web_app' ? 'site' : 'app');
+    if (type === 'features') specExtrasReview(content as AppFeatures, context.process ?? null, push);
     if (type === 'screens') screensReview(content as AppScreens, context.features ?? null, push);
     if (type === 'offer') offerReview(content as Offer, push);
     if (type === 'sitemap') sitemapReview(content as Sitemap, push);

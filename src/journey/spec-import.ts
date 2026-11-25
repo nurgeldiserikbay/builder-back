@@ -84,7 +84,7 @@ export function importSpec(input: Paragraph[]): SpecImport {
     switch (section) {
       case 'summary': {
         // A list under the title is what the product should do rather than a description.
-        if (BULLET.test(paragraph.text.trim())) { const [title, description] = split(text, 80); loose.push({ key: `f${loose.length + 1}`, title, description: description.slice(0, 400), priority: priorityOf(text) ?? priority ?? 'must', acceptance: [], text }); break; }
+        if (BULLET.test(paragraph.text.trim())) { const [title, description] = split(text, 80); loose.push({ key: `f${loose.length + 1}`, title, description: description.slice(0, 400), priority: priorityOf(text) ?? priority ?? 'must', acceptance: [], story: '', cases: [], sources: ['owner'], text }); break; }
         if (summary.join(' ').length < 600) summary.push(text);
         break;
       }
@@ -94,7 +94,7 @@ export function importSpec(input: Paragraph[]): SpecImport {
         const target = section === 'features' ? features : loose;
         if (target.length >= APP_LIMITS.features) break;
         const [title, description] = split(text, 80);
-        target.push({ key: `f${target.length + 1}`, title, description: description.slice(0, 400), priority: priorityOf(text) ?? priority ?? 'must', acceptance: [], text });
+        target.push({ key: `f${target.length + 1}`, title, description: description.slice(0, 400), priority: priorityOf(text) ?? priority ?? 'must', acceptance: [], story: '', cases: [], sources: ['owner'], text });
         break;
       }
       case 'requirements': if (requirements.length < APP_LIMITS.notes) requirements.push(text.slice(0, 200)); break;

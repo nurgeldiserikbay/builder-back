@@ -3,8 +3,12 @@
 // roles and functions with acceptance criteria, screens with a clickable prototype, architecture with a data model and an
 // API contract — all derived deterministically from accepted stages, so the package always matches what was agreed.
 import { chosenForSpec, type Suggestions } from './suggestions.js';
+import {
+  accessByLabels, actionLabels, normalizeAccess, normalizeCases, normalizeQuality, normalizeServices, normalizeSources, QUALITY_KEYS, qualityLabels,
+  coverage, productSteps, scenarioStory, SPEC_EXTRAS_LIMITS, templateAccess, templateQuality, templateServices, type AccessRule, type FeatureCase, type SpecQuality, type SpecService,
+} from './spec-extras.js';
 import { keywords } from '../analysis/requirements-match.js';
-import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
+import { contentLocale, currentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { ArtifactValidationError, type Brief } from './artifacts.js';
 import type { BusinessProcess, ProcessEntity } from './process.js';
 import { situationQuestions } from './situations.js';
@@ -33,14 +37,30 @@ export const blockLabels: Record<BlockKind, string> = {
 
 export interface AppRole { key: string; name: string; description: string }
 /** data: keys of the records the feature creates or reads — the process entities, and «user» for accounts. */
-export interface AppFeature { key: string; title: string; description: string; roles: string[]; priority: Priority; acceptance: string[]; data: string[] }
+export interface AppFeature {
+  key: string; title: string; description: string; roles: string[]; priority: Priority; acceptance: string[]; data: string[];
+  /** «Как {роль}, я хочу …, чтобы …» — empty in a ТЗ written before stories. */
+  story: string;
+  /** «Дано / Когда / Тогда» — each becomes a test case. */
+  cases: FeatureCase[];
+  /** Where the feature comes from: process steps, chosen suggestions, platform rules or the owner (spec-extras.ts). */
+  sources: string[];
+}
 /**
  * The specification (ТЗ) of any project: what the product does, who uses it and what goes into the first version. Websites
  * and apps share it; summary, requirements, limits and questions came with the ТЗ stage and are empty in older results.
  */
 export interface AppFeatures {
-  roles: AppRole[]; features: AppFeature[]; sensitivity: Sensitivity; integrations: string[];
+  roles: AppRole[]; features: AppFeature[]; sensitivity: Sensitivity;
+  /** Names of the services, kept for readers of older ТЗ; derived from `services`. */
+  integrations: string[];
   summary: string; requirements: string[]; limits: string[]; questions: string[];
+  /** Who may do what with which data. */
+  access: AccessRule[];
+  /** Non-functional requirements in plain words; an empty field is not decided yet. */
+  quality: SpecQuality;
+  /** Outside services with what for and who gives access. */
+  services: SpecService[];
 }
 export interface ScreenBlock { kind: BlockKind; title: string; fields: string[] }
 export interface AppScreen { key: string; title: string; role: string; purpose: string; features: string[]; blocks: ScreenBlock[]; links: string[] }
@@ -86,11 +106,17 @@ export function normalizeFeatures(raw: unknown): AppFeatures {
       roles: [...new Set(strings(item.roles, `features.${index}.roles`, APP_LIMITS.roles, 24))].filter((key) => roleKeys.has(key)),
       priority, acceptance: strings(item.acceptance, `features.${index}.acceptance`, APP_LIMITS.acceptance, 200),
       data: [...new Set(strings(item.data, `features.${index}.data`, APP_LIMITS.data, 24))],
+      story: text(item.story, `features.${index}.story`, SPEC_EXTRAS_LIMITS.story, false),
+      cases: normalizeCases(item.cases, `features.${index}.cases`),
+      sources: normalizeSources(item.sources, `features.${index}.sources`),
     };
   });
   const sensitivity = SENSITIVITY.includes(raw.sensitivity as Sensitivity) ? raw.sensitivity as Sensitivity : 'personal';
+  const services = normalizeServices(raw.services, strings(raw.integrations, 'integrations', APP_LIMITS.integrations, 80));
+  const dataKeys = new Set(features.flatMap((feature) => feature.data));
   return {
-    roles, features, sensitivity, integrations: strings(raw.integrations, 'integrations', APP_LIMITS.integrations, 80),
+    roles, features, sensitivity, integrations: services.map((service) => service.name),
+    access: normalizeAccess(raw.access, roleKeys, dataKeys), quality: normalizeQuality(raw.quality), services,
     summary: text(raw.summary, 'summary', 600, false),
     requirements: strings(raw.requirements, 'requirements', APP_LIMITS.notes, 200),
     limits: strings(raw.limits, 'limits', APP_LIMITS.notes, 200),
@@ -179,15 +205,20 @@ export function templateFeatures(brief: Brief | null, process: BusinessProcess |
     }))
     : [{ key: 'user', name: tr('Пользователь'), description: brief?.audience?.slice(0, 200) ?? '' }, { key: 'admin', name: tr('Администратор'), description: tr('Управляет приложением и видит всё.') }];
   const roleKeys = new Set(roles.map((role) => role.key));
+  const actorName = (key: string | undefined) => process?.actors.find((actor) => actor.key === key)?.name ?? tr('Пользователь');
+  const lowerFirst = (value: string) => value.charAt(0).toLowerCase() + value.slice(1);
   const features: AppFeature[] = kind === 'app'
     ? [
-      { key: 'signin', title: tr('Вход в аккаунт'), description: tr('Регистрация, вход и выход; восстановление пароля.'), roles: roles.map((role) => role.key), priority: 'must', data: ['user'], acceptance: [tr('Можно зарегистрироваться, войти и выйти.'), tr('Пароль можно восстановить по почте.'), tr('Каждый видит только то, что разрешено его роли.')] },
+      { key: 'signin', title: tr('Вход в аккаунт'), description: tr('Регистрация, вход и выход; восстановление пароля.'), roles: roles.map((role) => role.key), priority: 'must', data: ['user'], acceptance: [tr('Можно зарегистрироваться, войти и выйти.'), tr('Пароль можно восстановить по почте.'), tr('Каждый видит только то, что разрешено его роли.')], story: '', sources: ['rule:signin'],
+        cases: [{ key: 'c1', given: tr('Пользователь зарегистрирован'), when: tr('вводит неверный пароль'), then: tr('вход не происходит, видно понятное сообщение') }, { key: 'c2', given: tr('Пользователь вошёл как клиент'), when: tr('открывает адрес раздела другой роли'), then: tr('доступ запрещён') }] },
       // The app keeps people's contacts, so consent and deletion on request are part of the first version.
-      { key: 'privacy', title: tr('Согласие и удаление данных'), description: tr('Согласие на обработку данных при регистрации; удаление аккаунта и данных по просьбе.'), roles: roles.map((role) => role.key), priority: 'must', data: ['user'], acceptance: [tr('При регистрации пользователь даёт согласие на обработку персональных данных.'), tr('Пользователь может удалить аккаунт, и его данные удаляются.')] },
+      { key: 'privacy', title: tr('Согласие и удаление данных'), description: tr('Согласие на обработку данных при регистрации; удаление аккаунта и данных по просьбе.'), roles: roles.map((role) => role.key), priority: 'must', data: ['user'], acceptance: [tr('При регистрации пользователь даёт согласие на обработку персональных данных.'), tr('Пользователь может удалить аккаунт, и его данные удаляются.')], story: '', sources: ['rule:privacy'],
+        cases: [{ key: 'c1', given: tr('Пользователь не отметил согласие'), when: tr('пытается зарегистрироваться'), then: tr('регистрация не проходит') }] },
     ]
     : [
       // Visitors leave a name and a phone in the form: consent there, and deleting on request.
-      { key: 'privacy', title: tr('Согласие на обработку данных'), description: tr('Посетитель соглашается на обработку данных, когда оставляет контакты; данные удаляются по его просьбе.'), roles: roles.map((role) => role.key), priority: 'must', data: [], acceptance: [tr('В форме есть согласие на обработку персональных данных и ссылка на политику.'), tr('По просьбе клиента его данные удаляются.')] },
+      { key: 'privacy', title: tr('Согласие на обработку данных'), description: tr('Посетитель соглашается на обработку данных, когда оставляет контакты; данные удаляются по его просьбе.'), roles: roles.map((role) => role.key), priority: 'must', data: [], acceptance: [tr('В форме есть согласие на обработку персональных данных и ссылка на политику.'), tr('По просьбе клиента его данные удаляются.')], story: '', sources: ['rule:privacy'],
+        cases: [{ key: 'c1', given: tr('Посетитель заполнил форму, но не отметил согласие'), when: tr('отправляет форму'), then: tr('заявка не уходит, видно, что нужно согласие') }] },
     ];
   for (const scenario of (process?.scenarios ?? []).slice(0, APP_LIMITS.features - 2)) {
     const actors = [...new Set(scenario.steps.map((step) => step.actor))].filter((key) => roleKeys.has(key));
@@ -198,12 +229,20 @@ export function templateFeatures(brief: Brief | null, process: BusinessProcess |
       data,
       key: `f_${scenario.key}`.slice(0, 24), title: scenario.title.slice(0, 80), description: scenario.goal.slice(0, 400), roles: actors.length ? actors : [roles[0]!.key], priority: features.length <= 4 ? 'must' : 'should',
       acceptance: scenario.steps.filter((step) => step.capability !== 'offline').slice(0, APP_LIMITS.acceptance).map((step) => tr('{0}: {1}', [process!.actors.find((actor) => actor.key === step.actor)?.name ?? step.actor, step.action]).slice(0, 200)),
+      // Traced to every step of the scenario the product takes on; the story and one case are a start to sharpen.
+      sources: productSteps(process).filter((step) => step.ref.startsWith(`step:${scenario.key}.`)).map((step) => step.ref).slice(0, SPEC_EXTRAS_LIMITS.sources),
+      story: scenarioStory(actorName(scenario.steps[0]?.actor), scenario.goal),
+      cases: scenario.steps.length ? [{
+        key: 'c1', given: tr('Начало сценария «{0}»', [scenario.title]).slice(0, 240),
+        when: scenario.steps.filter((step) => step.capability !== 'offline').map((step) => lowerFirst(step.action)).join(' → ').slice(0, 240),
+        then: (scenario.goal || tr('Сценарий завершён')).slice(0, 240),
+      }] : [],
     });
   }
   // What the owner chose in «Предложения функций»: «в первую версию» is a must, «потом» stays in the ТЗ as later.
   for (const chosen of chosenForSpec(suggestions)) {
     if (features.length >= APP_LIMITS.features) break;
-    features.push({ key: chosen.key, title: chosen.title.slice(0, 80), description: chosen.description.slice(0, 400), roles: [roles[0]!.key], priority: chosen.priority, data: [], acceptance: chosen.acceptance });
+    features.push({ key: chosen.key, title: chosen.title.slice(0, 80), description: chosen.description.slice(0, 400), roles: [roles[0]!.key], priority: chosen.priority, data: [], acceptance: chosen.acceptance, story: '', cases: [], sources: [`suggestion:${chosen.key.replace(/^x_/, '')}`.slice(0, 35)] });
   }
   // A record no scenario names by word goes to the first scenario's feature, so every record has an owner to check.
   const first = features[kind === 'app' ? 2 : 1] ?? features[0]!;
@@ -213,7 +252,10 @@ export function templateFeatures(brief: Brief | null, process: BusinessProcess |
   const requirements = [tr('Удобно с телефона: всё работает на экране шириной от 360 пикселей.'), tr('Язык интерфейса — язык проекта.')];
   // Decisions put off in «Вы это учли?» stay visible as open questions.
   const questions = (process?.situations ?? []).filter((item) => item.answer === 'later').map((item) => item.key);
-  return normalizeFeatures({ roles, features, sensitivity: 'personal', integrations: [], summary, requirements, limits: [], questions: questions.length ? questionTexts(questions) : [] });
+  const access = templateAccess(roles, process?.actors ?? [], features, kind === 'app');
+  const services = templateServices(suggestions, process);
+  const quality = templateQuality(currentLocale() === 'en' ? tr('Английский') : tr('Русский'));
+  return normalizeFeatures({ roles, features, sensitivity: 'personal', integrations: [], summary, requirements, limits: [], questions: questions.length ? questionTexts(questions) : [], access, services, quality });
 }
 
 /** The ТЗ as a document anyone can read or hand to a developer: Markdown in the project's language. */
@@ -221,6 +263,19 @@ export function specMarkdown(input: { brief: Brief | null; process: BusinessProc
   return runWithLocale(contentLocale(input.locale), () => {
     const value = input.features;
     const roleName = (key: string) => value.roles.find((role) => role.key === key)?.name ?? key;
+    const dataName = (key: string) => key === 'user' ? tr('Аккаунты') : input.process?.data.find((entity) => entity.key === key)?.name ?? key;
+    const steps = new Map(productSteps(input.process).map((step) => [step.ref, step]));
+    const sourceText = (ref: string) => {
+      const step = steps.get(ref);
+      if (step) return tr('Сценарий «{0}»: {1}', [step.scenario, step.action]);
+      if (ref.startsWith('suggestion:')) return tr('выбрано в «Предложениях функций»');
+      if (ref === 'rule:privacy') return tr('правило о персональных данных');
+      if (ref === 'rule:signin') return tr('вход в аккаунт');
+      return ref === 'owner' ? tr('решение владельца') : ref;
+    };
+    const actions = actionLabels();
+    const quality = QUALITY_KEYS.filter((key) => value.quality?.[key]);
+    const traced = coverage(input.process, value.features);
     const lines = [
       `# ${input.brief?.businessName || tr('Проект')} — ${tr('техническое задание')}`, '',
       ...(value.summary ? [value.summary, ''] : input.brief?.whatYouDo ? [input.brief.whatYouDo, ''] : []),
@@ -230,13 +285,20 @@ export function specMarkdown(input: { brief: Brief | null; process: BusinessProc
         const own = value.features.filter((feature) => feature.priority === priority);
         return own.length ? [`### ${tr(priorityLabels[priority])}`, '', ...own.flatMap((feature) => [
           `#### ${feature.title}`, '', ...(feature.description ? [feature.description, ''] : []), `${tr('Кто пользуется')}: ${feature.roles.map(roleName).join(', ')}`, '',
+          ...((feature.story ?? '') ? [`_${feature.story}_`, ''] : []),
           ...(feature.acceptance.length ? [`${tr('Готово, когда')}:`, ...feature.acceptance.map((line) => `- [ ] ${line}`), ''] : []),
+          ...((feature.cases ?? []).length ? [`${tr('Проверки')}:`, ...(feature.cases ?? []).map((item) => `- ${tr('Дано')}: ${item.given || '—'}; ${tr('когда')}: ${item.when}; ${tr('тогда')}: ${item.then}`), ''] : []),
+          ...((feature.sources ?? []).length ? [`${tr('Откуда')}: ${(feature.sources ?? []).map(sourceText).join('; ')}`, ''] : []),
         ])] : [];
       }),
+      ...((value.access ?? []).length ? [`## ${tr('Кто что может')}`, '', `| ${tr('Роль')} | ${tr('Данные')} | ${tr('Может')} | ${tr('Чьи записи')} |`, '|---|---|---|---|',
+        ...(value.access ?? []).map((row) => `| ${roleName(row.role)} | ${dataName(row.data)} | ${row.actions.map((action) => actions[action]).join(', ') || '—'} | ${row.scope === 'own' ? tr('только свои') : tr('все')} |`), ''] : []),
+      ...(quality.length ? [`## ${tr('Нефункциональные требования')}`, '', ...quality.map((key) => `- **${qualityLabels()[key]}**: ${value.quality![key]}`), ''] : []),
       ...(value.requirements.length ? [`## ${tr('Общие требования')}`, '', ...value.requirements.map((line) => `- ${line}`), ''] : []),
       ...((input.process?.rules ?? []).length ? [`## ${tr('Бизнес-правила')}`, '', ...input.process!.rules.map((rule) => `- ${rule}`), ''] : []),
       `## ${tr('Данные')}`, '', `${tr('Чувствительность')}: ${tr(sensitivityLabels[value.sensitivity])}`, '',
-      ...(value.integrations.length ? [`## ${tr('Интеграции')}`, '', ...value.integrations.map((line) => `- ${line}`), ''] : []),
+      ...((value.services ?? []).length ? [`## ${tr('Интеграции')}`, '', ...(value.services ?? []).map((service) => `- **${service.name}**${service.purpose ? ` — ${service.purpose}` : ''}. ${accessByLabels()[service.accessBy]}.`), ''] : []),
+      ...(traced.length ? [`## ${tr('Покрытие процесса')}`, '', ...traced.map((step) => `- ${step.by.length ? '[x]' : '[ ]'} ${tr('Сценарий «{0}»: {1}', [step.scenario, step.action])}${step.by.length ? ` → ${step.by.join(', ')}` : ` — ${tr('не покрыто функцией')}`}`), ''] : []),
       ...(value.limits.length ? [`## ${tr('Ограничения и допущения')}`, '', ...value.limits.map((line) => `- ${line}`), ''] : []),
       ...(value.questions.length ? [`## ${tr('Открытые вопросы')}`, '', ...value.questions.map((line) => `- [ ] ${line}`), ''] : []),
     ];
@@ -531,7 +593,9 @@ export function featuresChanges(before: AppFeatures, after: AppFeatures): string
   diff(before.roles ?? [], after.roles ?? [], (role) => role.name, tr('роль'), (a, b) => JSON.stringify(a) === JSON.stringify(b));
   diff(before.features ?? [], after.features ?? [], (feature) => feature.title, tr('функция'), (a, b) => JSON.stringify(a) === JSON.stringify(b));
   if (before.sensitivity !== after.sensitivity) lines.push(tr('Данные: {0}', [tr(sensitivityLabels[after.sensitivity] ?? after.sensitivity)]));
-  if (JSON.stringify(before.integrations) !== JSON.stringify(after.integrations)) lines.push(tr('Изменены интеграции'));
+  if (JSON.stringify(before.services ?? []) !== JSON.stringify(after.services ?? [])) lines.push(tr('Изменены интеграции'));
+  if (JSON.stringify(before.access ?? []) !== JSON.stringify(after.access ?? [])) lines.push(tr('Изменено, кто что может'));
+  if (JSON.stringify(before.quality ?? {}) !== JSON.stringify(after.quality ?? {})) lines.push(tr('Изменены нефункциональные требования'));
   return lines;
 }
 
