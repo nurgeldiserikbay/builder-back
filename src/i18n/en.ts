@@ -3837,4 +3837,6 @@ export const en: Record<string, string> = {
   "Операции API по контрактам": "API operations by the contracts",
   "Кейсы плана проверки, которые должны пройти (тест с [case:<ключ>] в названии): {0}.": "Test plan cases that must pass (a test with [case:<key>] in its name): {0}.",
   "Кейсы плана проверки проходят": "Test plan cases pass",
+  "Не работает: {0}. Сценарий: {1}": "Does not work: {0}. Scenario: {1}",
+  "Замечание: {0}. Сценарий: {1}": "Remark: {0}. Scenario: {1}",
 };

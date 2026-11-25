@@ -392,6 +392,7 @@ model Project {
   changeProposals ChangeProposal[]
   planTasks       PlanTaskState[]
   caseResults     PlanCaseResult[]
+  caseAcceptances PlanCaseAcceptance[]
   stagePlaybooks  StagePlaybook[]
   hostingConnection HostingConnection?
 }
@@ -2375,6 +2376,10 @@ model PlanTaskState {
   note            String?        @db.VarChar(500)
   /// For «заблокирована»: what or whom the task waits for.
   blockedBy       String?        @map("blocked_by") @db.VarChar(300)
+  /// A task added outside the plan's versions — the owner's remark on a scenario: its title, the plan module and the case.
+  title           String?        @db.VarChar(200)
+  moduleKey       String?        @map("module_key") @db.VarChar(32)
+  fromCaseKey     String?        @map("from_case_key") @db.VarChar(32)
   updatedByUserId String?        @map("updated_by_user_id") @db.Uuid
   createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -2409,4 +2414,27 @@ model PlanCaseResult {
 
   @@unique([projectId, caseKey], map: "plan_case_results_project_case_key")
   @@map("plan_case_results")
+}
+
+enum PlanAcceptanceVerdict {
+  works
+  broken
+  remark
+}
+
+/// The owner's acceptance of a main scenario of the test plan (PRODUCT_LIFECYCLE §4.10, «Приёмка владельцем»): works, does
+/// not work, or works with a remark. «Не работает» and a remark become a task of the plan (plan_task_states.from_case_key).
+model PlanCaseAcceptance {
+  id          String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId   String                @map("project_id") @db.Uuid
+  caseKey     String                @map("case_key") @db.VarChar(32)
+  verdict     PlanAcceptanceVerdict
+  note        String?               @db.VarChar(500)
+  planVersion Int                   @map("plan_version")
+  byUserId    String?               @map("by_user_id") @db.Uuid
+  updatedAt   DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project     Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, caseKey], map: "plan_case_acceptances_project_case_key")
+  @@map("plan_case_acceptances")
 }

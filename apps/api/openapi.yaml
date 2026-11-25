@@ -4545,7 +4545,7 @@ paths:
       tags: [Journey]
       operationId: getRoadmapProgress
       summary: Progress of the accepted implementation plan («План реализации», web application route, catalog 1.14.0)
-      description: 'Modules with tasks (key, title, feature, release, hours, aiRequests, status, assigneeUserId, assignee, dueDate, note, blockedBy, late, checks { total, passed, failed } from the cases of the accepted test plan), progress per module and in total weighted by estimated hours, the critical path, the expected finish (today plus the remaining hours of the critical path in working days), blocked and late tasks, the next important task, AI requests and specialist hours spent since approval against the plan, people who can take a task, canEdit.  Also testPlanApproved, agentRunning, and per module agent { taskId, status, startedAt, finishedAt } of its latest agent task or null.'
+      description: 'Modules with tasks (key, title, feature, release, hours, aiRequests, status, assigneeUserId, assignee, dueDate, note, blockedBy, late, checks { total, passed, failed } from the cases of the accepted test plan), progress per module and in total weighted by estimated hours, the critical path, the expected finish (today plus the remaining hours of the critical path in working days), blocked and late tasks, the next important task, AI requests and specialist hours spent since approval against the plan, people who can take a task, canEdit.  Also testPlanApproved, agentRunning, and per module agent { taskId, status, startedAt, finishedAt } of its latest agent task or null. The owner''s remarks on scenarios appear as tasks of their module with hours 0 and fromCase set; tasks of the plan have fromCase null.'
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -4584,6 +4584,47 @@ paths:
         '403': { description: 'STAGE_WRITE_FORBIDDEN' }
         '404': { description: 'TASK_NOT_FOUND, STAGE_NOT_FOUND' }
         '409': { description: 'ROADMAP_NOT_APPROVED, TASK_NEEDS_CHECKS, TASK_CHECKS_NOT_PASSED' }
+  /projects/{projectId}/testplan/acceptance:
+    get:
+      tags: [Journey]
+      operationId: getScenarioAcceptance
+      summary: The owner's acceptance of the main scenarios and launch readiness by the test plan
+      description: 'acceptances[] (caseKey, verdict works | broken | remark | null, note, stale) for the cases of classes normal and mistakes; readiness { blocking { total, passed }, scenarios { total, works }, openRemarks }; canAccept (owner or manager).'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: 'data as described' }
+        '404': { description: 'PROJECT_NOT_FOUND, STAGE_NOT_FOUND' }
+  /projects/{projectId}/testplan/cases/{caseKey}/acceptance:
+    put:
+      tags: [Journey]
+      operationId: acceptScenario
+      summary: The owner's verdict on a main scenario («Приёмка владельцем»)
+      description: 'Owner or manager. Only cases of classes normal and mistakes (CASE_NOT_MAIN_SCENARIO). broken and remark need a note of at least 10 characters and become a plan task fix_<caseKey> in the module of the case''s task (shown in the plan''s progress, without an estimate); works closes that task. Written to the project log (scenario_accepted).'
+      x-implementation-status: implemented
+      security: [{ sessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { in: path, name: caseKey, required: true, schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,31}$' } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [verdict]
+              properties:
+                verdict: { type: string, enum: [works, broken, remark] }
+                note: { type: [string, 'null'], maxLength: 500 }
+      responses:
+        '200': { description: 'the same data as GET acceptance' }
+        '400': { description: 'CASE_NOT_MAIN_SCENARIO, ACCEPTANCE_VERDICT_INVALID, ACCEPTANCE_NOTE_REQUIRED' }
+        '403': { description: 'STAGE_ACCEPT_FORBIDDEN' }
+        '404': { description: 'CASE_NOT_FOUND' }
+        '409': { description: 'TESTPLAN_NOT_APPROVED' }
   /projects/{projectId}/testplan/cases/{caseKey}/result:
     put:
       tags: [Journey]

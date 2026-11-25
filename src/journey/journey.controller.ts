@@ -500,6 +500,18 @@ export class JourneyController {
     return this.roadmap.update(request.user.id, projectId, taskKey, input);
   }
 
+  /** The owner's verdicts on the main scenarios and what stands between the project and a launch. */
+  @Get('projects/:projectId/testplan/acceptance')
+  testPlanAcceptance(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.roadmap.acceptance(request.user.id, projectId);
+  }
+
+  @Put('projects/:projectId/testplan/cases/:caseKey/acceptance')
+  acceptScenario(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('caseKey') caseKey: string, @Body() raw: unknown) {
+    if (!/^[a-z][a-z0-9_]{0,31}$/.test(caseKey)) throw new BadRequestException('CASE_NOT_FOUND');
+    return this.roadmap.acceptScenario(request.user.id, projectId, caseKey, body(raw ?? {}, ['verdict', 'note']));
+  }
+
   /** A person's result of a test case checked by hand or in a browser (automatic cases get results from test runs only). */
   @Put('projects/:projectId/testplan/cases/:caseKey/result')
   recordTestCase(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('caseKey') caseKey: string, @Body() raw: unknown) {
