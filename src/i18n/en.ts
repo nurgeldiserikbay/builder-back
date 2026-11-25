@@ -3933,7 +3933,7 @@ export const en: Record<string, string> = {
   "Вы посмотрели, что сделано": "You have looked at what was done",
   "Принятый модуль можно соединять с остальными. Если позже изменятся контракты или план, модуль получит уведомление об изменении.": "An accepted module can be joined with the others. If the contracts or the plan change later, the module gets a change notice.",
   "Модуль — часть приложения, которую можно сделать отдельно: свой исполнитель, своя ветка работы и своя приёмка. Так модули делаются параллельно и не ломают друг друга.": "A module is a part of the application that can be built on its own: its own lead, its own line of work and its own acceptance. That way modules are built in parallel without breaking each other.",
-  "Принятые модули соединяются в приложение; пакет для разработки и запуск идут после них.": "Accepted modules join into the application; the launch comes after them.",
+  "Принятые модули соединяются в приложение; когда кейсы плана проверки пройдены, приложение готовят к запуску.": "Accepted modules join into the application; once the test plan's cases pass, the application is prepared for launch.",
   "Модуль «Заявки»: создание и список заявок, смена статуса, права по ролям; все его кейсы проверки пройдены.": "Module «Requests»: creating and listing requests, changing status, rights by role; all its test cases passed.",
   "Договорённость, как модули общаются: операции API, данные и события. Модуль меняет только своё.": "The agreement on how modules talk: API operations, data and events. A module changes only its own part.",
   "Кейс проверки": "Test case",
