@@ -1,3 +1,4 @@
+import { RoadmapProgressService } from './roadmap-progress.service.js';
 import { CommentsService } from './comments.service.js';
 import { StageReviewService } from './stage-review.service.js';
 import { BadRequestException, NotFoundException, Body, Controller, Get, Header, HttpCode, Param, Post, Put, Query, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
@@ -65,7 +66,7 @@ function uuid(value: string, code: string): string {
 @Controller()
 @UseGuards(AuthGuard)
 export class JourneyController {
-  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService, private readonly review: StageReviewService, private readonly proposals: ChangeProposalsService, private readonly playbooks: PlaybooksService, private readonly interviews: InterviewService) {}
+  constructor(private readonly journey: JourneyService, private readonly specialists: SpecialistsService, private readonly worktime: WorktimeService, private readonly specialistCatalog: CatalogService, private readonly comments: CommentsService, private readonly review: StageReviewService, private readonly proposals: ChangeProposalsService, private readonly playbooks: PlaybooksService, private readonly interviews: InterviewService, private readonly roadmap: RoadmapProgressService) {}
 
   @Get('projects/:projectId/stages/:stageKey/comments')
   listComments(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string) {
@@ -486,6 +487,19 @@ export class JourneyController {
   }
 
   /** { reason } — skip an optional stage; the stages after it go on without it. Owner or manager. */
+  /** Progress of the accepted implementation plan: tasks with status, person and date, weighted progress, blocks, finish date. */
+  @Get('projects/:projectId/roadmap/progress')
+  roadmapProgress(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.roadmap.view(request.user.id, projectId);
+  }
+
+  @Put('projects/:projectId/roadmap/tasks/:taskKey')
+  updateRoadmapTask(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('taskKey') taskKey: string, @Body() raw: unknown) {
+    if (!/^[a-z][a-z0-9_]{0,31}$/.test(taskKey)) throw new BadRequestException('TASK_NOT_FOUND');
+    const input = body(raw ?? {}, ['status', 'note', 'blockedBy', 'assigneeUserId', 'dueDate']);
+    return this.roadmap.update(request.user.id, projectId, taskKey, input);
+  }
+
   @Post('projects/:projectId/stages/:stageKey/skip')
   @HttpCode(200)
   skip(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {

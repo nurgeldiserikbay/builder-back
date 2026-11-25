@@ -1,3 +1,4 @@
+import { EXECUTORS, ROADMAP_LIMITS, normalizeRoadmap, roadmapMarkdown, templateRoadmap, type Roadmap } from './roadmap.js';
 import { CHANNELS, CONTRACT_LIMITS, METHODS, contractsMarkdown, contractsMigration, contractsOpenApi, normalizeContracts, templateContracts, type Contracts } from './contracts.js';
 import { stageRequests, UNSETTLED_REQUESTS } from './stage-requests.js';
 import { conceptDocument, importConceptText, normalizeConcept, slugFile, type Concept, type ConceptInputs } from './concept.js';
@@ -236,6 +237,7 @@ export class JourneyService {
     const requests = await stageRequests(this.prisma, projectId, stage.id).then((value) => ({ outgoing: value.outgoing.map((item) => ({ ...item, fromTitle: tr(item.fromTitle), targetTitle: tr(item.targetTitle) })), incoming: value.incoming.map((item) => ({ ...item, fromTitle: tr(item.fromTitle), targetTitle: tr(item.targetTitle) })) }));
     const concept = definition.artifactType === 'concept' ? await this.conceptView(ctx, stageKey, current?.content ?? null) : null;
     const contracts = definition.artifactType === 'contracts' ? await this.contractsView(ctx, stageKey, current?.content ?? null) : null;
+    const roadmap = definition.artifactType === 'roadmap' ? await this.roadmapView(ctx, stageKey, current?.content ?? null) : null;
     const techPlanOutdated = Boolean(techPlanPreview && current && !sameTechPlan(techPlanPreview, current.content as unknown as TechPlan));
     const scheduleTemplate = definition.artifactType === 'schedule' && !current
       ? await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSchedule(inputs.offer?.content as Offer | undefined ?? null))) : null;
@@ -329,6 +331,7 @@ export class JourneyService {
           ...(definition.artifactType === 'techplan' ? { techplan: { preview: techPlanPreview, outdated: techPlanOutdated } } : {}),
           ...(concept ? { concept } : {}),
           ...(contracts ? { contracts } : {}),
+          ...(roadmap ? { roadmap } : {}),
           ...(definition.artifactType === 'process' ? { process: { capabilities: capabilitiesFor(ctx.type.key), actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS, situations: { version: SITUATIONS_VERSION, items: situationsFor(ctx.type.key) } } } : {}),
           ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.core.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
@@ -559,7 +562,7 @@ export class JourneyService {
     const artifact = buildHandoffPackage({
       brief: (inputs.goal?.content as Brief | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
       features: inputs.features!.content as AppFeatures, screens: inputs.screens!.content as AppScreens, plan: inputs.techplan!.content as TechPlan,
-      contracts: (inputs.contracts?.content as Contracts | undefined) ?? null, locale: ctx.project.locale, sourceVersionIds: Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.versionId])),
+      contracts: (inputs.contracts?.content as Contracts | undefined) ?? null, roadmap: (inputs.roadmap?.content as Roadmap | undefined) ?? null, locale: ctx.project.locale, sourceVersionIds: Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.versionId])),
     });
     const version = await this.prisma.$transaction(async (tx) => {
       const created = await this.core.createVersion(tx, { projectId, stage, artifactType: 'handoff', content: artifact, origin: 'compiled', note: 'Пакет из принятых этапов', userId });
@@ -841,6 +844,26 @@ export class JourneyService {
    * What the contracts editor needs: the first draft from the accepted architecture and ТЗ (also for «Собрать заново»), the
    * names it refers to, and the files the current version turns into, so the owner reads what the developer gets.
    */
+  /** The plan editor: the platform's first plan from the accepted contracts, ТЗ and schema, and the plan as a document. */
+  private async roadmapView(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: StageKey, content: unknown) {
+    const satisfied = inputsSatisfied(ctx.route, ctx.dep, key);
+    const inputs = satisfied ? await this.core.acceptedInputs(ctx, key) : {};
+    const features = (inputs.features?.content as AppFeatures | undefined) ?? null;
+    const contracts = (inputs.contracts?.content as Contracts | undefined) ?? null;
+    const design = techPlanDesignOf(inputs.techplan?.content);
+    const idea = (inputs.idea?.content as IdeaReview | undefined) ?? null;
+    const template = features && contracts ? inProject(ctx, () => templateRoadmap({ contracts, features, design, idea })) : null;
+    let current: Roadmap | null = null;
+    try { current = content ? normalizeRoadmap(content) : null; } catch { current = null; }
+    return {
+      template, limits: ROADMAP_LIMITS, executors: EXECUTORS, missing: satisfied ? null : 'inputs',
+      markdown: current ? inProject(ctx, () => roadmapMarkdown(current!, features)) : null,
+      features: features?.features.map((feature) => ({ key: feature.key, title: feature.title, priority: feature.priority })) ?? [],
+      contractModules: contracts?.modules.map((module) => ({ key: module.key, name: module.name })) ?? [],
+      approved: Boolean(this.core.stageOf(ctx, key).approvedVersionId),
+    };
+  }
+
   private async contractsView(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: StageKey, content: unknown) {
     const satisfied = inputsSatisfied(ctx.route, ctx.dep, key);
     const context = satisfied ? await this.core.checkContext(ctx, key) : { sitemap: null };

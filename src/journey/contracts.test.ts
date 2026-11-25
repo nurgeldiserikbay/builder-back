@@ -23,7 +23,7 @@ describe('contracts of a web application', () => {
   it('sit between the architecture and the package and read the ТЗ and the architecture', () => {
     const stages = projectTypes.web_app.stages;
     assert.equal(stages[stages.indexOf('techplan') + 1], 'contracts');
-    assert.equal(stages[stages.indexOf('contracts') + 1], 'handoff');
+    assert.equal(stages[stages.indexOf('contracts') + 1], 'roadmap');
     assert.deepEqual(routeInputs(stages, 'contracts'), ['process', 'features', 'techplan']);
     assert.ok(routeInputs(stages, 'handoff').includes('contracts'));
     // Sites have no contracts stage: the platform builds them itself.
