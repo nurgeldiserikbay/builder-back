@@ -10,7 +10,7 @@ import { contentLocale, inLocale, runWithLocale, type Message } from '../i18n/i1
 import { ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { type BookingConfig, type Schedule } from './schedule.js';
 import { type BusinessProcess } from './process.js';
-import { TECHPLAN_VERSION, buildTechPlan, type TechPlan } from './techplan.js';
+import { TECHPLAN_VERSION, buildTechPlan, techPlanDesign, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { projectTypeOf, stageTitle, routeAncestors, routeInputs, stageDefinitions, type ArtifactType, type ProjectTypeKey, type StageKey } from './catalog.js';
 import { ArtifactValidationError, defaultDesign, normalizeArtifact, contentImageIds, type Brief, type ContentArtifact, type DesignArtifact, type Offer } from './artifacts.js';
@@ -206,7 +206,14 @@ export class JourneyCore {
     };
   }
 
-  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs }> {
+  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs; design?: ArchitectureDesign | null }> {
+    // Contracts are checked against the ТЗ (coverage, rights) and the architecture's schema (owners of records).
+    if (key === 'contracts') {
+      const inputs = await this.acceptedInputs(ctx, key);
+      let design: ArchitectureDesign | null = null;
+      try { design = techPlanDesign(inputs.techplan?.content) ?? null; } catch { design = null; }
+      return { sitemap: null, features: (inputs.features?.content as AppFeatures | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null, design };
+    }
     if (key === 'concept') return { sitemap: null, concept: await this.conceptInputs(ctx, key) };
     // An application's architecture is checked against the ТЗ: its data, services and requirements.
     if (key === 'techplan') return { sitemap: null, features: ((await this.acceptedInputs(ctx, key)).features?.content as AppFeatures | undefined) ?? null };

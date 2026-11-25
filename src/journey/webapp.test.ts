@@ -25,7 +25,7 @@ const brief: Brief = { businessName: 'Сервис Клин', whatYouDo: 'Убо
 
 describe('web application route', () => {
   it('the route goes from functions to screens, architecture and the package', () => {
-    assert.deepEqual(projectTypes.web_app.stages, ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'handoff']);
+    assert.deepEqual(projectTypes.web_app.stages, ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'handoff']);
     assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'techplan'), ['goal', 'process', 'features', 'screens']);
     assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'screens'), ['features']);
   });
@@ -185,9 +185,17 @@ describe('web application route (database)', async () => {
     assert.ok((saved.current!.content as { dataModel: Array<{ key: string }> }).dataModel.some((entity) => entity.key === 'review'));
     assert.equal((saved.options.techplan as { outdated: boolean }).outdated, false);
     await accept('techplan');
+    // Contracts start from the platform's draft: modules, operations with rights and errors, built from the schema and the ТЗ.
+    const contracts = (await journey.stage(owner.id, projectId, 'contracts')).data.options.contracts as unknown as { template: { operations: Array<{ path: string }> } };
+    assert.ok(contracts.template.operations.some((operation) => operation.path === '/api/auth/login'));
+    await journey.saveDraft(owner.id, projectId, 'contracts', { content: contracts.template, baseVersionId: null });
+    const files = ((await journey.stage(owner.id, projectId, 'contracts')).data.options.contracts as unknown as { files: Array<{ name: string; content: string }> }).files;
+    assert.ok(files.find((file) => file.name === 'schema.sql')!.content.includes('CREATE TABLE "review"'));
+    await accept('contracts');
     const built = await journey.buildHandoff(owner.id, projectId);
     assert.deepEqual(built.data.checks.filter((check) => check.status === 'failed'), []);
     const view = await journey.stage(owner.id, projectId, 'handoff');
+    assert.ok((view.data.current!.content as { files: Array<{ name: string }> }).files.some((file) => file.name === 'schema.sql'));
     assert.ok((view.data.current!.content as { files: Array<{ name: string }> }).files.some((file) => file.name === 'spec.md'));
     await assert.rejects(journey.saveDraft(owner.id, projectId, 'handoff', { content: {}, baseVersionId: built.data.versionId }), /STAGE_NOT_EDITABLE/);
     assert.ok((await journey.handoffFiles(owner.id, projectId)).data.files.some((file) => file.name === 'README.md'));

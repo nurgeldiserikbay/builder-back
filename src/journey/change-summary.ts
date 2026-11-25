@@ -1,4 +1,5 @@
 // Deterministic, plain-language description of what changed between two accepted versions of a stage.
+import { contractsChanges, normalizeContracts } from './contracts.js';
 import { conceptChanges, normalizeConcept } from './concept.js';
 import { normalizeSuggestions, suggestionsChanges } from './suggestions.js';
 import { ideaChanges, normalizeIdea } from './idea.js';
@@ -109,6 +110,7 @@ export function describeChanges(key: StageKey, beforeRaw: unknown, afterRaw: unk
           : type === 'catalog' ? catalogChanges(beforeRaw as Catalog, afterRaw as Catalog)
           : type === 'features' ? featuresChanges(beforeRaw as AppFeatures, afterRaw as AppFeatures)
           : type === 'screens' ? screensChanges(beforeRaw as AppScreens, afterRaw as AppScreens)
+          : type === 'contracts' ? contractsChanges(normalizeContracts(beforeRaw ?? {}), normalizeContracts(afterRaw ?? {}))
           : type === 'techplan' ? [
             ...(JSON.stringify({ ...before, ownerNotes: null }) !== JSON.stringify({ ...after, ownerNotes: null }) ? ['План обновлён по новым данным'] : []),
             ...(before.ownerNotes !== after.ownerNotes ? ['Изменены заметки владельца'] : []),
