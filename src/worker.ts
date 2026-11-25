@@ -7,6 +7,7 @@ import { AnalysisRunner } from './analysis/analysis-runner.js';
 import { BrowserCheckRunner } from './quality/browser-checks.js';
 import { SandboxRunner } from './sandbox/starter-checks.js';
 import { AgentRunner } from './agent/agent-tasks.js';
+import { BrowserCaseRunner } from './agent/browser-case-runs.js';
 import { flushErrorReporting, initErrorReporting, reportError } from './observability/error-reporting.js';
 
 initErrorReporting('worker');
@@ -18,7 +19,7 @@ async function bootstrap(): Promise<void> {
   process.once('SIGTERM', () => { stopping = true; });
   process.once('SIGINT', () => { stopping = true; });
   // Review pages, code analysis, browser checks, sandbox runs and agent tasks share the process; each loop claims its own jobs.
-  await Promise.all([app.get(ReviewWorker).run(), app.get(AnalysisRunner).loop(() => stopping), app.get(BrowserCheckRunner).loop(() => stopping), app.get(SandboxRunner).loop(() => stopping), app.get(AgentRunner).loop(() => stopping)]);
+  await Promise.all([app.get(ReviewWorker).run(), app.get(AnalysisRunner).loop(() => stopping), app.get(BrowserCheckRunner).loop(() => stopping), app.get(SandboxRunner).loop(() => stopping), app.get(AgentRunner).loop(() => stopping), app.get(BrowserCaseRunner).loop(() => stopping)]);
   await app.close();
 }
 

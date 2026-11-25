@@ -20,15 +20,26 @@ const finished = new Set(['done', 'done_with_note']);
 /** What changed, for the task report and the project log. */
 export interface RunResultSummary { recorded: number; passed: number; failed: number; tasksDone: string[]; tasksReopened: string[] }
 
-export async function recordRunResults(tx: Tx, input: { projectId: string; agentTaskId: string; userId: string; cases: Record<string, 'passed' | 'failed'> }): Promise<RunResultSummary | null> {
+/**
+ * source run: the platform's run of the agent's tests, for automatic cases. source browser: the AI agent in the browser, for
+ * cases marked «ИИ-агент в браузере», with what it observed as the note.
+ */
+export async function recordRunResults(tx: Tx, input: { projectId: string; agentTaskId: string; userId: string; cases: Record<string, 'passed' | 'failed'>; source?: 'run' | 'browser'; notes?: Record<string, string> }): Promise<RunResultSummary | null> {
+  const source = input.source ?? 'run';
+  const method = source === 'run' ? 'auto' : 'ai_browser';
   const testplan = await approved<TestPlan>(tx, input.projectId, 'testplan');
   if (!testplan) return null;
-  // Only automatic cases of the accepted plan: a test named after a case checked by a person proves nothing about it.
-  const automatic = new Map(testplan.content.cases.filter((item) => item.method === 'auto').map((item) => [item.key, item]));
+  // Only the cases of the plan this source may check: a test named after a case checked by a person proves nothing about it.
+  const automatic = new Map(testplan.content.cases.filter((item) => item.method === method).map((item) => [item.key, item]));
   const summary: RunResultSummary = { recorded: 0, passed: 0, failed: 0, tasksDone: [], tasksReopened: [] };
   for (const [caseKey, status] of Object.entries(input.cases)) {
     if (!automatic.has(caseKey)) continue;
-    const data = { status, note: null, planVersion: testplan.versionNumber, byUserId: null, source: 'run', agentTaskId: input.agentTaskId };
+    // A person who checked a browser case themselves has the last word: the agent does not overwrite it.
+    if (source === 'browser') {
+      const existing = await tx.planCaseResult.findUnique({ where: { projectId_caseKey: { projectId: input.projectId, caseKey } }, select: { source: true, planVersion: true } });
+      if (existing?.source === 'person' && existing.planVersion === testplan.versionNumber) continue;
+    }
+    const data = { status, note: input.notes?.[caseKey]?.slice(0, 500) ?? null, planVersion: testplan.versionNumber, byUserId: null, source, agentTaskId: input.agentTaskId };
     await tx.planCaseResult.upsert({ where: { projectId_caseKey: { projectId: input.projectId, caseKey } }, create: { projectId: input.projectId, caseKey, ...data }, update: data });
     summary.recorded += 1;
     summary[status === 'passed' ? 'passed' : 'failed'] += 1;
@@ -53,7 +64,7 @@ export async function recordRunResults(tx: Tx, input: { projectId: string; agent
       }
     }
   }
-  await tx.projectEvent.create({ data: { projectId: input.projectId, actorUserId: input.userId, type: 'test_run_results', stageKey: 'testplan', details: { agentTaskId: input.agentTaskId, ...summary } as never } });
+  await tx.projectEvent.create({ data: { projectId: input.projectId, actorUserId: input.userId, type: 'test_run_results', stageKey: 'testplan', details: { agentTaskId: input.agentTaskId, source, ...summary } as never } });
   return summary;
 }
 

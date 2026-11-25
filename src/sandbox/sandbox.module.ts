@@ -7,6 +7,8 @@ import { AppCodeController, StarterChecksController } from './starter-checks.con
 import { AppCodeService } from './app-code.js';
 import { AgentController, AgentDeploymentController } from '../agent/agent.controller.js';
 import { AgentRunner, AgentTasksService } from '../agent/agent-tasks.js';
+import { BrowserCaseRunner, BrowserCaseRunsService } from '../agent/browser-case-runs.js';
+import { TestPlanRunsController } from '../agent/testplan-runs.controller.js';
 
-@Module({ imports: [AuthModule, JourneyModule, ChoicesModule], controllers: [StarterChecksController, AppCodeController, AgentController, AgentDeploymentController], providers: [SandboxRunner, StarterChecksService, AppCodeService, AgentRunner, AgentTasksService] })
+@Module({ imports: [AuthModule, JourneyModule, ChoicesModule], controllers: [StarterChecksController, AppCodeController, AgentController, AgentDeploymentController, TestPlanRunsController], providers: [SandboxRunner, StarterChecksService, AppCodeService, AgentRunner, AgentTasksService, BrowserCaseRunner, BrowserCaseRunsService] })
 export class SandboxModule {}
