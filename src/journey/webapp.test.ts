@@ -21,6 +21,7 @@ import { StageAiService } from './stage-ai.service.js';
 import { WorktimeService } from './worktime.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { RoadmapProgressService } from './roadmap-progress.service.js';
+import { recordRunResults } from './plan-results.js';
 
 const brief: Brief = { businessName: 'Сервис Клин', whatYouDo: 'Уборка квартир по заявкам', audience: 'Жители города', city: 'Алматы', mainAction: 'form', phone: '+7 701 000 00 00', messenger: null, email: null, address: null, tone: 'friendly' };
 
@@ -230,6 +231,19 @@ describe('web application route (database)', async () => {
     // A task whose cases are automatic waits for the test runs.
     const waiting = closed.modules.flatMap((module) => module.tasks).find((task) => task.checks.total > 0 && task.checks.passed < task.checks.total)!;
     await assert.rejects(progress.update(owner.id, projectId, waiting.key, { status: 'done' }), /TASK_CHECKS_NOT_PASSED/);
+    // The platform's run of the agent's tests marks automatic cases; a task whose cases all pass becomes «готова» by itself.
+    const byAuto = closed.modules.flatMap((module) => module.tasks).find((task) => task.checks.total > 0 && cases.filter((item) => item.task === task.key).every((item) => item.method === 'auto') && task.status !== 'done_with_note')!;
+    const autoCases = cases.filter((item) => item.task === byAuto.key);
+    const fakeTask = randomUUID();
+    const run = await prisma!.$transaction((tx) => recordRunResults(tx, { projectId, agentTaskId: fakeTask, userId: owner.id, cases: { ...Object.fromEntries(autoCases.map((item) => [item.key, 'passed' as const])), env_check: 'failed', nope: 'passed' } }));
+    assert.equal(run!.recorded, autoCases.length);
+    const afterRun = (await progress.view(owner.id, projectId)).data.modules.flatMap((module) => module.tasks).find((task) => task.key === byAuto.key)!;
+    assert.equal(afterRun.status, 'done');
+    // A person's case is not touched by a run: env_check stays passed, setup_env stays done.
+    assert.equal((await prisma!.planCaseResult.findFirstOrThrow({ where: { projectId, caseKey: 'env_check' } })).status, 'passed');
+    // Red again: the task goes back to work.
+    const again = await prisma!.$transaction((tx) => recordRunResults(tx, { projectId, agentTaskId: fakeTask, userId: owner.id, cases: { [autoCases[0]!.key]: 'failed' } }));
+    assert.deepEqual(again!.tasksReopened, [byAuto.key]);
     const built = await journey.buildHandoff(owner.id, projectId);
     assert.deepEqual(built.data.checks.filter((check) => check.status === 'failed'), []);
     const view = await journey.stage(owner.id, projectId, 'handoff');

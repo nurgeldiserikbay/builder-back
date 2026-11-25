@@ -85,7 +85,7 @@ describe('AI agent: the loop', () => {
       });
       assert.equal(outcome.stopReason, 'finished');
       assert.deepEqual(outcome.report, { summary: 'Удалять может только администратор.', done: ['Права на удаление'], notDone: ['Оплата — нужна интеграция'] });
-      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['test', 'passed'], ['build', 'passed'], ['start', 'passed'], ['deploy_files', 'passed'], ['pwa', 'passed'], ['demo', 'passed']]);
+      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['test', 'passed'], ['cases', 'skipped'], ['build', 'passed'], ['start', 'passed'], ['deploy_files', 'passed'], ['pwa', 'passed'], ['demo', 'passed']]);
       assert.match(outcome.demoHtml!, /<body>demo<\/body>/);
       assert.deepEqual(outcome.files.map((file) => file.path).sort(), ['.env.example', 'Dockerfile', 'build.js', 'docker-compose.yml', 'package-lock.json', 'package.json', 'render.yaml', 'server.js', 'src/rules.js', 'test/rules.test.js']);
       assert.equal(outcome.turns, 5);

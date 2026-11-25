@@ -21,7 +21,8 @@ export class AgentController {
   @HttpCode(202)
   start(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() body: unknown) {
     const record = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
-    if (Object.keys(record).some((key) => !['instruction', 'kind', 'baseTaskId', 'base'].includes(key))) throw new BadRequestException('INVALID_BODY');
+    if (Object.keys(record).some((key) => !['instruction', 'kind', 'baseTaskId', 'base', 'module'].includes(key))) throw new BadRequestException('INVALID_BODY');
+    if (record.module !== undefined && (typeof record.module !== 'string' || !/^[a-z][a-z0-9_]{0,31}$/.test(record.module) || record.instruction)) throw new BadRequestException('INVALID_BODY');
     if (record.kind !== undefined && record.kind !== 'build_app' && record.kind !== 'change_app') throw new BadRequestException('AGENT_TASK_KIND_INVALID');
     const change = record.kind === 'change_app';
     // A change starts either from an earlier task (baseTaskId) or from the repository's main branch (base: "repository").
@@ -30,7 +31,7 @@ export class AgentController {
     if (change !== (typeof record.baseTaskId === 'string' || fromRepository) || (fromRepository && record.baseTaskId !== undefined)) throw new BadRequestException('AGENT_TASK_KIND_INVALID');
     if (typeof record.baseTaskId === 'string' && !/^[0-9a-f-]{36}$/i.test(record.baseTaskId)) throw new BadRequestException('INVALID_BODY');
     if (record.instruction !== undefined && record.instruction !== null && typeof record.instruction !== 'string') throw new BadRequestException('INVALID_INSTRUCTION');
-    return this.tasks.start(request.user.id, projectId, { instruction: (record.instruction as string | null | undefined) ?? null, baseTaskId: change && !fromRepository ? record.baseTaskId as string : null, fromRepository });
+    return this.tasks.start(request.user.id, projectId, { instruction: (record.instruction as string | null | undefined) ?? null, baseTaskId: change && !fromRepository ? record.baseTaskId as string : null, fromRepository, module: (record.module as string | undefined) ?? null });
   }
 
   @Post(':taskId/stop')

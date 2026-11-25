@@ -79,7 +79,12 @@ export class RoadmapProgressService {
       return { key: module.key, name: module.name, executor: module.executor, dependsOn: module.dependsOn, critical: schedule?.criticalPath.includes(module.key) ?? false,
         progress: total ? Math.round((done / total) * 100) : 0, hoursDone: done, hoursTotal: total, tasks };
     };
-    const modules = plan.modules.map(moduleView);
+    // The agent's latest task per module, so people see which module is being built and how it went.
+    const agentRuns = await this.prisma.agentTask.findMany({ where: { projectId, moduleKey: { not: null } }, orderBy: { createdAt: 'desc' }, select: { id: true, moduleKey: true, status: true, createdAt: true, finishedAt: true }, take: 50 });
+    const modules = plan.modules.map((module) => {
+      const run = agentRuns.find((item) => item.moduleKey === module.key) ?? null;
+      return { ...moduleView(module), agent: run ? { taskId: run.id, status: run.status, startedAt: run.createdAt, finishedAt: run.finishedAt } : null };
+    });
     const total = modules.reduce((sum, module) => sum + module.hoursTotal, 0);
     const done = modules.reduce((sum, module) => sum + module.hoursDone, 0);
     // What is left on the critical path decides the finish: remaining hours of its unfinished tasks, from today.
@@ -102,6 +107,7 @@ export class RoadmapProgressService {
         late: all.filter((task) => task.late).map((task) => ({ key: task.key, title: task.title, module: task.module, dueDate: task.dueDate, critical: task.critical })),
         next: next ? { key: next.key, title: next.title, module: next.module } : null,
         modules, people, statuses: TASK_STATUSES, canEdit: this.core.canWrite(ctx, 'roadmap'),
+        testPlanApproved: Boolean((await this.cases(ctx, projectId)).plan), agentRunning: agentRuns.some((item) => item.status === 'queued' || item.status === 'running'),
       },
     };
   }

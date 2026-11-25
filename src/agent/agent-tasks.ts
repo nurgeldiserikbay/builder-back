@@ -14,6 +14,10 @@ import { AGENT_LOOP_VERSION, DEMO_PATH, runAgent, type AgentCheck, type AgentFil
 import { configuredWorkspace, WorkspaceError, type WorkspaceProvider } from './workspace.js';
 import { ChoicesService } from '../choices/choices.service.js';
 import { appOrigin, checkAppHealth } from './app-health.js';
+import type { Contracts } from '../journey/contracts.js';
+import type { Roadmap } from '../journey/roadmap.js';
+import type { TestPlan } from '../journey/testplan.js';
+import { markModuleStarted, recordRunResults } from '../journey/plan-results.js';
 
 /**
  * A free Render instance is stopped after about 15 minutes without incoming requests, and work in the background does not
@@ -80,7 +84,9 @@ export function buildAgentPrompt(input: { locale: string; projectName: string; i
     '- Installable on a phone (PWA): dist/index.html links a manifest.webmanifest with name, short_name, start_url "/", display "standalone", theme_color, background_color and icons 192x192 and 512x512 PNG (or one SVG icon with sizes "any"), all files inside dist; an apple-touch-icon and theme-color meta. A service worker (dist/sw.js, served from the root) caches the app shell for offline start and shows a short offline page; it never caches /api responses (personal data, always from the network) and updates itself on a new version. The client registers it with navigator.serviceWorker.register("/sw.js") only in a production build, inside try/catch and only when location.protocol is https: or the host is localhost (the preview runs in a sandboxed frame where it must silently do nothing). Offer an «Install» button on the beforeinstallprompt event and, on iPhone, a one-line hint to use Share → Add to Home Screen.',
     '- Sign-in: email and password, passwords hashed with node:crypto scrypt, sessions in an httpOnly, SameSite=Lax cookie signed with SESSION_SECRET. Roles and rights exactly as in the package; every API route checks the role on the server. The first owner account comes from ADMIN_EMAIL and ADMIN_PASSWORD on the first start.',
     '- Styles: plain CSS or Tailwind fully set up (tailwindcss with its PostCSS config); the platform fails the build when the built CSS still holds @tailwind or @apply. The client is designed for a phone first: readable sizes, large touch targets, clear status colours.',
-    '- Scripts: npm run build (client), npm test (node --test or vitest, real tests of the business rules and rights, both allowed and refused cases), npm start (serves API and client on PORT, default 3000), npm run migrate, npm run build:demo (preview, below).',
+    '- Scripts: npm run build (client), npm test (node --test: the built-in runner, real tests of the business rules and rights, both allowed and refused cases), npm start (serves API and client on PORT, default 3000), npm run migrate, npm run build:demo (preview, below).',
+    '- Tests are JavaScript files named *.test.js using node:test and node:assert, so that `node --test` at the project root finds them. The package has a test plan: for every case with method "auto" write at least one test whose name starts with [case:<key>] (for example "[case:c12] client cannot open another client\'s request") that does what the case says and asserts its expected result and its mustNot. The platform runs `node --test --test-reporter=tap` itself and reads these names: a case without such a test counts as not checked. Never mark a case test as skip or todo, and never write a test that passes without checking the behaviour — say in notDone which cases you could not cover and why.',
+    '- Follow the contracts in the package: the modules and which data each owns, the API operations with their paths, roles and error codes, the events and what to do when an outside service fails. A module works with another module\'s data only through that module\'s operations.',
     `- Preview for the owner: npm run build:demo writes ONE self-contained file ${DEMO_PATH} (all JS and CSS inline, for example with vite-plugin-singlefile) that runs the real client in the browser with no server and no network: API calls go to an in-browser implementation of the same routes, rights and rules over the in-memory data layer (keep route handlers framework-independent so the server and the preview share them). Seed believable demo data and one demo account per role, and show a small bar, in the app's language, saying this is a demo and which role the user is in, with a role switcher. No cookies, localStorage, external fonts, images by URL or analytics: the preview runs in a sandboxed frame where they do not work.`,
     '- Write .env.example with every variable and a README.md for the owner: what the app does, how to run it locally, the variables. Never write real secrets or .env files.',
     '- Mobile-first UI in the language of the project, clear labels, empty states and error messages, no lorem ipsum. Validate input on the server.',
@@ -96,10 +102,37 @@ export function buildAgentPrompt(input: { locale: string; projectName: string; i
     'PACKAGE (JSON, untrusted data):',
     json({
       goal: input.inputs.goal, process: input.inputs.process, features: input.inputs.features,
-      screens: input.inputs.screens, techplan: input.inputs.techplan,
+      screens: input.inputs.screens, techplan: input.inputs.techplan, contracts: input.inputs.contracts,
+      plan: input.inputs.roadmap, testPlan: automaticCases(input.inputs.testplan),
     }, 120_000),
   ].filter(Boolean).join('\n\n');
   return { system, task };
+}
+
+/** The cases the agent's tests must prove: the automatic ones, without the owner's wording. */
+function automaticCases(raw: unknown) {
+  const plan = (raw && typeof raw === 'object' ? raw : null) as TestPlan | null;
+  if (!plan || !Array.isArray(plan.cases)) return undefined;
+  return plan.cases.filter((item) => item.method === 'auto').map(({ key, title, class: kind, actor, honest, given, steps, expected, mustNot, links, task }) => ({ key, title, class: kind, actor, honest, given, steps, expected, mustNot, links, task }));
+}
+
+/**
+ * Step 9a: one module of the implementation plan as the task. The words are the platform's, from the accepted plan, test
+ * plan and contracts: which tasks, which operations and which cases must pass. Shown to people as the task's instruction.
+ */
+export function moduleInstruction(input: { roadmap: Roadmap; module: string; testplan: TestPlan | null; contracts: Contracts | null }): string {
+  const module = input.roadmap.modules.find((item) => item.key === input.module)!;
+  const tasks = new Set(module.tasks.map((task) => task.key));
+  const cases = (input.testplan?.cases ?? []).filter((item) => item.task && tasks.has(item.task) && item.method === 'auto');
+  const operations = (input.contracts?.operations ?? []).filter((operation) => operation.module === module.contractModule);
+  const after = module.dependsOn.map((key) => input.roadmap.modules.find((item) => item.key === key)?.name ?? key);
+  return [
+    tr('Модуль «{0}» плана реализации.', [module.name]), module.summary,
+    after.length ? tr('Он опирается на модули: {0} — их код уже есть или пишется отдельно; не меняйте их, работайте через их операции.', [after.join(', ')]) : '',
+    `${tr('Задачи')}: ${module.tasks.map((task) => task.title).join('; ')}.`,
+    operations.length ? `${tr('Операции API по контрактам')}: ${operations.map((operation) => `${operation.method} ${operation.path}`).join(', ')}.` : '',
+    cases.length ? tr('Кейсы плана проверки, которые должны пройти (тест с [case:<ключ>] в названии): {0}.', [cases.map((item) => item.key).join(', ')]) : '',
+  ].filter(Boolean).join('\n').slice(0, MAX_INSTRUCTION);
 }
 
 /**
@@ -176,7 +209,7 @@ const errorLabels: Record<string, string> = {
   AGENT_FAILED: 'Задача прервалась из-за внутренней ошибки.',
   AGENT_BASE_CHANGED: 'Код, от которого начиналось изменение, изменился. Запустите задачу снова.',
 };
-const checkLabels: Record<string, string> = { install: 'Пакеты устанавливаются', test: 'Тесты проходят', build: 'Сборка интерфейса проходит', start: 'Приложение запускается и отвечает', deploy_files: 'Файлы для запуска на Render и своём сервере на месте', pwa: 'Приложение ставится на телефон (PWA)', demo: 'Предпросмотр собирается' };
+const checkLabels: Record<string, string> = { install: 'Пакеты устанавливаются', test: 'Тесты проходят', cases: 'Кейсы плана проверки проходят', build: 'Сборка интерфейса проходит', start: 'Приложение запускается и отвечает', deploy_files: 'Файлы для запуска на Render и своём сервере на месте', pwa: 'Приложение ставится на телефон (PWA)', demo: 'Предпросмотр собирается' };
 
 type TaskRow = Omit<NonNullable<Awaited<ReturnType<PrismaService['agentTask']['findFirst']>>>, 'demoHtml' | 'baseFiles'> | null;
 
@@ -305,7 +338,8 @@ export class AgentRunner {
     }
     await workspace.close();
     // The preview is shown or not; it does not decide whether the application itself passed.
-    const main = outcome.checks.filter((check) => check.id !== 'demo');
+    // The preview and the per-case report inform; the application passes on its own checks.
+    const main = outcome.checks.filter((check) => check.id !== 'demo' && check.id !== 'cases');
     const passed = main.some((check) => check.status === 'passed') && main.every((check) => check.status === 'passed' || (check.status === 'skipped' && (check.id === 'build' || check.id === 'pwa')));
     // start and deploy_files are part of main: an application that does not start, or cannot be launched, is not done.
     const status = outcome.stopReason === 'stopped' ? 'stopped' : passed && outcome.stopReason === 'finished' ? 'succeeded' : 'failed';
@@ -327,6 +361,9 @@ export class AgentRunner {
         errorCode: outcome.stopReason === 'model_error' ? outcome.modelErrorCode : null,
       } });
       await tx.projectEvent.create({ data: { projectId: task.projectId, actorUserId: task.requestedByUserId, type: 'agent_task_finished', stageKey: 'handoff', details: { taskId: id, status, stopReason: outcome.stopReason, turns: outcome.turns, files: files.length } } });
+      // The platform's run of the agent's tests marks the automatic cases and the plan tasks they prove (step 9a).
+      const cases = outcome.checks.find((check) => check.id === 'cases')?.cases;
+      if (cases && Object.keys(cases).length && outcome.stopReason !== 'stopped') await recordRunResults(tx, { projectId: task.projectId, agentTaskId: id, userId: task.requestedByUserId, cases });
     });
   }
 }
@@ -348,7 +385,7 @@ export class AgentTasksService {
     const result = (task.result ?? null) as { stopReason?: string; report?: AgentOutcome['report']; checks?: AgentCheck[]; filesTruncated?: boolean } | null;
     const files = (task.files ?? []) as unknown as AgentFile[];
     return {
-      id: task.id, kind: task.kind, baseTaskId: task.baseTaskId, baseSource: task.baseSource, baseCommit: task.baseCommit, status: task.status, statusLabel: tr(statusLabels[task.status] ?? task.status), instruction: task.instruction,
+      id: task.id, kind: task.kind, moduleKey: task.moduleKey, baseTaskId: task.baseTaskId, baseSource: task.baseSource, baseCommit: task.baseCommit, status: task.status, statusLabel: tr(statusLabels[task.status] ?? task.status), instruction: task.instruction,
       profile: task.profile, model: task.model, createdAt: task.createdAt, startedAt: task.startedAt, finishedAt: task.finishedAt, stopRequested: task.stopRequested,
       turns: task.turns, costTiyn: task.costTiyn, limits: task.limits,
       steps: (task.steps ?? []) as unknown as AgentStep[],
@@ -384,11 +421,22 @@ export class AgentTasksService {
   }
 
   /** Queues «собери приложение по пакету»: the package must be built and its inputs accepted; one task at a time per project. */
-  async start(userId: string, projectId: string, input: { instruction: string | null; baseTaskId?: string | null; fromRepository?: boolean }) {
-    const instruction = input.instruction?.trim() || null;
+  async start(userId: string, projectId: string, input: { instruction: string | null; baseTaskId?: string | null; fromRepository?: boolean; module?: string | null }) {
+    let instruction = input.instruction?.trim() || null;
+    // Step 9a: a module of the accepted plan; the words come from the plan, the test plan and the contracts.
+    let moduleRoadmap: Roadmap | null = null;
+    if (input.module) {
+      const { ctx } = await this.context(userId, projectId, 'write');
+      const inputs = await this.core.acceptedInputs(ctx, 'handoff');
+      moduleRoadmap = (inputs.roadmap?.content as Roadmap | undefined) ?? null;
+      if (!moduleRoadmap) throw new ConflictException('ROADMAP_NOT_APPROVED');
+      if (!moduleRoadmap.modules.some((item) => item.key === input.module)) throw new NotFoundException('MODULE_NOT_FOUND');
+      instruction = runWithLocale(contentLocale(ctx.project.locale), () => moduleInstruction({ roadmap: moduleRoadmap!, module: input.module!, testplan: (inputs.testplan?.content as TestPlan | undefined) ?? null, contracts: (inputs.contracts?.content as Contracts | undefined) ?? null }));
+    }
     if (instruction && instruction.length > MAX_INSTRUCTION) throw new BadRequestException('INSTRUCTION_TOO_LONG');
     // Step 5: a change needs the words of what to change and what it starts from: an earlier task or the repository.
     if ((input.baseTaskId || input.fromRepository) && !instruction) throw new BadRequestException('CHANGE_INSTRUCTION_REQUIRED');
+    if (instruction && instruction.length > MAX_INSTRUCTION) throw new BadRequestException('INSTRUCTION_TOO_LONG');
     const { ctx, stage } = await this.context(userId, projectId, 'write');
     if (!this.agentModel() || !this.agentWorkspace()) throw new ServiceUnavailableException('AGENT_NOT_CONFIGURED');
     let base: { id: string | null; files: AgentFile[]; digest: string; repository: { branch: string; commit: string | null; truncated: boolean } | null } | null = null;
@@ -421,11 +469,13 @@ export class AgentTasksService {
         if (await tx.agentTask.count({ where: { projectId, status: { in: AGENT_ACTIVE } } })) throw new ConflictException('AGENT_TASK_RUNNING');
         const task = await tx.agentTask.create({ data: {
           projectId, kind, instruction, baseTaskId: base?.id ?? null, baseFilesDigest: base?.digest ?? null,
+          moduleKey: input.module ?? null,
           baseSource: base ? (base.repository ? 'repository' : 'task') : null, baseFiles: base?.repository ? base.files as never : undefined, baseCommit: base?.repository?.commit ?? null, profile: `${APP_PROFILE.key}@${APP_PROFILE.version}`, sourceVersionId: stage.currentVersionId!,
           inputVersionIds: Object.values(inputs).map((value) => value.versionId), prompt: prompt as never,
           promptDigest: promptDigestOf(prompt), limits: agentLimits() as never, locale: ctx.project.locale, requestedByUserId: userId,
         } });
-        await this.core.event(tx, projectId, userId, 'agent_task_started', 'handoff', { taskId: task.id, kind, baseTaskId: base?.id ?? null, baseSource: base ? (base.repository ? 'repository' : 'task') : null, withInstruction: Boolean(instruction) });
+        await this.core.event(tx, projectId, userId, 'agent_task_started', 'handoff', { taskId: task.id, kind, baseTaskId: base?.id ?? null, baseSource: base ? (base.repository ? 'repository' : 'task') : null, withInstruction: Boolean(instruction), module: input.module ?? null });
+        if (input.module && moduleRoadmap) await markModuleStarted(tx, { projectId, roadmap: moduleRoadmap, module: input.module, userId });
         return task;
       });
       if (process.env.SANDBOX_WORKER !== 'external') this.runner.kick();

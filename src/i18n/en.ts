@@ -3831,4 +3831,10 @@ export const en: Record<string, string> = {
   "Изменены ненужные классы": "Classes marked as not needed changed",
   "план проверки: кейсы по классам — по ним пишутся автотесты": "test plan: cases by class — automatic tests are written by them",
   "Кейсов: {0}, блокируют запуск: {1}": "Cases: {0}, blocking the launch: {1}",
+  "Модуль «{0}» плана реализации.": "Module «{0}» of the implementation plan.",
+  "Он опирается на модули: {0} — их код уже есть или пишется отдельно; не меняйте их, работайте через их операции.": "It relies on the modules: {0} — their code already exists or is written separately; do not change them, work through their operations.",
+  "Задачи": "Tasks",
+  "Операции API по контрактам": "API operations by the contracts",
+  "Кейсы плана проверки, которые должны пройти (тест с [case:<ключ>] в названии): {0}.": "Test plan cases that must pass (a test with [case:<key>] in its name): {0}.",
+  "Кейсы плана проверки проходят": "Test plan cases pass",
 };

@@ -1401,6 +1401,8 @@ model AgentTask {
   demoHtml          String?   @map("demo_html")
   demoBytes         Int?      @map("demo_bytes")
   /// A change task (step 5) starts from the files of an earlier task; their digest is fixed when the task is queued.
+  /// A module of the implementation plan this task builds (step 9a); null for the whole application or a free change.
+  moduleKey         String?   @map("module_key") @db.VarChar(32)
   baseTaskId        String?   @map("base_task_id") @db.Uuid
   baseFilesDigest   String?   @map("base_files_digest") @db.VarChar(64)
   /// Where a change starts: «task» (an earlier task's files) or «repository» (the main branch, files kept in baseFiles).
@@ -2398,6 +2400,9 @@ model PlanCaseResult {
   note         String?        @db.VarChar(500)
   /// The test plan version the case was checked against.
   planVersion  Int            @map("plan_version")
+  /// person — recorded by someone; run — from the platform's run of the agent's tests (agentTaskId).
+  source       String         @default("person") @db.VarChar(10)
+  agentTaskId  String?        @map("agent_task_id") @db.Uuid
   byUserId     String?        @map("by_user_id") @db.Uuid
   updatedAt    DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
   project      Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
