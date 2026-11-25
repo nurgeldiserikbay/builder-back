@@ -2,6 +2,7 @@
 // (TECHNICAL_SPECIFICATION.md §6 capability manifest): it takes the project to a complete, checked package for a developer —
 // roles and functions with acceptance criteria, screens with a clickable prototype, architecture with a data model and an
 // API contract — all derived deterministically from accepted stages, so the package always matches what was agreed.
+import { COMPONENT_CATALOG, expandedSchema, fieldTypeLabels as designFieldLabels, templateDesign, type ArchitectureDesign } from './architecture.js';
 import { chosenForSpec, type Suggestions } from './suggestions.js';
 import {
   accessByLabels, actionLabels, normalizeAccess, normalizeCases, normalizeQuality, normalizeServices, normalizeSources, QUALITY_KEYS, qualityLabels,
@@ -434,23 +435,24 @@ export function appApiContract(name: string, entities: ProcessEntity[], features
   return `${lines.join('\n')}\n`;
 }
 
-export function buildAppPlan(input: { brief: Brief | null; process: BusinessProcess | null; features: AppFeatures | null; screens: AppScreens | null }, ownerNotes: string | null): TechPlan {
+export function buildAppPlan(input: { brief: Brief | null; process: BusinessProcess | null; features: AppFeatures | null; screens: AppScreens | null }, ownerNotes: string | null, edited: ArchitectureDesign | null = null): TechPlan {
   const features = input.features ?? templateFeatures(input.brief, input.process);
   const name = input.brief?.businessName || tr('Приложение');
-  const entities = entitiesOf(input.process, features);
+  // The design people edit; without one, the first draft from the process and the ТЗ. The schema, the components and the
+  // API contract below follow the design, so what is drawn is what is handed over.
+  const design = edited ?? templateDesign({ process: input.process, features, entities: entitiesOf(input.process, features), kindOf: fieldKind });
+  const types = designFieldLabels();
+  const expanded = expandedSchema(design.schema);
+  const entities: ProcessEntity[] = expanded.map((entity) => ({ key: entity.key, name: entity.name, fields: entity.fields.filter((field) => field.type !== 'ref').map((field) => field.name), links: entity.links }));
   const notifies = (input.process?.scenarios ?? []).some((scenario) => scenario.steps.some((step) => step.capability.startsWith('notify') || step.capability === 'remind_client'));
   const pays = (input.process?.scenarios ?? []).some((scenario) => scenario.steps.some((step) => step.capability === 'pay_online')) || features.sensitivity === 'payments';
   const item = (title: string, plain: string, technical: string): TechPlanItem => ({ title, plain, technical });
-  const components: TechPlanItem[] = [
-    item(tr('Веб-приложение'), tr('Экраны для каждой роли — работают в браузере на телефоне и компьютере.'), tr('Одностраничное или серверное веб-приложение; экраны и переходы — по прототипу пакета.')),
-    item(tr('Сервер приложения (API)'), tr('Проверяет вход и права, сохраняет и выдаёт данные.'), tr('HTTP API по контракту api.yaml пакета; проверка роли на каждом запросе.')),
-    item(tr('База данных'), tr('Хранит пользователей и всё из схемы данных.'), tr('Реляционная БД; таблицы по схеме данных, связи — внешние ключи.')),
-    item(tr('Вход и роли'), tr('Регистрация, вход, восстановление пароля; каждый видит только своё.'), tr('Сессии в httpOnly cookie, хеширование паролей, разграничение по ролям: {0}.', [features.roles.map((role) => role.name).join(', ')])),
-    ...(notifies ? [item(tr('Уведомления'), tr('Сообщения пользователям и вам о событиях.'), tr('Почта или Telegram; отправка через очередь, без потери при сбое.'))] : []),
-    ...(pays ? [item(tr('Оплата'), tr('Приём денег через платёжный сервис.'), tr('Подключение платёжного провайдера; деньги не хранятся в приложении; требуется отдельная проверка безопасности.'))] : []),
-    ...features.integrations.map((integration) => item(integration, tr('Внешний сервис, с которым связано приложение.'), tr('Интеграция по API сервиса; ключи — в секретах сервера, не в коде.'))),
-  ];
-  const dataModel: DataEntity[] = entities.map((entity) => ({ key: entity.key, name: entity.name, plain: entity.fields.join(', '), fields: entity.fields.map((field) => ({ name: field, type: tr(fieldTypeLabels[fieldKind(field)]) })), links: entity.links }));
+  const components: TechPlanItem[] = design.components.map((component) => item(component.name, component.note || tr(COMPONENT_CATALOG[component.kind].plain), tr(COMPONENT_CATALOG[component.kind].title)));
+  const dataModel: DataEntity[] = expanded.map((entity) => ({
+    key: entity.key, name: entity.name, plain: entity.plain || entity.fields.map((field) => field.name).join(', '),
+    fields: entity.fields.map((field) => ({ name: `${field.name}${field.required ? ' *' : ''}`, type: field.type === 'status' && field.options.length ? `${types.status}: ${field.options.join(', ')}` : types[field.type] })),
+    links: entity.links,
+  }));
   const must = features.features.filter((feature) => feature.priority === 'must').slice(0, 4);
   const sequences: Sequence[] = must.map((feature) => {
     const role = features.roles.find((item) => item.key === feature.roles[0])?.name ?? tr('Пользователь');
@@ -482,6 +484,7 @@ export function buildAppPlan(input: { brief: Brief | null; process: BusinessProc
     ],
     api: appApiContract(name, entities, features),
     ownerNotes,
+    design,
   };
 }
 

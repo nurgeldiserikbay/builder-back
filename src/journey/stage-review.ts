@@ -1,6 +1,7 @@
 // Quality review of a stage result: deterministic rules for logic gaps and weak spots that a later stage would trip over.
 // Completeness (artifacts.ts) says what is missing; the review says what does not fit together or is risky.
 // A blocking finding stops acceptance until it is fixed or the owner explains in writing why the stage goes on anyway.
+import { designIssues, type ArchitectureDesign } from './architecture.js';
 import { coverage, productSteps } from './spec-extras.js';
 import { conceptDocument, undefinedTerms, type Concept, type ConceptInputs } from './concept.js';
 import { FIRST_VERSION_EXTRAS, type Suggestions } from './suggestions.js';
@@ -657,6 +658,12 @@ export function reviewStage(type: string, content: unknown, context: { features?
     if (type === 'brief') briefReview(content as Brief, push);
     if (type === 'idea') ideaReview(content as IdeaReview, push);
     if (type === 'suggestions') suggestionsReview(content as Suggestions, push);
+    if (type === 'techplan') {
+      const design = (content as { design?: ArchitectureDesign | null }).design;
+      if (design) for (const issue of designIssues(design, context.features ?? null)) push({
+        code: issue.code, severity: issue.severity, category: issue.code.startsWith('ARCH_THREAT') ? 'security' : 'logic', target: issue.target, where: tr('Архитектура'), message: issue.message, fix: issue.fix,
+      });
+    }
     if (type === 'concept' && context.concept) conceptReview(content as Concept, context.concept, push);
     if (type === 'process') { processReview(content as BusinessProcess, push); situationsReview(content as BusinessProcess, context.projectType, push); }
     if (type === 'features') featuresReview(content as AppFeatures, context.process ?? null, push, context.projectType && context.projectType !== 'web_app' ? 'site' : 'app');

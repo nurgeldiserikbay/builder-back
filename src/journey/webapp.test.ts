@@ -176,7 +176,14 @@ describe('web application route (database)', async () => {
     }
     const prototype = await journey.prototype(owner.id, projectId, null);
     assert.ok(prototype.data.screens.length >= 2 && prototype.data.html.includes('Прототип'));
-    await journey.saveDraft(owner.id, projectId, 'techplan', { content: { ownerNotes: null }, baseVersionId: null });
+    // The architecture of an app is edited: the first draft carries a design, the owner adds a record to the schema.
+    const preview = (await journey.stage(owner.id, projectId, 'techplan')).data.options.techplan!.preview as unknown as { design: { schema: { entities: Array<{ key: string }> } } };
+    assert.ok(preview.design.schema.entities.length > 0);
+    const design = { ...preview.design, schema: { ...preview.design.schema, entities: [...preview.design.schema.entities, { key: 'review', name: 'Отзыв', fields: [{ name: 'Оценка', type: 'number', required: true }] }] } };
+    await journey.saveDraft(owner.id, projectId, 'techplan', { content: { ownerNotes: null, design }, baseVersionId: null });
+    const saved = (await journey.stage(owner.id, projectId, 'techplan')).data;
+    assert.ok((saved.current!.content as { dataModel: Array<{ key: string }> }).dataModel.some((entity) => entity.key === 'review'));
+    assert.equal((saved.options.techplan as { outdated: boolean }).outdated, false);
     await accept('techplan');
     const built = await journey.buildHandoff(owner.id, projectId);
     assert.deepEqual(built.data.checks.filter((check) => check.status === 'failed'), []);
