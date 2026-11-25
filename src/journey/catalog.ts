@@ -336,7 +336,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
   },
   features: {
     key: 'features',
-    version: '2.0.0',
+    version: '2.1.0',
     title: 'ТЗ',
     purpose: 'Запишем техническое задание: что должен уметь ваш продукт, кто им пользуется и что войдёт в первую версию. У каждой функции — понятное «готово»: по нему вы, ИИ и разработчик поймёте, что она сделана.',
     outcome: 'Кратко о продукте, роли, функции с приоритетом и критериями «готово», общие требования, ограничения и открытые вопросы.',
@@ -352,7 +352,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     importHint: 'Есть своё ТЗ? Загрузите его — ИИ разложит его по разделам этапа и покажет, чего не хватает.',
     contract: { explanation: 'ТЗ — договорённость о том, что делает продукт и что входит в первую версию. Следующие этапы строятся по нему.' },
     playbook: {
-      version: '2.0.0',
+      version: '2.1.0',
       instructions: [
         'Write the specification (ТЗ) of the product from the brief and the business process, in plain words a non-technical owner understands, in the project language.',
         'summary: 1–3 sentences — what the product is, for whom and which task it solves.',
@@ -367,6 +367,12 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
         'requirements: up to 10 general requirements in plain words (works on a phone, languages, how fast a page opens, what data is kept and how long) — only those that follow from the inputs.',
         'limits: up to 10 limits and assumptions: what this version does not do and what was decided later in the process (situations answered «later»).',
         'questions: up to 10 open questions the owner still has to decide; do not invent answers to them.',
+        'story for every must and should feature: «Как {роль}, я хочу {действие}, чтобы {польза}» in one sentence.',
+        'cases: 1–3 checks per must feature in the form given / when / then, concrete enough to test by hand: one usual path and one where something goes wrong (wrong input, no free time, no access). They become test cases.',
+        'sources: where each feature comes from — «step:<scenario key>.<step key>» for every step of the process it covers, «suggestion:<key>» for a choice made in feature suggestions, «rule:privacy» or «rule:signin» for those platform rules, «owner» when only the user asked for it. Every step of the process the product does itself (not offline) is covered by some feature.',
+        'access: one row per role and data the role uses: actions view/create/edit/delete, scope own (only their own records: clients) or all. A client never gets «all» on other people\'s personal data; on a website visitors only create.',
+        'quality (non-functional, plain words, empty string when not stated): speed, users (how many at once), languages, devices, accessibility, dataLocation, backups, retention. Fill only from the inputs; devices and languages may follow from the project.',
+        'services: outside services the product needs (payments, SMS, email, messengers, accounting), each with what for and accessBy: owner (the owner\'s own account), platform or developer. integrations: their names.',
       ],
     },
   },

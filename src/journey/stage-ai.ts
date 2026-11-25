@@ -1,4 +1,5 @@
 // Replaceable AI adapter for stage agents. Output is always schema-checked by artifacts.ts before use.
+import { ACCESS_ACTIONS, QUALITY_KEYS, SERVICE_ACCESS } from './spec-extras.js';
 import type { ArtifactType, StageDefinition } from './catalog.js';
 import { sectionTypes } from './artifacts.js';
 import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
@@ -136,12 +137,21 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
     case 'features': {
       const strings = { type: 'array', items: { type: 'string' } };
       return {
-        type: 'object', additionalProperties: false, required: ['summary', 'roles', 'features', 'sensitivity', 'integrations', 'requirements', 'limits', 'questions'],
+        type: 'object', additionalProperties: false, required: ['summary', 'roles', 'features', 'sensitivity', 'integrations', 'requirements', 'limits', 'questions', 'access', 'quality', 'services'],
         properties: {
           summary: { type: 'string' }, requirements: strings, limits: strings, questions: strings,
+          access: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'role', 'data', 'actions', 'scope'], properties: {
+            key: { type: 'string' }, role: { type: 'string' }, data: { type: 'string' }, actions: { type: 'array', items: { type: 'string', enum: [...ACCESS_ACTIONS] } }, scope: { type: 'string', enum: ['own', 'all'] },
+          } } },
+          quality: { type: 'object', additionalProperties: false, required: [...QUALITY_KEYS], properties: Object.fromEntries(QUALITY_KEYS.map((key) => [key, { type: 'string' }])) },
+          services: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'name', 'purpose', 'accessBy'], properties: {
+            key: { type: 'string' }, name: { type: 'string' }, purpose: { type: 'string' }, accessBy: { type: 'string', enum: [...SERVICE_ACCESS] },
+          } } },
           roles: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'name', 'description'], properties: { key: { type: 'string' }, name: { type: 'string' }, description: { type: 'string' } } } },
-          features: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'title', 'description', 'roles', 'priority', 'acceptance', 'data'], properties: {
+          features: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'title', 'description', 'roles', 'priority', 'acceptance', 'data', 'story', 'cases', 'sources'], properties: {
             key: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, roles: strings, priority: { type: 'string', enum: [...PRIORITIES] }, acceptance: strings, data: strings,
+            story: { type: 'string' }, sources: strings,
+            cases: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'given', 'when', 'then'], properties: { key: { type: 'string' }, given: { type: 'string' }, when: { type: 'string' }, then: { type: 'string' } } } },
           } } },
           sensitivity: { type: 'string', enum: [...SENSITIVITY] },
           integrations: strings,

@@ -238,7 +238,7 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'idea') return ['problem', 'segments', 'value', 'alternatives', 'revenue', 'risks', 'metrics', 'constraints'];
   if (type === 'sitemap') return ['pages'];
   if (type === 'catalog') return ['products', 'delivery', 'payment', 'minOrder'];
-  if (type === 'features') return ['summary', 'roles', 'features', 'sensitivity', 'integrations', 'requirements', 'limits', 'questions'];
+  if (type === 'features') return ['summary', 'roles', 'features', 'sensitivity', 'integrations', 'requirements', 'limits', 'questions', 'access', 'quality', 'services'];
   if (type === 'screens') return ['screens'];
   return [];
 }

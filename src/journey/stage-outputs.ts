@@ -1,6 +1,7 @@
 // What each stage hands over to the stages built on it, written out item by item. Required items are what the next
 // stages cannot work without: acceptance waits for them. Recommended items make the next stages better; they are shown,
 // not enforced. The checks are deliberately small and readable — the quality review (stage-review.ts) goes deeper.
+import { QUALITY_KEYS } from './spec-extras.js';
 import type { Concept } from './concept.js';
 import type { Suggestions } from './suggestions.js';
 import { tr } from '../i18n/i18n.js';
@@ -64,6 +65,9 @@ const features: OutputItem<AppFeatures>[] = [
   { key: 'roles', level: 'required', text: () => tr('Роли — для экранов и прав доступа'), met: (f) => f.roles.length > 0 },
   { key: 'must', level: 'required', text: () => tr('Обязательные функции с критериями приёмки — по ним делают и проверяют экраны'), met: (f) => f.features.some((feature) => feature.priority === 'must') && f.features.filter((feature) => feature.priority === 'must').every((feature) => feature.acceptance.length > 0) },
   { key: 'data', level: 'recommended', text: () => tr('У каждой функции указаны данные — для карты модулей и архитектуры'), met: (f) => f.features.every((feature) => (feature.data ?? []).length > 0) },
+  { key: 'cases', level: 'recommended', text: () => tr('Проверки «Дано / Когда / Тогда» у обязательных функций — из них получится план тестов'), met: (f) => f.features.filter((feature) => feature.priority === 'must').every((feature) => (feature.cases ?? []).length > 0) },
+  { key: 'access', level: 'recommended', text: () => tr('Кто что может с какими данными — для архитектуры и проверки безопасности'), met: (f) => (f.access ?? []).length > 0 },
+  { key: 'quality', level: 'recommended', text: () => tr('Нефункциональные требования: скорость, нагрузка, где хранятся данные, резервные копии — для архитектуры и оценки работы'), met: (f) => QUALITY_KEYS.filter((key) => f.quality?.[key]).length >= 4 },
 ];
 
 const screens: OutputItem<AppScreens>[] = [
