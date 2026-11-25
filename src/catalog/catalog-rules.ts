@@ -1,8 +1,8 @@
 // Rules of the specialist catalog: what a profile may contain, when an owner may review, how ratings are summed up.
-import { stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { stageDefinitions, type StageKey, definitionOf } from '../journey/catalog.js';
 
 /** Stages where a specialist directs the AI; the others are forms without AI and need no specialist. */
-export const catalogStageKeys = (Object.keys(stageDefinitions) as StageKey[]).filter((key) => stageDefinitions[key].ai.level !== 'none');
+export const catalogStageKeys = (Object.keys(stageDefinitions) as StageKey[]).filter((key) => definitionOf(key).ai.level !== 'none');
 
 /** An owner may change a review for this long after writing it. */
 export const REVIEW_EDIT_DAYS = 14;

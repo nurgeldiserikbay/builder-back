@@ -3,7 +3,7 @@
 import { inLocale, tr, type Message } from '../i18n/i18n.js';
 import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
-import { stageDefinitions, type StageKey } from './catalog.js';
+import { type StageKey, definitionOf } from './catalog.js';
 import { ArtifactValidationError } from './artifacts.js';
 import { describeChanges } from './change-summary.js';
 import { costOf } from '../budget/budget.js';
@@ -72,7 +72,7 @@ export class ChangeNoticesService {
     const recipients = new Set([ctx.project.ownerUserId, ...(lead?.userId ? [lead.userId] : [])]);
     for (const recipient of recipients) {
       await this.core.notifyUser(recipient, text).catch(() => undefined);
-      await this.emailUser(recipient, () => tr("BuildPath: изменения на этапе «{0}»", [tr(stageDefinitions[key].title)]), text).catch(() => undefined);
+      await this.emailUser(recipient, () => tr("BuildPath: изменения на этапе «{0}»", [tr(definitionOf(key).title)]), text).catch(() => undefined);
     }
   }
 
@@ -117,8 +117,8 @@ export class ChangeNoticesService {
       const open = row.status === 'open' || row.status === 'discussing';
       items.push({
         id: row.id, status: row.status, direction: row.targetStageId === stage.id ? 'incoming' as const : 'outgoing' as const,
-        source: { key: sourceKey, title: stageDefinitions[sourceKey].title, fromVersion: number(row.previousVersionId), toVersion: number(row.newVersionId) },
-        target: { key: targetKey, title: stageDefinitions[targetKey].title },
+        source: { key: sourceKey, title: definitionOf(sourceKey).title, fromVersion: number(row.previousVersionId), toVersion: number(row.newVersionId) },
+        target: { key: targetKey, title: definitionOf(targetKey).title },
         changes: row.changes, createdAt: row.createdAt, createdBy: person(row.createdByUserId),
         decidedAt: row.decidedAt, decidedBy: person(row.decidedByUserId), decidedByOwner: row.decidedByOwner,
         respondBy: open ? row.respondBy : null, overdue: open && Boolean(row.respondBy && row.respondBy < new Date()), escalated: open && Boolean(row.escalatedAt),
@@ -161,8 +161,8 @@ export class ChangeNoticesService {
       this.core.versionContent(target.approvedVersionId ?? target.currentVersionId),
     ]);
     const prompt = buildChangeExplanationPrompt({
-      sourceTitle: stageDefinitions[source.stageKey as StageKey].title, targetTitle: stageDefinitions[target.stageKey as StageKey].title,
-      targetPurpose: stageDefinitions[target.stageKey as StageKey].purpose, changes: notice.changes,
+      sourceTitle: definitionOf(source.stageKey as StageKey).title, targetTitle: definitionOf(target.stageKey as StageKey).title,
+      targetPurpose: definitionOf(target.stageKey as StageKey).purpose, changes: notice.changes,
       before: before?.content ?? null, after: after?.content ?? null, target: mine?.content ?? null,
     });
     const started = Date.now();
@@ -207,17 +207,17 @@ export class ChangeNoticesService {
       const link = this.core.stageLink(notice.projectId, targetKey);
       const lead = await this.prisma.stageAssignment.findFirst({ where: { stageId: notice.targetStageId, role: 'lead', status: 'active' }, select: { userId: true } });
       if (!notice.remindedAt) {
-        const text = () => tr("Ждём решения: этап «{0}» в проекте «{1}» изменился, а этап «{2}» ещё не ответил — срок прошёл. Примите изменения, оставьте этап как есть или обсудите. {3}", [tr(stageDefinitions[sourceKey].title), notice.project.name, tr(stageDefinitions[targetKey].title), link]).trim();
+        const text = () => tr("Ждём решения: этап «{0}» в проекте «{1}» изменился, а этап «{2}» ещё не ответил — срок прошёл. Примите изменения, оставьте этап как есть или обсудите. {3}", [tr(definitionOf(sourceKey).title), notice.project.name, tr(definitionOf(targetKey).title), link]).trim();
         for (const recipient of new Set([notice.project.ownerUserId, ...(lead?.userId ? [lead.userId] : [])])) {
           await this.core.notifyUser(recipient, text).catch(() => undefined);
-          await this.emailUser(recipient, () => tr("BuildPath: ждём решения по этапу «{0}»", [tr(stageDefinitions[targetKey].title)]), text).catch(() => undefined);
+          await this.emailUser(recipient, () => tr("BuildPath: ждём решения по этапу «{0}»", [tr(definitionOf(targetKey).title)]), text).catch(() => undefined);
         }
         await this.prisma.changeNotice.update({ where: { id: notice.id }, data: { remindedAt: now } });
         reminded += 1;
       } else if (notice.respondBy && notice.respondBy.getTime() < now.getTime() - 2 * 86_400_000) {
-        const text = () => tr("Решение по изменению этапа «{0}» в проекте «{1}» задерживается{2}. Вы можете решить за этап «{3}» сами. {4}", [tr(stageDefinitions[sourceKey].title), notice.project.name, lead?.userId ? tr(' — ведущий этапа не ответил') : '', tr(stageDefinitions[targetKey].title), link]).trim();
+        const text = () => tr("Решение по изменению этапа «{0}» в проекте «{1}» задерживается{2}. Вы можете решить за этап «{3}» сами. {4}", [tr(definitionOf(sourceKey).title), notice.project.name, lead?.userId ? tr(' — ведущий этапа не ответил') : '', tr(definitionOf(targetKey).title), link]).trim();
         await this.core.notifyUser(notice.project.ownerUserId, text).catch(() => undefined);
-        await this.emailUser(notice.project.ownerUserId, () => tr("BuildPath: решите за этап «{0}»", [tr(stageDefinitions[targetKey].title)]), text).catch(() => undefined);
+        await this.emailUser(notice.project.ownerUserId, () => tr("BuildPath: решите за этап «{0}»", [tr(definitionOf(targetKey).title)]), text).catch(() => undefined);
         await this.prisma.$transaction([
           this.prisma.changeNotice.update({ where: { id: notice.id }, data: { escalatedAt: now } }),
           this.prisma.projectEvent.create({ data: { projectId: notice.projectId, type: 'change_notice_escalated', stageKey: targetKey, details: { noticeId: notice.id, sourceStageKey: sourceKey } } }),
@@ -249,7 +249,7 @@ export class ChangeNoticesService {
     const targetSide = await this.stageSide(ctx, targetKey, userId);
     const sourceSide = await this.stageSide(ctx, sourceKey, userId);
     const target = this.core.stageOf(ctx, targetKey);
-    const sourceTitle = stageDefinitions[sourceKey].title; const targetTitle = stageDefinitions[targetKey].title;
+    const sourceTitle = definitionOf(sourceKey).title; const targetTitle = definitionOf(targetKey).title;
 
     if (input.action === 'accept' || input.action === 'accept_no_change') {
       if (!targetSide.allowed) throw new ForbiddenException('CHANGE_DECISION_FORBIDDEN');

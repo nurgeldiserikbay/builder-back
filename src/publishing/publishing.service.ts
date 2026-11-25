@@ -5,7 +5,7 @@ import type { SiteArtifact } from '../journey/artifacts.js';
 import { emailConfig } from '../notifications/email.js';
 import { sendTestLead, type ChannelStatus } from '../notifications/lead-notifier.js';
 import { launchReadiness } from './readiness.js';
-import { projectTypes, stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { projectTypes, type StageKey, definitionOf, isStageKey } from '../journey/catalog.js';
 import type { Brief, Offer } from '../journey/artifacts.js';
 import type { BusinessProcess } from '../journey/process.js';
 import type { AppFeatures } from '../journey/webapp.js';
@@ -216,7 +216,7 @@ export class PublishingService {
       if (typeof details?.buildVersion === 'number' && !product.has(details.buildVersion)) product.set(details.buildVersion, { number: product.size + 1, stages: details.stages ?? null });
     }
     const byNumber = new Map([...product.values()].map((item) => [item.number, item]));
-    const titled = (key: string) => (key in stageDefinitions ? stageDefinitions[key as StageKey].title : key);
+    const titled = (key: string) => (isStageKey(key) ? definitionOf(key).title : key);
     return {
       data: {
         canRollback: manageRoles.has(role) && Boolean(live),

@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { ROUTE_CATALOG_VERSION, projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { ROUTE_CATALOG_VERSION, projectTypeOf, type StageKey, type CatalogStageKey, definitionOf } from '../journey/catalog.js';
 import { initialStatuses } from '../journey/stage-state.js';
 import { BillingService } from '../billing/billing.service.js';
 import { PrismaService } from '../database/prisma.service.js';
@@ -63,7 +63,7 @@ export class ProjectsService {
   }) {
     const type = input.projectType ? projectTypeOf(input.projectType) : null;
     if (input.projectType && !type) throw new BadRequestException('INVALID_PROJECT_TYPE');
-    if (input.startStageKey && !type?.stages.includes(input.startStageKey as StageKey)) throw new BadRequestException('INVALID_START_STAGE');
+    if (input.startStageKey && !type?.stages.includes(input.startStageKey as CatalogStageKey)) throw new BadRequestException('INVALID_START_STAGE');
     if (type) await this.billing.assertCanCreateProject(userId);
     if (!this.isUuid(input.workspaceId)) throw new NotFoundException('WORKSPACE_NOT_FOUND');
     const membership = await this.prisma.workspaceMember.findUnique({
@@ -104,7 +104,7 @@ export class ProjectsService {
         const statuses = initialStatuses(type.stages, (input.startStageKey as StageKey | undefined) ?? null);
         await tx.projectStage.createMany({
           data: type.stages.map((key, position) => ({
-            projectId: created.id, stageKey: key, position, status: statuses[key] ?? 'locked', definitionVersion: stageDefinitions[key].version,
+            projectId: created.id, stageKey: key, position, status: statuses[key] ?? 'locked', definitionVersion: definitionOf(key).version,
           })),
         });
         await tx.projectEvent.create({ data: { projectId: created.id, actorUserId: userId, type: 'route_created', details: { projectType: type.key, routeVersion: ROUTE_CATALOG_VERSION, startStageKey: input.startStageKey ?? null } } });
@@ -127,7 +127,7 @@ export class ProjectsService {
     if (project.status === 'archived') throw new ConflictException('PROJECT_NOT_ACTIVE');
     const type = projectTypeOf(input.projectType);
     if (!type) throw new BadRequestException('INVALID_PROJECT_TYPE');
-    if (input.startStageKey && !type.stages.includes(input.startStageKey as StageKey)) throw new BadRequestException('INVALID_START_STAGE');
+    if (input.startStageKey && !type.stages.includes(input.startStageKey as CatalogStageKey)) throw new BadRequestException('INVALID_START_STAGE');
     await this.billing.assertCanCreateProject(userId);
     await this.prisma.$transaction(async (tx) => {
       const changed = await tx.project.updateMany({
@@ -137,7 +137,7 @@ export class ProjectsService {
       if (changed.count !== 1) throw new ConflictException('PROJECT_HAS_ROUTE');
       const statuses = initialStatuses(type.stages, (input.startStageKey as StageKey | undefined) ?? null);
       await tx.projectStage.createMany({
-        data: type.stages.map((key, position) => ({ projectId, stageKey: key, position, status: statuses[key] ?? 'locked', definitionVersion: stageDefinitions[key].version })),
+        data: type.stages.map((key, position) => ({ projectId, stageKey: key, position, status: statuses[key] ?? 'locked', definitionVersion: definitionOf(key).version })),
       });
       await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'route_created', details: { projectType: type.key, routeVersion: ROUTE_CATALOG_VERSION, startStageKey: input.startStageKey ?? null, from: 'analysis_only' } } });
     });

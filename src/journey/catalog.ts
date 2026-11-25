@@ -1,10 +1,21 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.16.0';
+export const ROUTE_CATALOG_VERSION = '1.17.0';
 
-export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'build' | 'handoff' | 'launch';
-export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'site' | 'handoff' | 'launch';
+export type CatalogStageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'build' | 'handoff' | 'launch';
+/**
+ * A module of an application's accepted plan becomes its own stage (PRODUCT_LIFECYCLE §4.9): `m_<module key>`. These stages
+ * are not in a project type's list; they are created from the accepted plan, stand after the developer package on the map
+ * and share one definition.
+ */
+export type ModuleStageKey = `m_${string}`;
+export type StageKey = CatalogStageKey | ModuleStageKey;
+export const MODULE_STAGE_PREFIX = 'm_';
+export const isModuleStageKey = (key: string): key is ModuleStageKey => key.startsWith(MODULE_STAGE_PREFIX) && /^m_[a-z][a-z0-9_]{0,31}$/.test(key);
+export const moduleStageKey = (moduleKey: string): ModuleStageKey => `${MODULE_STAGE_PREFIX}${moduleKey}` as ModuleStageKey;
+export const moduleKeyOf = (key: string): string | null => isModuleStageKey(key) ? key.slice(MODULE_STAGE_PREFIX.length) : null;
+export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'site' | 'handoff' | 'launch' | 'module';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking' | 'web_app';
 
@@ -56,7 +67,7 @@ export interface ProjectTypeDefinition {
   description: string;
   goodFor: string;
   examples: string[];
-  stages: StageKey[];
+  stages: CatalogStageKey[];
   resultExplanation: string;
 }
 
@@ -74,7 +85,7 @@ const toneOptions: FieldOption[] = [
   { value: 'bold', label: 'Смело', hint: 'Коротко, ярко и уверенно.' },
 ];
 
-export const stageDefinitions: Record<StageKey, StageDefinition> = {
+export const stageDefinitions: Record<CatalogStageKey, StageDefinition> = {
   goal: {
     key: 'goal',
     version: '1.0.0',
@@ -653,7 +664,40 @@ export function stageTitle(key: StageKey, typeKey: string | null | undefined): s
   return stageFor(key, typeKey).title;
 }
 
+/** One stage of a module of the accepted plan; its own title is the module's name (project_stages.title). */
+export const moduleStageDefinition: StageDefinition = {
+  key: 'm_module',
+  version: '1.0.0',
+  title: 'Модуль',
+  purpose: 'Сделаем один модуль плана: ИИ-агент пишет его код по контрактам, плану и кейсам проверки, специалист направляет агента или пишет сам. Модуль опирается на контракты соседних модулей и не меняет их. Ход видно по задачам модуля, а готовность — по кейсам плана проверки.',
+  outcome: 'Код модуля, его задачи готовы по пройденным кейсам, и модуль принят владельцем.',
+  artifactType: 'module',
+  // The agent builds a module on the developer package; the package needs to be built, not accepted (its acceptance
+  // waits for the code), so it is not an input. The module stages stand after it on the map.
+  inputs: ['contracts', 'roadmap', 'testplan'],
+  ai: {
+    level: 'none',
+    whatItDoes: 'Задачу ИИ-агенту пишет платформа: модуль, на какие модули он опирается, его задачи, операции API и кейсы, которые должны пройти. После работы агента платформа сама запускает тесты и отмечает задачи.',
+    instructionExamples: [],
+  },
+  acceptance: ['Все задачи модуля готовы — их кейсы прошли', 'Ни один кейс модуля не упал', 'Код модуля собран и проверен платформой', 'Вы посмотрели, что сделано'],
+  acceptExplanation: 'Принятый модуль можно соединять с остальными. Если позже изменятся контракты или план, модуль получит уведомление об изменении.',
+  importHint: null,
+  playbook: { version: '1.0.0', instructions: [] },
+};
+
+/** The definition of any stage key, module stages included. */
+export function definitionOf(key: StageKey): StageDefinition {
+  return isModuleStageKey(key) ? moduleStageDefinition : stageDefinitions[key];
+}
+
+/** A known stage key: a catalog stage or a module stage. */
+export function isStageKey(key: unknown): key is StageKey {
+  return typeof key === 'string' && (key in stageDefinitions || isModuleStageKey(key));
+}
+
 export function stageFor(key: StageKey, typeKey: string | null | undefined): StageDefinition {
+  if (isModuleStageKey(key)) return moduleStageDefinition;
   const definition = stageDefinitions[key];
   if (typeKey === 'web_app' && key === 'techplan') {
     return {
@@ -721,7 +765,7 @@ export function projectTypeOf
 
 /** Inputs of a stage limited to stages present in the given route. */
 export function routeInputs(route: StageKey[], key: StageKey): StageKey[] {
-  const own = stageDefinitions[key].inputs.filter((input) => route.includes(input));
+  const own = definitionOf(key).inputs.filter((input) => route.includes(input));
   // Content of a company site also depends on the offer stage.
   if (key === 'content' && route.includes('offer')) own.push('offer');
   // Texts of a multi-page site are written page by page from the map.

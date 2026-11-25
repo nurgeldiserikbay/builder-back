@@ -1,4 +1,5 @@
 import { normalizeTestPlan, type TestPlan } from './testplan.js';
+import { normalizeModuleWork } from './module-stages.js';
 import { normalizeLaunch } from './launch.js';
 import { normalizeRoadmap, roadmapIssues, type Roadmap } from './roadmap.js';
 import { contractIssues, normalizeContracts, type Contracts } from './contracts.js';
@@ -228,6 +229,7 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown, projectType?
     case 'roadmap': return normalizeRoadmap(raw);
     case 'testplan': return normalizeTestPlan(raw);
     case 'launch': return normalizeLaunch(raw);
+    case 'module': return normalizeModuleWork(raw);
     default: throw new ArtifactValidationError('ARTIFACT_NOT_EDITABLE');
   }
 }
@@ -252,6 +254,7 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'roadmap') return ['modules', 'risks', 'hoursPerDay', 'notes'];
   if (type === 'testplan') return ['cases', 'skipped', 'notes'];
   if (type === 'launch') return ['items'];
+  if (type === 'module') return ['summary'];
   return [];
 }
 

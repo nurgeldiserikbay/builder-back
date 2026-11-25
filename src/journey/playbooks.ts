@@ -9,7 +9,7 @@
 // The owner sees the attached playbook, its version and check result; the AI gets it as advice below the project's rules.
 
 import { BadRequestException } from '@nestjs/common';
-import { stageDefinitions, type StageKey } from './catalog.js';
+import { stageDefinitions, type StageKey, definitionOf } from './catalog.js';
 import type { Brief } from './artifacts.js';
 
 export const PLAYBOOK_LIMITS = { title: 80, items: 20, itemLength: 300, perUser: 30 } as const;
@@ -31,7 +31,7 @@ const INJECTION = [
 ];
 
 export function playbookTitle(stageKey: string): string {
-  return stageDefinitions[stageKey as StageKey]?.title ?? stageKey;
+  return definitionOf(stageKey as StageKey)?.title ?? stageKey;
 }
 
 /** Shape and limits; throws on a malformed request. */
@@ -41,7 +41,7 @@ export function parsePlaybook(raw: unknown): PlaybookContent {
   const title = typeof input.title === 'string' ? input.title.trim().replace(/\s+/g, ' ') : '';
   if (title.length < 3 || title.length > PLAYBOOK_LIMITS.title) throw new BadRequestException('PLAYBOOK_TITLE_INVALID');
   const stageKey = input.stageKey;
-  if (typeof stageKey !== 'string' || !(stageKey in stageDefinitions) || stageDefinitions[stageKey as StageKey].ai.level === 'none') throw new BadRequestException('PLAYBOOK_STAGE_INVALID');
+  if (typeof stageKey !== 'string' || !(stageKey in stageDefinitions) || definitionOf(stageKey as StageKey).ai.level === 'none') throw new BadRequestException('PLAYBOOK_STAGE_INVALID');
   const list = (value: unknown, code: string) => {
     if (value === undefined) return [];
     if (!Array.isArray(value) || value.length > PLAYBOOK_LIMITS.items || value.some((item) => typeof item !== 'string')) throw new BadRequestException(code);

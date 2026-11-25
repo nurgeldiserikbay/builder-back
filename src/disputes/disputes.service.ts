@@ -7,7 +7,7 @@ import { cleanFileName, detectStageFile, multipartName } from '../analysis/file-
 import { PrismaService } from '../database/prisma.service.js';
 import { tr, type Message } from '../i18n/i18n.js';
 import { notifyUser } from '../notifications/user-notifier.js';
-import { stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { type StageKey, definitionOf } from '../journey/catalog.js';
 import { ANSWER_DAYS, MAX_MESSAGES, REVOKED_WINDOW_DAYS, canOpen, checkClaim, checkMessage, checkResolution, kindsBySide, sideOf, waitingFor, type Side } from './dispute-rules.js';
 
 /** Evidence files in a dispute: screenshots and PDFs, 5 MB each, 10 per dispute. */
@@ -16,7 +16,7 @@ const DISPUTE_FILES = 10;
 
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const tenge = (tiyn: number | null) => (tiyn === null ? null : tiyn / 100);
-const stageTitle = (key: string) => stageDefinitions[key as StageKey]?.title ?? key;
+const stageTitle = (key: string) => definitionOf(key as StageKey)?.title ?? key;
 
 const assignmentSelect = {
   id: true, projectId: true, userId: true, status: true, acceptedAt: true, revokedAt: true, completedAt: true, email: true, role: true,

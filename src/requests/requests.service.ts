@@ -4,7 +4,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { BillingService } from '../billing/billing.service.js';
 import { JourneyCore } from '../journey/journey-core.js';
 import { roleAccess } from '../journey/specialists.service.js';
-import { projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { projectTypeOf, type StageKey, definitionOf, isStageKey } from '../journey/catalog.js';
 import { tr } from '../i18n/i18n.js';
 import {
   MAX_OPEN_REQUESTS_PER_PROJECT, REQUEST_OPEN_DAYS, cannotRespond, isOpen, parseRequest, parseResponse, payKindAllowed, responseTotalTiyn,
@@ -13,7 +13,7 @@ import {
 const MANAGERS = new Set(['owner', 'manager']);
 const tenge = (tiyn: number | null) => (tiyn === null ? null : tiyn / 100);
 const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-const stageTitle = (key: string) => stageDefinitions[key as StageKey]?.title ?? key;
+const stageTitle = (key: string) => definitionOf(key as StageKey)?.title ?? key;
 
 type ResponseRow = {
   id: string; specialistUserId: string; message: string; payKind: string; fixedAmountTiyn: number | null; hourlyRateTiyn: number | null; hourLimit: number | null;
@@ -175,7 +175,7 @@ export class RequestsService {
 
   /** Open requests across BuildPath, newest first; whether the caller can respond and their own response. */
   async board(userId: string, query: { stageKey?: string; mine?: boolean }) {
-    if (query.stageKey !== undefined && !(query.stageKey in stageDefinitions)) throw new BadRequestException('INVALID_STAGE');
+    if (query.stageKey !== undefined && !isStageKey(query.stageKey)) throw new BadRequestException('INVALID_STAGE');
     const now = new Date();
     const [profile, rows] = await Promise.all([
       this.prisma.specialistProfile.findUnique({ where: { userId }, select: { published: true, blockedAt: true, stageKeys: true } }),
@@ -203,7 +203,7 @@ export class RequestsService {
       });
       return {
         id: row.id, projectType: row.project.projectType, projectTypeTitle: projectTypeOf(row.project.projectType)?.title ?? null,
-        stageKey: row.stage.stageKey, stageTitle: stageTitle(row.stage.stageKey), stagePurpose: stageDefinitions[row.stage.stageKey as StageKey]?.purpose ?? '',
+        stageKey: row.stage.stageKey, stageTitle: stageTitle(row.stage.stageKey), stagePurpose: definitionOf(row.stage.stageKey as StageKey)?.purpose ?? '',
         role: row.role, roleTitle: roleAccess[row.role].title, roleExplanation: roleAccess[row.role].forSpecialist.explanation, can: roleAccess[row.role].forSpecialist.can,
         description: row.description, payKind: row.payKind, budget: tenge(row.budgetTiyn), days: row.days, closesAt: row.closesAt, createdAt: row.createdAt,
         responses: row.responses.length, matchesProfile: Boolean(profile?.stageKeys.includes(row.stage.stageKey)),

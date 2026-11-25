@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Header, HttpCode, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import type { AuthenticatedRequest } from '../auth/auth.guard.js';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { AgentTasksService } from './agent-tasks.js';
@@ -13,8 +13,8 @@ export class AgentController {
 
   @Get()
   @Header('Cache-Control', 'no-store')
-  get(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
-    return this.tasks.get(request.user.id, projectId);
+  get(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Query('module') module?: string) {
+    return this.tasks.get(request.user.id, projectId, typeof module === 'string' && /^[a-z][a-z0-9_]{0,31}$/.test(module) ? module : null);
   }
 
   @Post()

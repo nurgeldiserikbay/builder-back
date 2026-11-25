@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { JourneyService } from '../journey/journey.service.js';
-import { projectTypeOf, stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { projectTypeOf, type StageKey, definitionOf } from '../journey/catalog.js';
 import { describeChanges } from '../journey/change-summary.js';
 import { PublishingService } from './publishing.service.js';
 import { QUICK_EDIT_STAGES, checkContacts, checkHoursEdits, checkProductEdits, checkRequest, contactChanges, instructionFor, targetFor, type Contacts } from './quick-edit.js';
@@ -49,7 +49,7 @@ export class QuickEditService {
       this.prisma.stageArtifactVersion.findUnique({ where: { id: details.versionId }, select: { content: true, versionNumber: true } }),
     ]);
     return {
-      stageKey: details.stageKey, stageTitle: stageDefinitions[details.stageKey].title, versionId: details.versionId, versionNumber: after?.versionNumber ?? null,
+      stageKey: details.stageKey, stageTitle: definitionOf(details.stageKey).title, versionId: details.versionId, versionNumber: after?.versionNumber ?? null,
       request: details.request, createdAt: last.createdAt, changes: describeChanges(details.stageKey, before?.content ?? null, after?.content ?? null),
     };
   }
@@ -65,7 +65,7 @@ export class QuickEditService {
   async status(userId: string, projectId: string) {
     const ctx = await this.load(userId, projectId);
     const pending = await this.pending(projectId, ctx.stage);
-    const targets = QUICK_EDIT_STAGES.filter((key) => ctx.route.includes(key)).map((key) => ({ key, title: stageDefinitions[key].title, status: ctx.stage(key)?.status ?? null }));
+    const targets = QUICK_EDIT_STAGES.filter((key) => ctx.route.includes(key)).map((key) => ({ key, title: definitionOf(key).title, status: ctx.stage(key)?.status ?? null }));
     const blocked = pending ? null : this.blocker(ctx);
     const goal = ctx.stage('goal');
     const brief = goal?.approvedVersionId ? (await this.prisma.stageArtifactVersion.findUnique({ where: { id: goal.approvedVersionId }, select: { content: true } }))?.content as Partial<Contacts> | undefined : undefined;

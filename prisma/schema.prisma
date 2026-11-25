@@ -881,6 +881,10 @@ model ProjectStage {
   approvedVersionId String?            @map("approved_version_id") @db.Uuid
   lockedKeys        String[]           @default([]) @map("locked_keys") @db.VarChar(60)
   reviewNote        String?            @map("review_note") @db.VarChar(1000)
+  /// A module stage (stage_key m_<module>) carries the module's name from the accepted plan; catalog stages have null.
+  title             String?            @db.VarChar(120)
+  /// The plan module a module stage does; null for catalog stages.
+  moduleKey         String?            @map("module_key") @db.VarChar(32)
   approvedAt        DateTime?          @map("approved_at") @db.Timestamptz(3)
   approvedByUserId  String?            @map("approved_by_user_id") @db.Uuid
   createdAt         DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)

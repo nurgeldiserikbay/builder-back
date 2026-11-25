@@ -2,7 +2,7 @@
 // (builder-docs UNIFIED_PATH.md). A project type adds its own stages into the phases; the map shows the owner where
 // they are and how much is left. Every stage also carries a guide in plain words: why it matters for the business,
 // what comes next, an example of a good result and the terms it uses.
-import type { StageKey } from './catalog.js';
+import { isModuleStageKey, type CatalogStageKey, type StageKey } from './catalog.js';
 
 export const PHASES_VERSION = '1.0.0';
 
@@ -21,7 +21,7 @@ export const PHASES: PhaseDefinition[] = [
   { key: 'after', title: 'После запуска', short: 'Заявки, статистика, правки и следующие версии.' },
 ];
 
-export const STAGE_PHASE: Record<StageKey, PhaseKey> = {
+export const STAGE_PHASE: Record<CatalogStageKey, PhaseKey> = {
   goal: 'idea', idea: 'idea', process: 'idea', suggestions: 'idea', concept: 'idea',
   features: 'spec',
   offer: 'experience', products: 'experience', schedule: 'experience', sitemap: 'experience', screens: 'experience',
@@ -30,6 +30,11 @@ export const STAGE_PHASE: Record<StageKey, PhaseKey> = {
   build: 'build', handoff: 'build',
   launch: 'launch',
 };
+
+/** The phase of any stage: module stages are part of the build. */
+export function phaseOf(key: StageKey): PhaseKey {
+  return isModuleStageKey(key) ? 'build' : STAGE_PHASE[key];
+}
 
 export interface StageGuide {
   /** Why the stage matters for the business, in one or two sentences. */
@@ -42,7 +47,7 @@ export interface StageGuide {
   terms: Array<{ term: string; meaning: string }>;
 }
 
-export const STAGE_GUIDES: Record<StageKey, StageGuide> = {
+export const STAGE_GUIDES: Record<CatalogStageKey, StageGuide> = {
   goal: {
     why: 'Если не решить, кто ваш клиент и что он должен сделать, сайт получится «обо всём» и не будет приносить заявки.',
     next: 'По паспорту ИИ пишет тексты и выбирает главную кнопку, а бизнес-процесс строится вокруг главного действия.',
@@ -219,13 +224,13 @@ export function phasesOf(stages: Array<{ key: StageKey; done: boolean }>, publis
   const out: PhaseView[] = [];
   for (const phase of PHASES) {
     // A site launches by publication; an application has its launch as a stage of the route.
-    if ((phase.key === 'launch' || phase.key === 'after') && !stages.some((stage) => STAGE_PHASE[stage.key] === phase.key)) {
+    if ((phase.key === 'launch' || phase.key === 'after') && !stages.some((stage) => phaseOf(stage.key) === phase.key)) {
       if (!publishing?.applies) continue;
       const done = phase.key === 'launch' ? publishing.live : false;
       out.push({ ...phase, status: done ? 'done' : 'upcoming', stageKeys: [], done: done ? 1 : 0, total: 1, kind: 'publish' });
       continue;
     }
-    const inPhase = stages.filter((stage) => STAGE_PHASE[stage.key] === phase.key);
+    const inPhase = stages.filter((stage) => phaseOf(stage.key) === phase.key);
     if (!inPhase.length) continue;
     const done = inPhase.filter((stage) => stage.done).length;
     out.push({ ...phase, status: done === inPhase.length ? 'done' : 'upcoming', stageKeys: inPhase.map((stage) => stage.key), done, total: inPhase.length, kind: 'stages' });
@@ -277,7 +282,7 @@ const APP_GUIDES: Partial<Record<StageKey, StageGuide>> = {
  */
 export interface StagePassport { steps: string[]; checks: string[]; doneWhen: string }
 
-export const STAGE_PASSPORTS: Record<StageKey, StagePassport> = {
+export const STAGE_PASSPORTS: Record<CatalogStageKey, StagePassport> = {
   idea: {
     steps: ['ИИ раскладывает идею по полям и помечает, чего вы не сказали — или заполните сами.', 'Подтвердите альтернативы, которые предложил ИИ, или уберите их.', 'По каждому важному риску решите: принимаете, есть план или ещё думаете.', 'Задайте 1–3 измеримые цели и утвердите разбор.'],
     checks: ['Описана проблема клиентов, а не сам продукт.', 'Есть хотя бы одна группа пользователей и ценность для неё.', 'Цели успеха измеримы: число, срок или доля.', 'По рискам с высоким влиянием принято решение.', 'Альтернативы от ИИ подтверждены вами.'],
@@ -380,6 +385,22 @@ export const STAGE_PASSPORTS: Record<StageKey, StagePassport> = {
   },
 };
 
+const MODULE_GUIDE: StageGuide = {
+  why: 'Модуль — часть приложения, которую можно сделать отдельно: свой исполнитель, своя ветка работы и своя приёмка. Так модули делаются параллельно и не ломают друг друга.',
+  next: 'Принятые модули соединяются в приложение; когда кейсы плана проверки пройдены, приложение готовят к запуску.',
+  example: 'Модуль «Заявки»: создание и список заявок, смена статуса, права по ролям; все его кейсы проверки пройдены.',
+  terms: [
+    { term: 'Контракт', meaning: 'Договорённость, как модули общаются: операции API, данные и события. Модуль меняет только своё.' },
+    { term: 'Кейс проверки', meaning: 'Что должно и не должно получиться. Задача готова, только когда её кейсы пройдены.' },
+  ],
+};
+const MODULE_PASSPORT: StagePassport = {
+  steps: ['Поручите модуль ИИ-агенту или специалисту: задачу платформа пишет по плану, контрактам и кейсам.', 'После работы платформа запускает тесты и отмечает задачи модуля.', 'Посмотрите, что сделано, и примите модуль.'],
+  checks: ['Все задачи модуля готовы — по пройденным кейсам.', 'Ни один кейс модуля не упал.', 'Код модуля собран и проверен платформой.'],
+  doneWhen: 'Модуль можно соединить с остальными без правки чужих модулей.',
+};
+
 export function guideFor(key: StageKey, typeKey: string | null | undefined): StageGuide & { passport: StagePassport } {
+  if (isModuleStageKey(key)) return { ...MODULE_GUIDE, passport: MODULE_PASSPORT };
   return { ...((typeKey === 'web_app' ? APP_GUIDES[key] : undefined) ?? STAGE_GUIDES[key]), passport: STAGE_PASSPORTS[key] };
 }

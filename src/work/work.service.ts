@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
-import { stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { type StageKey, definitionOf } from '../journey/catalog.js';
 import { minutesOf, plannedAmount, summarize, type Terms } from '../journey/worktime.js';
 import { billingSettings } from '../payments/wallet.js';
 import { moneyByStatus, weekMinutes } from './work-rules.js';
@@ -57,7 +57,7 @@ export class WorkService {
           return {
             id: row.id, role: row.role, status: row.status,
             projectId: row.project.id, projectName: row.project.name, projectType: row.project.projectType, projectStatus: row.project.status,
-            stageKey: row.stage.stageKey, stageTitle: stageDefinitions[row.stage.stageKey as StageKey]?.title ?? row.stage.stageKey, stageStatus: row.stage.status,
+            stageKey: row.stage.stageKey, stageTitle: definitionOf(row.stage.stageKey as StageKey)?.title ?? row.stage.stageKey, stageStatus: row.stage.status,
             terms: {
               payKind: row.payKind, fixedAmount: row.fixedAmountTiyn === null ? null : tenge(row.fixedAmountTiyn),
               hourlyRate: row.hourlyRateTiyn === null ? null : tenge(row.hourlyRateTiyn), hourLimit: row.hourLimit, weeklyHourLimit: row.weeklyHourLimit,
@@ -86,7 +86,7 @@ export class WorkService {
         payments: rows
           .flatMap((row) => row.payments.map((payment) => ({
             id: payment.id, projectId: row.project.id, projectName: row.project.name, stageKey: row.stage.stageKey,
-            stageTitle: stageDefinitions[row.stage.stageKey as StageKey]?.title ?? row.stage.stageKey,
+            stageTitle: definitionOf(row.stage.stageKey as StageKey)?.title ?? row.stage.stageKey,
             amount: tenge(payment.amountTiyn), payout: payment.payoutTiyn === null ? null : tenge(payment.payoutTiyn),
             status: payment.status, createdAt: payment.createdAt, paidOutAt: payment.paidOutAt ?? (payment.status === 'paid_direct' ? payment.paidAt : null),
           })))
@@ -97,7 +97,7 @@ export class WorkService {
           average: reviews.length ? Math.round((reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length) * 10) / 10 : null,
           latest: reviews.slice(0, 5).map((review) => ({
             id: review.id, rating: review.rating, text: review.text, stageKey: review.stageKey,
-            stageTitle: stageDefinitions[review.stageKey as StageKey]?.title ?? review.stageKey, projectType: review.projectType,
+            stageTitle: definitionOf(review.stageKey as StageKey)?.title ?? review.stageKey, projectType: review.projectType,
             createdAt: review.createdAt, replied: Boolean(review.reply),
           })),
         },

@@ -8,7 +8,7 @@ import { ANALYSIS_PROFILE, type AnalysisReport } from './code-analysis.js';
 import { reportMarkdown, reportView, sourceKindLabels } from './report-view.js';
 import { artifactText, matchRequirements } from './requirements-match.js';
 import { CommentsService } from '../journey/comments.service.js';
-import { stageDefinitions, type StageKey } from '../journey/catalog.js';
+import { stageDefinitions, type StageKey, definitionOf } from '../journey/catalog.js';
 
 /** Archives get the code analysis; PDF, Word and text get the document check. */
 export const ANALYSABLE_KINDS = ['zip', 'pdf', 'docx', 'text'] as const;
@@ -115,7 +115,7 @@ export class AnalysisService implements OnApplicationBootstrap {
         },
         canRun: canWrite, profile: ANALYSIS_PROFILE,
         // Where findings can go: stages of the route (none for «Только анализ»), and whether the owner may add a route.
-        stages: project.projectType && canWrite ? (await this.prisma.projectStage.findMany({ where: { projectId }, orderBy: { position: 'asc' }, select: { stageKey: true } })).filter((row) => row.stageKey in stageDefinitions).map((row) => ({ key: row.stageKey, title: tr(stageDefinitions[row.stageKey as StageKey].title) })) : [],
+        stages: project.projectType && canWrite ? (await this.prisma.projectStage.findMany({ where: { projectId }, orderBy: { position: 'asc' }, select: { stageKey: true } })).filter((row) => row.stageKey in stageDefinitions).map((row) => ({ key: row.stageKey, title: tr(definitionOf(row.stageKey as StageKey).title) })) : [],
         canAddRoute: !project.projectType && role === 'owner' && canWrite,
       },
     };
@@ -203,7 +203,7 @@ export class AnalysisService implements OnApplicationBootstrap {
     const sourceOnStage = run.sourceFileId ? await this.prisma.stageFile.count({ where: { id: run.sourceFileId, stageId: stage.id } }) : 0;
     const result = await this.comments.add(userId, projectId, stageKey, { text, targetKey: null, blocking: false, parentId: null, fileIds: sourceOnStage ? [run.sourceFileId!] : [] });
     await this.core.event(this.prisma, projectId, userId, 'analysis_finding_to_remark', stageKey, { runId: run.id, findingId, commentId: result.data.createdId });
-    return { data: { commentId: result.data.createdId, stageKey, stageTitle: tr(stageDefinitions[stageKey as StageKey].title) } };
+    return { data: { commentId: result.data.createdId, stageKey, stageTitle: tr(definitionOf(stageKey as StageKey).title) } };
   }
 
   /**
@@ -221,7 +221,7 @@ export class AnalysisService implements OnApplicationBootstrap {
     const stages = await this.prisma.projectStage.findMany({ where: { projectId }, orderBy: { position: 'asc' }, select: { stageKey: true, status: true, approvedVersionId: true } });
     const accepted = stages.filter((stage) => stage.approvedVersionId);
     const versions = accepted.length ? await this.prisma.stageArtifactVersion.findMany({ where: { id: { in: accepted.map((stage) => stage.approvedVersionId!) } }, select: { id: true, content: true } }) : [];
-    const title = (key: string) => tr(stageDefinitions[key as StageKey]?.title ?? key);
+    const title = (key: string) => tr(definitionOf(key as StageKey)?.title ?? key);
     const texts = accepted.map((stage) => ({ key: stage.stageKey, title: title(stage.stageKey), text: artifactText(versions.find((version) => version.id === stage.approvedVersionId)?.content) }));
     const items = matchRequirements(report.document.requirements, texts);
     const count = (status: string) => items.filter((item) => item.status === status).length;

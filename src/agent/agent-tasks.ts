@@ -9,6 +9,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { JourneyCore } from '../journey/journey-core.js';
 import { inputsSatisfied } from '../journey/stage-state.js';
+import { isModuleStageKey, moduleStageKey, type StageKey } from '../journey/catalog.js';
 import { configuredAgentModel, type AgentModel } from './agent-model.js';
 import { AGENT_LOOP_VERSION, DEMO_PATH, runAgent, type AgentCheck, type AgentFile, type AgentLimits, type AgentOutcome, type AgentStep } from './agent-loop.js';
 import { configuredWorkspace, WorkspaceError, type WorkspaceProvider } from './workspace.js';
@@ -375,10 +376,18 @@ export class AgentTasksService {
   private agentModel() { return this.runner.agentModel(); }
   private agentWorkspace() { return this.runner.agentWorkspace(); }
 
-  private async context(userId: string, projectId: string, access: 'read' | 'write') {
-    const ctx = await this.core.load(userId, projectId, access, 'handoff');
+  /**
+   * The agent works on the developer package. A module of the plan has its own stage (§4.9): whoever leads that stage —
+   * a member or the specialist assigned to it — reads and starts the agent's tasks for the module.
+   */
+  private async context(userId: string, projectId: string, access: 'read' | 'write', module?: string | null) {
+    const via: StageKey = module ? moduleStageKey(module) : 'handoff';
+    if (module && !isModuleStageKey(via)) throw new NotFoundException('MODULE_NOT_FOUND');
+    const ctx = await this.core.load(userId, projectId, access, via);
     if (ctx.type.key !== 'web_app') throw new NotFoundException('STAGE_NOT_FOUND');
-    return { ctx, stage: this.core.stageOf(ctx, 'handoff') };
+    if (module && !ctx.route.includes(via)) throw new NotFoundException('MODULE_NOT_FOUND');
+    if (module && access === 'write' && !inputsSatisfied(ctx.route, ctx.dep, via)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
+    return { ctx, stage: this.core.stageOf(ctx, 'handoff'), via };
   }
 
   private view(task: NonNullable<TaskRow>) {
@@ -399,9 +408,11 @@ export class AgentTasksService {
     };
   }
 
-  async get(userId: string, projectId: string) {
-    const { ctx, stage } = await this.context(userId, projectId, 'read');
-    const tasks = await this.prisma.agentTask.findMany({ where: { projectId }, orderBy: { createdAt: 'desc' }, take: 10, omit: { demoHtml: true, baseFiles: true } });
+  async get(userId: string, projectId: string, module: string | null = null) {
+    const { ctx, stage, via } = await this.context(userId, projectId, 'read', module);
+    // A module's page sees its own tasks; the package page sees all of them.
+    const tasks = await this.prisma.agentTask.findMany({ where: { projectId, ...(module ? { moduleKey: module } : {}) }, orderBy: { createdAt: 'desc' }, take: 10, omit: { demoHtml: true, baseFiles: true } });
+    const anyActive = module ? await this.prisma.agentTask.count({ where: { projectId, status: { in: AGENT_ACTIVE } } }) > 0 : false;
     const configured = Boolean(this.agentModel()) && Boolean(this.agentWorkspace());
     const active = tasks.find((task) => AGENT_ACTIVE.includes(task.status));
     const repository = await this.choices.repositoryFor(projectId);
@@ -409,7 +420,9 @@ export class AgentTasksService {
       data: {
         configured, profile: APP_PROFILE, limits: agentLimits(), repository,
         deployment: await this.prisma.appDeployment.findUnique({ where: { projectId }, select: { url: true, ok: true, status: true, database: true, error: true, checkedAt: true } }),
-        canStart: configured && this.core.canWrite(ctx, 'handoff') && Boolean(stage.currentVersionId) && !active,
+        canStart: configured && this.core.canWrite(ctx, via) && Boolean(stage.currentVersionId) && !active && !anyActive && (!module || inputsSatisfied(ctx.route, ctx.dep, via)),
+        // Another task of the project is running: one at a time per project.
+        busy: anyActive && !active,
         // The newest finished task with code is what a change starts from.
         changeBase: active ? null : (tasks.find((task) => !AGENT_ACTIVE.includes(task.status) && task.filesDigest !== null && ((task.files ?? []) as unknown[]).length > 0)?.id ?? null),
         // With a repository connected, a change can start from its main branch, the owner's own edits included.
@@ -426,7 +439,7 @@ export class AgentTasksService {
     // Step 9a: a module of the accepted plan; the words come from the plan, the test plan and the contracts.
     let moduleRoadmap: Roadmap | null = null;
     if (input.module) {
-      const { ctx } = await this.context(userId, projectId, 'write');
+      const { ctx } = await this.context(userId, projectId, 'write', input.module);
       const inputs = await this.core.acceptedInputs(ctx, 'handoff');
       moduleRoadmap = (inputs.roadmap?.content as Roadmap | undefined) ?? null;
       if (!moduleRoadmap) throw new ConflictException('ROADMAP_NOT_APPROVED');
@@ -437,7 +450,7 @@ export class AgentTasksService {
     // Step 5: a change needs the words of what to change and what it starts from: an earlier task or the repository.
     if ((input.baseTaskId || input.fromRepository) && !instruction) throw new BadRequestException('CHANGE_INSTRUCTION_REQUIRED');
     if (instruction && instruction.length > MAX_INSTRUCTION) throw new BadRequestException('INSTRUCTION_TOO_LONG');
-    const { ctx, stage } = await this.context(userId, projectId, 'write');
+    const { ctx, stage } = await this.context(userId, projectId, 'write', input.module ?? null);
     if (!this.agentModel() || !this.agentWorkspace()) throw new ServiceUnavailableException('AGENT_NOT_CONFIGURED');
     let base: { id: string | null; files: AgentFile[]; digest: string; repository: { branch: string; commit: string | null; truncated: boolean } | null } | null = null;
     if (input.baseTaskId && !input.fromRepository) {
