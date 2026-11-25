@@ -17,25 +17,32 @@ from the internet (corporate GitLab, a server behind VPN).
 
 ## Run
 
-With Node.js 22 and git:
+Put the settings in `buildpath-agent.env` next to the program — one `KEY=value` per line, read literally (no shell), so a
+deploy command keeps its spaces and quotes:
 
 ```sh
-export BUILDPATH_URL=https://api.example.com/api/v1
-export BUILDPATH_AGENT_TOKEN=bpa_...
-export APP_URL=http://app.corp.local:8080           # optional: enables check
-export GIT_REMOTE=git@gitlab.corp.local:team/app.git  # optional: enables push
-export DEPLOY_COMMAND='ssh deploy@app.corp.local ./deploy.sh "$BUILDPATH_BRANCH"'  # optional: enables deploy
-node buildpath-agent.mjs
+BUILDPATH_URL=https://api.example.com/api/v1
+BUILDPATH_AGENT_TOKEN=bpa_...
+APP_URL=http://app.corp.local:8080                     # optional: enables check
+GIT_REMOTE=git@gitlab.corp.local:team/app.git          # optional: enables push
+DEPLOY_COMMAND=ssh deploy@app.corp.local ./deploy.sh "$BUILDPATH_BRANCH"  # optional: enables deploy
 ```
 
-With Docker (the program file next to you):
+Comments must be on their own lines. With Node.js 22 and git:
+
+```sh
+node buildpath-agent.mjs buildpath-agent.env
+```
+
+With Docker:
 
 ```sh
 docker run -d --name buildpath-agent --restart on-failure \
-  -e BUILDPATH_URL -e BUILDPATH_AGENT_TOKEN -e APP_URL -e GIT_REMOTE -e DEPLOY_COMMAND \
-  -v "$PWD/buildpath-agent.mjs:/agent.mjs:ro" -v "$HOME/.ssh:/root/.ssh:ro" \
-  node:22-alpine sh -c 'apk add --no-cache git openssh-client >/dev/null && node /agent.mjs'
+  -v "$PWD:/agent:ro" -v "$HOME/.ssh:/root/.ssh:ro" \
+  node:22-alpine sh -c 'apk add --no-cache git openssh-client >/dev/null && node /agent/buildpath-agent.mjs /agent/buildpath-agent.env'
 ```
+
+The same settings can come from environment variables instead of the file.
 
 Other settings: `DEPLOY_TIMEOUT_SECONDS` (default 600), `SHARE_DEPLOY_OUTPUT=1`, `WORK_DIR` (temporary clones).
 

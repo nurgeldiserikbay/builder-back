@@ -16,8 +16,10 @@
 //   DEPLOY_COMMAND         your deploy command, run with sh -c (optional; enables deploy); BUILDPATH_BRANCH holds the branch
 //   DEPLOY_TIMEOUT_SECONDS default 600
 //   SHARE_DEPLOY_OUTPUT    1 to send the last lines of the deploy output to BuildPath (off by default: it may hold secrets)
+// The settings can also be in a file given as the first argument: node buildpath-agent.mjs buildpath-agent.env — one
+// KEY=value per line, read literally (no shell), so a deploy command keeps its spaces and quotes.
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -26,6 +28,21 @@ export const VERSION = '1.0.0';
 const OUTPUT_CHARS = 4000;
 
 const log = (...parts) => console.log(new Date().toISOString(), ...parts);
+
+/** KEY=value lines, taken literally; # starts a comment line; only the agent's own settings are read. */
+export function parseSettings(text) {
+  const known = new Set(['BUILDPATH_URL', 'BUILDPATH_AGENT_TOKEN', 'BUILDPATH_ALLOW_HTTP', 'APP_URL', 'GIT_REMOTE', 'DEPLOY_COMMAND', 'DEPLOY_TIMEOUT_SECONDS', 'SHARE_DEPLOY_OUTPUT', 'WORK_DIR']);
+  const out = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const at = line.indexOf('=');
+    if (at < 1) continue;
+    const key = line.slice(0, at).trim();
+    if (known.has(key)) out[key] = line.slice(at + 1).trim();
+  }
+  return out;
+}
 
 export function readConfig(env = process.env) {
   const problems = [];
@@ -161,8 +178,12 @@ export async function runJob(config, job, call, fetchImpl = fetch) {
 
 const STOP = new Set(['NETWORK_AGENT_KEY_INVALID', 'NETWORK_AGENT_KEY_REVOKED', 'NETWORK_AGENT_KEY_EXPIRED', 'NETWORK_AGENT_PROJECT_INACTIVE']);
 
-export async function main(env = process.env) {
-  const config = readConfig(env);
+export async function main(env = process.env, file = process.argv[2]) {
+  let settings = env;
+  if (file) {
+    try { settings = { ...env, ...parseSettings(await readFile(file, 'utf8')) }; } catch { console.error(`Cannot read the settings file ${file}`); process.exit(2); }
+  }
+  const config = readConfig(settings);
   if (config.problems.length) { for (const problem of config.problems) console.error(`Setting problem: ${problem}`); process.exit(2); }
   const call = client(config);
   const capabilities = { check: Boolean(config.appUrl), push: Boolean(config.gitRemote), deploy: Boolean(config.deployCommand), shareOutput: config.shareOutput };

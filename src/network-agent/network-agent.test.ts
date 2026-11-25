@@ -66,6 +66,11 @@ describe('the agent program', () => {
     assert.equal(config.appUrl, 'http://app.corp:8080');
   });
 
+  it('reads its settings file literally: a deploy command keeps its spaces and quotes', () => {
+    const settings = program.parseSettings('# comment\nBUILDPATH_URL=https://a.example/api/v1\r\nDEPLOY_COMMAND=ssh deploy@app ./deploy.sh "$BUILDPATH_BRANCH"\nPATH=/evil\nbroken line\n');
+    assert.deepEqual(settings, { BUILDPATH_URL: 'https://a.example/api/v1', DEPLOY_COMMAND: 'ssh deploy@app ./deploy.sh "$BUILDPATH_BRANCH"' });
+  });
+
   it('pushes the files to its own branch of the internal repository and removes what the change deleted', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'bp-agent-test-'));
     try {
