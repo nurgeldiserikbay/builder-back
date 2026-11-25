@@ -107,6 +107,7 @@ describe('importing an own ТЗ into a project (database)', async () => {
     await journey.accept(owner.id, projectId, 'goal', (await current('goal'))!);
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
+    await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
     await journey.saveDraft(owner.id, projectId, 'process', { content: templateProcess('landing', brief), baseVersionId: null });
     await journey.accept(owner.id, projectId, 'process', (await current('process'))!);
 

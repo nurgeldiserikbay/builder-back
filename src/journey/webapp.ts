@@ -7,7 +7,7 @@ import { keywords } from '../analysis/requirements-match.js';
 import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
 import { ArtifactValidationError, type Brief } from './artifacts.js';
 import type { BusinessProcess, ProcessEntity } from './process.js';
-import { situationOf } from './situations.js';
+import { situationQuestions } from './situations.js';
 import { escapeHtml } from './site-renderer.js';
 import { pathFor } from './sitemap.js';
 import { TECHPLAN_VERSION, type DataEntity, type Sequence, type TechPlan, type TechPlanItem } from './techplan.js';
@@ -244,9 +244,7 @@ export function specMarkdown(input: { brief: Brief | null; process: BusinessProc
   });
 }
 
-function questionTexts(keys: string[]): string[] {
-  return keys.map((key) => situationOf(key)).filter((item): item is NonNullable<typeof item> => Boolean(item)).map((item) => tr(item.question)).slice(0, APP_LIMITS.notes);
-}
+const questionTexts = (keys: string[]) => situationQuestions(keys).slice(0, APP_LIMITS.notes);
 
 /** A home screen per role, then one screen per function that role uses; links go from the home screen. */
 export function templateScreens(features: AppFeatures | null): AppScreens {

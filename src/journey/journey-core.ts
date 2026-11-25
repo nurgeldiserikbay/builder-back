@@ -1,3 +1,6 @@
+import type { ConceptInputs } from './concept.js';
+import type { IdeaReview } from './idea.js';
+import type { Suggestions } from './suggestions.js';
 import { buildAppPlan, type AppFeatures, type AppScreens } from './webapp.js';
 // Shared ground of the stage workflow: loading a project with the viewer's access, stage and version helpers,
 // events, notifications and the AI provider with its per-project hold. Used by JourneyService, StageAiService and
@@ -192,7 +195,18 @@ export class JourneyCore {
   }
 
   /** Accepted inputs a completeness check needs: texts of a multi-page site are checked against the accepted map. */
-  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null }> {
+  /** What «Концепция продукта» is assembled from: the accepted inputs, and which optional stages were skipped on purpose. */
+  async conceptInputs(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<ConceptInputs> {
+    const inputs = await this.acceptedInputs(ctx, key);
+    const content = <T>(stage: string) => (inputs[stage]?.content as T | undefined) ?? null;
+    return {
+      brief: content<Brief>('goal'), idea: content<IdeaReview>('idea'), process: content<BusinessProcess>('process'), suggestions: content<Suggestions>('suggestions'),
+      skipped: ctx.stages.filter((stage) => stage.status === 'skipped').map((stage) => stage.stageKey),
+    };
+  }
+
+  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs }> {
+    if (key === 'concept') return { sitemap: null, concept: await this.conceptInputs(ctx, key) };
     // Features are checked against the accepted process: the data they name must exist there.
     if (key === 'features') return { sitemap: null, process: ((await this.acceptedInputs(ctx, key)).process?.content as BusinessProcess | undefined) ?? null };
     // Screens are checked against the accepted functions: every role has screens, every must function is shown.

@@ -1,3 +1,5 @@
+import { conceptDocument, importConceptText, normalizeConcept, slugFile, type Concept, type ConceptInputs } from './concept.js';
+import { markdownToDocx } from './docx.js';
 import { ideaMarkdown, importIdeaText, type IdeaReview } from './idea.js';
 import { importSuggestionsText, suggestionsMarkdown, type Suggestions } from './suggestions.js';
 import { tr } from '../i18n/i18n.js';
@@ -223,6 +225,7 @@ export class JourneyService {
     // Schedule has no AI: the editor starts from the accepted services and a typical working day.
     const techPlanPreview = definition.artifactType === 'techplan' && inputsSatisfied(ctx.route, ctx.dep, stageKey)
       ? await this.core.techPlanFor(ctx, stageKey, (current?.content as unknown as TechPlan | undefined)?.ownerNotes ?? null) : null;
+    const concept = definition.artifactType === 'concept' ? await this.conceptView(ctx, stageKey, current?.content ?? null) : null;
     const techPlanOutdated = Boolean(techPlanPreview && current && !sameTechPlan(techPlanPreview, current.content as unknown as TechPlan));
     const scheduleTemplate = definition.artifactType === 'schedule' && !current
       ? await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSchedule(inputs.offer?.content as Offer | undefined ?? null))) : null;
@@ -308,11 +311,12 @@ export class JourneyService {
           configured: Boolean(ai), remainingToday: ai ? await this.core.remainingAiRuns(projectId) : 0,
           budget: assignment ? { limit: assignment.aiBudget, used: assignment.aiUsed } : null,
           month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null,
-          templateAvailable: !ai && (['content', 'design', 'idea', 'process', 'suggestions', 'sitemap', 'features', 'screens'] as string[]).includes(stageKey),
+          templateAvailable: !ai && (['content', 'design', 'idea', 'process', 'suggestions', 'concept', 'sitemap', 'features', 'screens'] as string[]).includes(stageKey),
         },
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
           ...(definition.artifactType === 'techplan' ? { techplan: { preview: techPlanPreview, outdated: techPlanOutdated } } : {}),
+          ...(concept ? { concept } : {}),
           ...(definition.artifactType === 'process' ? { process: { capabilities: capabilitiesFor(ctx.type.key), actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS, situations: { version: SITUATIONS_VERSION, items: situationsFor(ctx.type.key) } } } : {}),
           ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.core.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
@@ -436,6 +440,7 @@ export class JourneyService {
         }
         const text = (source as { text: string }).text;
         if (definition.artifactType === 'idea') return importIdeaText(text);
+        if (definition.artifactType === 'concept') return importConceptText(text);
         if (definition.artifactType === 'suggestions') return normalizeFor(ctx, 'suggestions', importSuggestionsText(text));
         return definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : definition.artifactType === 'catalog' ? importCatalogText(text) : importContentText(text, sitemap);
       });
@@ -798,6 +803,36 @@ export class JourneyService {
    * An optional stage skipped by the owner or a manager with a written reason (kept as the stage note and in the
    * activity log). The stages after it go on without it; it can be taken up again with reopen.
    */
+  /**
+   * The concept document as this viewer may see it: assembled from the inputs they see (a specialist gets hidden parts
+   * replaced) and the owner's parts of the given version, or a blank draft before there is one.
+   */
+  private async conceptView(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: StageKey, content: unknown) {
+    const inputs = await this.core.viewInputs(ctx, key);
+    const seen = <T>(stage: string) => (inputs[stage]?.content as T | undefined) ?? null;
+    const conceptInputs: ConceptInputs = {
+      brief: seen<Brief>('goal'), idea: seen<IdeaReview>('idea'), process: seen<BusinessProcess>('process'), suggestions: seen<Suggestions>('suggestions'),
+      skipped: ctx.stages.filter((row) => row.status === 'skipped').map((row) => row.stageKey),
+    };
+    const owner = content ? normalizedOrRaw('concept', content) as Concept : normalizeConcept({});
+    const document = inProject(ctx, () => conceptDocument(conceptInputs, owner, ctx.project.name));
+    return { ...document, inputs: { process: conceptInputs.process } };
+  }
+
+  /** The concept as a file: Markdown or Word. The PDF is the print page in the browser, with the diagrams drawn. */
+  async conceptFile(userId: string, projectId: string, format: 'md' | 'docx') {
+    const ctx = await this.core.load(userId, projectId, 'read', 'concept');
+    const stage = this.core.stageOf(ctx, 'concept');
+    const version = await this.core.versionContent(stage.currentVersionId);
+    if (!version) throw new ConflictException('NOTHING_TO_EXPORT');
+    const document = await this.conceptView(ctx, 'concept', version.content);
+    const base = slugFile(document.title) || 'concept';
+    // Word has no place for the drawn diagrams; it says where to find them rather than dropping them silently.
+    const note = document.diagrams.length ? `\n> ${inProject(ctx, () => tr('Схемы — в PDF-версии документа: «Скачать PDF» на странице этапа.'))}\n` : '';
+    if (format === 'md') return { name: `${base}.md`, mime: 'text/markdown; charset=utf-8', data: Buffer.from(document.markdown, 'utf8') };
+    return { name: `${base}.docx`, mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', data: markdownToDocx(document.markdown + note, document.title) };
+  }
+
   async skip(userId: string, projectId: string, key: string, reason: string) {
     const ctx = await this.core.load(userId, projectId, 'accept', key);
     const stageKey = key as StageKey;
@@ -1021,6 +1056,8 @@ export class JourneyService {
     if (site) files.push({ name: 'site.html', mimeType: 'text/html', content: await this.core.inline(projectId, site.html) });
     // Other pages of a multi-page site, laid out as on a static host: /services → pages/services/index.html.
     for (const page of site?.pages ?? []) if (page.path !== '/') files.push({ name: `pages${page.path}/index.html`, mimeType: 'text/html', content: await this.core.inline(projectId, page.html) });
+    const conceptContent = get<Concept>('concept');
+    if (conceptContent) files.push({ name: 'concept.md', mimeType: 'text/markdown', content: (await this.conceptView(ctx, 'concept', conceptContent)).markdown });
     const pack = get<HandoffArtifact>('handoff');
     for (const file of pack?.files ?? []) files.push({ name: `handoff/${file.name}`, mimeType: file.mimeType, content: file.content });
     // The ТЗ as its own document for sites; an app's package already carries it as handoff/spec.md.

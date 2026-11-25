@@ -25,7 +25,7 @@ const brief: Brief = { businessName: 'Сервис Клин', whatYouDo: 'Убо
 
 describe('web application route', () => {
   it('the route goes from functions to screens, architecture and the package', () => {
-    assert.deepEqual(projectTypes.web_app.stages, ['goal', 'idea', 'process', 'suggestions', 'features', 'screens', 'techplan', 'handoff']);
+    assert.deepEqual(projectTypes.web_app.stages, ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'handoff']);
     assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'techplan'), ['goal', 'process', 'features', 'screens']);
     assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'screens'), ['features']);
   });
@@ -167,6 +167,7 @@ describe('web application route (database)', async () => {
     await accept('goal');
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
+    await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
     for (const key of ['process', 'features', 'screens']) {
       // No AI connected: the platform drafts by template.
       const drafted = await journey.generate(owner.id, projectId, key, { instruction: null, saveAs: 'one_off', targetKey: null });
@@ -209,6 +210,7 @@ describe('web application route (database)', async () => {
     await journey.accept(owner.id, projectId, 'goal', await versionOf('goal'));
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
+    await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
     await journey.generate(owner.id, projectId, 'process', { instruction: null, saveAs: 'one_off', targetKey: null });
     const draft = (await journey.stage(owner.id, projectId, 'process')).data.current!.content as { rules: string[] };
     // Without the consent rule the review blocks acceptance.
@@ -262,6 +264,7 @@ describe('web application route (database)', async () => {
     await journey.accept(owner.id, projectId, 'goal', await versionOf('goal'));
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
+    await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
     await journey.generate(owner.id, projectId, 'process', { instruction: null, saveAs: 'one_off', targetKey: null });
     core.provider = {
       name: 'fake', model: 'fake-1',
@@ -315,6 +318,7 @@ describe('web application route (database)', async () => {
     await journey.accept(owner.id, projectId, 'goal', (await versionOf('goal'))!);
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
+    await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
     await journey.generate(owner.id, projectId, 'process', { instruction: null, saveAs: 'one_off', targetKey: null });
     const before = await versionOf('process');
     // Without AI there is nothing to propose.

@@ -1,3 +1,4 @@
+import { conceptIssues, normalizeConcept, type Concept } from './concept.js';
 import { ideaIssues, normalizeIdea, type IdeaReview } from './idea.js';
 import { normalizeSuggestions, suggestionsIssues, withHonestSupport, type Suggestions } from './suggestions.js';
 import type { ProjectTypeKey } from './catalog.js';
@@ -213,6 +214,7 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown, projectType?
     case 'techplan': return normalizeTechPlan(raw);
     case 'process': return normalizeProcess(raw);
     case 'idea': return normalizeIdea(raw);
+    case 'concept': return normalizeConcept(raw);
     case 'suggestions': { const value = normalizeSuggestions(raw); return projectType ? withHonestSupport(value, projectType) : value; }
     case 'sitemap': return normalizeSitemap(raw);
     case 'catalog': return normalizeCatalog(raw);
@@ -232,6 +234,7 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'techplan') return ['ownerNotes'];
   if (type === 'process') return ['actors', 'scenarios', 'rules', 'data'];
   if (type === 'suggestions') return ['items'];
+  if (type === 'concept') return ['pitch', 'glossary', 'questions', 'notes'];
   if (type === 'idea') return ['problem', 'segments', 'value', 'alternatives', 'revenue', 'risks', 'metrics', 'constraints'];
   if (type === 'sitemap') return ['pages'];
   if (type === 'catalog') return ['products', 'delivery', 'payment', 'minOrder'];
@@ -328,6 +331,7 @@ export function completenessIssues(type: ArtifactType, content: unknown, context
   if (type === 'process') issues.push(...processIssues(content as BusinessProcess));
   if (type === 'idea') issues.push(...ideaIssues(content as IdeaReview));
   if (type === 'suggestions') issues.push(...suggestionsIssues(content as Suggestions));
+  if (type === 'concept') issues.push(...conceptIssues(content as Concept));
   if (type === 'sitemap') issues.push(...sitemapIssues(content as Sitemap));
   if (type === 'catalog') issues.push(...catalogIssues(content as Catalog));
   if (type === 'offer' && (content as Offer).services.length === 0) issues.push({ key: 'services', message: 'Добавьте хотя бы одну услугу.' });

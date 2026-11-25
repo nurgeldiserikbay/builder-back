@@ -1,6 +1,7 @@
 // What each stage hands over to the stages built on it, written out item by item. Required items are what the next
 // stages cannot work without: acceptance waits for them. Recommended items make the next stages better; they are shown,
 // not enforced. The checks are deliberately small and readable — the quality review (stage-review.ts) goes deeper.
+import type { Concept } from './concept.js';
 import type { Suggestions } from './suggestions.js';
 import { tr } from '../i18n/i18n.js';
 import type { Brief, ContentArtifact, DesignArtifact, Offer } from './artifacts.js';
@@ -39,6 +40,11 @@ const idea: OutputItem<IdeaReview>[] = [
 const suggestions: OutputItem<Suggestions>[] = [
   { key: 'decisions', level: 'required', text: () => tr('Решение по каждому предложению — из него ТЗ знает, что входит в первую версию'), met: (s) => s.items.every((item) => Boolean(item.decision)) },
   { key: 'reasons', level: 'recommended', text: () => tr('Причины для «не нужно» — чтобы не спорить об этом заново'), met: (s) => s.items.every((item) => item.decision !== 'no' || filled(item.reason)) },
+];
+
+const concept: OutputItem<Concept>[] = [
+  { key: 'pitch', level: 'required', text: () => tr('«В двух словах» — с этого начинают читать'), met: (c) => filled(c.pitch) },
+  { key: 'questions', level: 'recommended', text: () => tr('Открытые вопросы записаны — для ТЗ и плана'), met: (c) => c.questions.length > 0 },
 ];
 
 const offer: OutputItem<Offer>[] = [
@@ -100,7 +106,7 @@ const techplan: OutputItem<TechPlan>[] = [
 ];
 
 const OUTPUTS: Partial<Record<ArtifactType, OutputItem<never>[]>> = {
-  brief, idea, suggestions, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan,
+  brief, idea, suggestions, concept, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan,
 } as unknown as Partial<Record<ArtifactType, OutputItem<never>[]>>;
 
 export interface StageOutputItem { key: string; text: string; level: OutputLevel; met: boolean }

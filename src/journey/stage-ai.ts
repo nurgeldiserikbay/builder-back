@@ -117,6 +117,15 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
         constraints: object(['deadline', 'budget', 'legal', 'dataLocation'], { deadline: { type: 'string' }, budget: { type: 'string' }, legal: { type: 'string' }, dataLocation: { type: 'string' } }),
       });
     }
+    case 'concept': {
+      const object = (required: string[], properties: Record<string, unknown>) => ({ type: 'object', additionalProperties: false, required, properties });
+      return object(['pitch', 'glossary', 'questions', 'notes'], {
+        pitch: { type: 'string' },
+        glossary: { type: 'array', items: object(['key', 'term', 'meaning'], { key: { type: 'string' }, term: { type: 'string' }, meaning: { type: 'string' } }) },
+        questions: { type: 'array', items: object(['key', 'text'], { key: { type: 'string' }, text: { type: 'string' } }) },
+        notes: { type: 'string' },
+      });
+    }
     case 'suggestions': {
       const object = (required: string[], properties: Record<string, unknown>) => ({ type: 'object', additionalProperties: false, required, properties });
       const fields = { key: { type: 'string' }, title: { type: 'string' }, value: { type: 'string' }, basis: { type: 'string' }, source: { type: 'string', enum: ['catalog', 'ai'] },
@@ -327,6 +336,11 @@ export function buildReviewPrompt(input: { stage: StageDefinition; locale: strin
     `At most ${AI_REVIEW_LIMITS.findings} findings, the most important first. severity: important or minor only. target: one of the keys in targets, or null for the whole result. where: a short human name of the place. message: what is wrong, one or two sentences. fix: what to do, one sentence.`,
     `Write all text in ${language}. Return only JSON matching the schema.`,
     ...input.stage.playbook.instructions.map((rule) => `The stage was made by this playbook: ${rule}`),
+    // The concept is a document for people outside the project: read it as one of them.
+    ...(input.stage.key === 'concept' ? [
+      'result is the whole document as Markdown. Read it as an investor, a partner or a developer who has never heard of this project.',
+      'Report what such a reader would not understand or would ask about: words not explained, sentences that can be read two ways, sections that contradict each other, a gap between the problem and what the first version does. Target glossary for a word, pitch for the opening, questions for a missing open question, or null.',
+    ] : []),
   ].join('\n');
   const user = JSON.stringify({ confirmedInputs: input.inputs, result: input.current, ruleFindings: input.ruleFindings, targets: input.targets });
   return { system, user, schemaName: `buildpath_review_${input.stage.artifactType}`, schema: reviewSchema };

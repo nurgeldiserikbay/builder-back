@@ -98,6 +98,10 @@ export function artifactSummary(type: string, content: unknown): string {
     const value = content as { problem?: string; segments?: Array<{ name: string }>; metrics?: Array<{ text: string }> };
     return [value.problem && tr("Проблема: {0}", [value.problem.slice(0, 200)]), tr("Для кого: {0}", [(value.segments ?? []).map((segment) => segment.name).join(', ')]), tr("Цели: {0}", [(value.metrics ?? []).map((metric) => metric.text).join(' · ')])].filter(Boolean).join('\n');
   }
+  if (type === 'concept') {
+    const value = content as { pitch?: string; questions?: unknown[] };
+    return [value.pitch?.slice(0, 300), tr("Открытых вопросов: {0}", [(value.questions ?? []).length])].filter(Boolean).join('\n');
+  }
   if (type === 'suggestions') {
     const value = content as { items?: Array<{ title: string; decision: string }> };
     const items = value.items ?? [];
