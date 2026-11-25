@@ -1,3 +1,4 @@
+import { tr } from '../i18n/i18n.js';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { JourneyCore } from '../journey/journey-core.js';
@@ -72,9 +73,10 @@ export class InboxService {
         },
         select: { id: true, projectId: true, createdAt: true, respondBy: true, targetStage: { select: { stageKey: true } }, sourceStage: { select: { stageKey: true } } },
       }).catch(() => []),
-      managed.length ? this.prisma.changeProposal.findMany({
-        where: { projectId: { in: managed }, status: 'open' },
-        select: { id: true, projectId: true, createdAt: true, text: true, targetStage: { select: { stageKey: true } }, author: { select: { name: true } } },
+      // Requests to an earlier stage: for the owner and managers, and for the lead of that stage, who may answer them.
+      managed.length || leadStageIds.length ? this.prisma.changeProposal.findMany({
+        where: { status: 'open', authorUserId: { not: userId }, OR: [...(managed.length ? [{ projectId: { in: managed } }] : []), ...(leadStageIds.length ? [{ targetStageId: { in: leadStageIds } }] : [])] },
+        select: { id: true, projectId: true, createdAt: true, text: true, kind: true, blocking: true, targetStage: { select: { stageKey: true } }, author: { select: { name: true } } },
       }) : [],
       managed.length ? this.prisma.timeEntry.findMany({
         // Undisputed hours count as approved after three days, so only younger ones wait for a decision.
@@ -114,7 +116,8 @@ export class InboxService {
       push({ id: `notice:${notice.id}`, kind: 'change_notice', projectId: notice.projectId, stageKey: notice.targetStage.stageKey, since: notice.createdAt.toISOString(), dueAt: notice.respondBy?.toISOString() ?? null, text: notice.sourceStage.stageKey });
     }
     for (const proposal of proposals) {
-      push({ id: `proposal:${proposal.id}`, kind: 'change_proposal', projectId: proposal.projectId, stageKey: proposal.targetStage.stageKey, since: proposal.createdAt.toISOString(), who: displayName(proposal.author), text: quote(proposal.text) });
+      const label = [proposal.blocking ? tr('Блокер') : null, proposal.kind === 'question' ? tr('Вопрос') : tr('Нужно изменить')].filter(Boolean).join(' · ');
+      push({ id: `proposal:${proposal.id}`, kind: 'change_proposal', projectId: proposal.projectId, stageKey: proposal.targetStage.stageKey, since: proposal.createdAt.toISOString(), who: displayName(proposal.author), text: quote(`${label}: ${proposal.text}`) });
     }
     type HourRow = { assignmentId: string; projectId: string; createdAt: Date; assignment: { stage: { stageKey: string }; user: { name: string | null } | null } };
     const byAssignment = new Map<string, HourRow[]>();
