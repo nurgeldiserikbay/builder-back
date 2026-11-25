@@ -2,6 +2,7 @@
 // parts of the system, the data it keeps, each scenario step by step, which steps of the business process the product
 // covers, and the API contract. Derived deterministically from the accepted inputs; the owner adds only notes.
 // It is a contract stage: the build relies on it.
+import { designMarkdown, normalizeDesign, type ArchitectureDesign } from './architecture.js';
 import type { AppFeatures } from './webapp.js';
 import { tr } from '../i18n/i18n.js';
 import type { Brief, MainAction } from './artifacts.js';
@@ -41,9 +42,17 @@ export interface TechPlan {
   api: string;
   /** The only part the owner writes: wishes for developers or later versions. */
   ownerNotes: string | null;
+  /** For a web application: the design people edit — schema, components, decisions, threats, environments (architecture.ts). */
+  design?: ArchitectureDesign | null;
 }
 
-/** The client only sends notes; everything else is recomputed on the server from the accepted inputs. */
+/** The design of an application as the client sent it; null when there is none (sites, or the template is used). */
+export function techPlanDesign(raw: unknown): ArchitectureDesign | null {
+  const design = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as { design?: unknown }).design : undefined;
+  return design && typeof design === 'object' ? normalizeDesign(design) : null;
+}
+
+/** The client only sends notes and, for an application, the design; everything else is recomputed on the server from the accepted inputs. */
 export function techPlanNotes(raw: unknown): string | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ArtifactValidationError('ARTIFACT_INVALID');
   const notes = (raw as { ownerNotes?: unknown }).ownerNotes;
@@ -452,7 +461,7 @@ export function normalizeTechPlan(raw: unknown): TechPlan {
   if (typeof plan.summary !== 'string' || typeof plan.api !== 'string' || !Array.isArray(plan.features)) throw new ArtifactValidationError('ARTIFACT_INVALID');
   // Plans made before the architecture view (1.0.0) have no diagrams; they read as empty until the plan is updated.
   if (!Array.isArray(plan.components)) return { ...plan, kind: 'booking', components: [], dataModel: [], sequences: [], coverage: null, ownerNotes: techPlanNotes(raw) };
-  return { ...plan, ownerNotes: techPlanNotes(raw) };
+  return { ...plan, ownerNotes: techPlanNotes(raw), design: techPlanDesign(raw) };
 }
 
 export function techPlanMarkdown(plan: TechPlan): string {
@@ -470,6 +479,7 @@ export function techPlanMarkdown(plan: TechPlan): string {
     tr("## Уведомления"), '', ...plan.notifications.map((item) => `- ${item}`), '',
     tr("## Где работает"), '', ...plan.hosting.map((item) => `- ${item.option}: ${item.plain}`), '',
     tr("## Ограничения этой версии"), '', ...plan.limits.map((item) => `- ${item}`), '',
+    ...(plan.design ? [designMarkdown(plan.design), ''] : []),
     ...(plan.ownerNotes ? [tr("## Заметки владельца"), '', plan.ownerNotes, ''] : []),
     plan.api ? tr("Контракт API — в файле {0}. Версия: {1}.", [plan.kind === 'site' ? 'lead-api.yaml' : 'booking-api.yaml', plan.planVersion]) : tr("Версия: {0}.", [plan.planVersion]), '',
   ].join('\n');
@@ -477,6 +487,7 @@ export function techPlanMarkdown(plan: TechPlan): string {
 
 /** Same plan apart from the owner's notes (used to tell whether the plan follows the accepted inputs). */
 export function sameTechPlan(a: TechPlan, b: TechPlan): boolean {
-  const strip = ({ ownerNotes: _notes, ...rest }: TechPlan) => stableStringify(rest);
+  // The design is people's; the parts computed from it are compared, so a plan built from another design differs.
+  const strip = ({ ownerNotes: _notes, design: _design, ...rest }: TechPlan) => stableStringify(rest);
   return strip(a) === strip(b);
 }

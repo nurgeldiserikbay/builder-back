@@ -1,3 +1,4 @@
+import type { ArchitectureDesign } from './architecture.js';
 import type { ConceptInputs } from './concept.js';
 import type { IdeaReview } from './idea.js';
 import type { Suggestions } from './suggestions.js';
@@ -207,6 +208,8 @@ export class JourneyCore {
 
   async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0], key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs }> {
     if (key === 'concept') return { sitemap: null, concept: await this.conceptInputs(ctx, key) };
+    // An application's architecture is checked against the ТЗ: its data, services and requirements.
+    if (key === 'techplan') return { sitemap: null, features: ((await this.acceptedInputs(ctx, key)).features?.content as AppFeatures | undefined) ?? null };
     // Features are checked against the accepted process: the data they name must exist there.
     if (key === 'features') return { sitemap: null, process: ((await this.acceptedInputs(ctx, key)).process?.content as BusinessProcess | undefined) ?? null };
     // Screens are checked against the accepted functions: every role has screens, every must function is shown.
@@ -309,7 +312,7 @@ export class JourneyCore {
     return tx.projectEvent.create({ data: { projectId, actorUserId: userId, type, stageKey, details: details as never } });
   }
 
-  async techPlanFor(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { type: { key: string }; project: { locale: string } }, key: StageKey, notes: string | null): Promise<TechPlan> {
+  async techPlanFor(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { type: { key: string }; project: { locale: string } }, key: StageKey, notes: string | null, design: ArchitectureDesign | null = null): Promise<TechPlan> {
     const inputs = await this.acceptedInputs(ctx, key);
     const schedule = inputs.schedule?.content as Schedule | undefined;
     if (ctx.route.includes('schedule') && !schedule) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
@@ -318,7 +321,7 @@ export class JourneyCore {
       return inProject(ctx, () => buildAppPlan({
         brief: (inputs.goal?.content as Brief | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
         features: (inputs.features?.content as AppFeatures | undefined) ?? null, screens: (inputs.screens?.content as AppScreens | undefined) ?? null,
-      }, notes));
+      }, notes, design));
     }
     return inProject(ctx, () => buildTechPlan({
       projectType: ctx.type.key, brief: (inputs.goal?.content as Brief | undefined) ?? null, schedule: schedule ?? null,

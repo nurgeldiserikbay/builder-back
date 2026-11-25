@@ -12,7 +12,9 @@ import { capabilitiesFor, PROCESS_LIMITS } from './process.js';
 import { PHASES_VERSION, guideFor, STAGE_PHASE, phasesOf } from './phases.js';
 import { TYPE_QUESTIONS, TYPE_QUESTIONS_VERSION, hintAnswers, parseAnswers, suggestType, type TypeAnswers } from './type-suggest.js';
 import { SITUATIONS_VERSION, situationsFor } from './situations.js';
-import { bookingApiContract, sameTechPlan, techPlanMarkdown, techPlanNotes, type TechPlan } from './techplan.js';
+import { bookingApiContract, sameTechPlan, techPlanDesign, techPlanMarkdown, techPlanNotes, type TechPlan } from './techplan.js';
+import type { ArchitectureDesign } from './architecture.js';
+
 import { PrismaService } from '../database/prisma.service.js';
 import { stageFor, stageTitle, ROUTE_CATALOG_VERSION, projectTypes, routeInputs, stageDefinitions, statusExplanations, type StageKey } from './catalog.js';
 import { changedKeys, completenessIssues, importBriefText, importContentText, importOfferText, lockableKeys, stableStringify, normalizeArtifact, sectionTypeLabels, importCatalogText, type Brief, type ContentArtifact, type Offer, type SiteArtifact } from './artifacts.js';
@@ -39,6 +41,9 @@ import { importSpec, importSpecText, type SpecImport } from './spec-import.js';
 import { FIRST_VERSION_SOFT_LIMIT, buildHandoff as buildHandoffPackage, normalizeFeatures, renderPrototype, specMarkdown, type AppFeatures, type AppScreens, type HandoffArtifact } from './webapp.js';
 import type { BusinessProcess } from './process.js';
 import { inProject, normalizeFor, acceptRoles, editableProject, notEditableCode, normalizedOrRaw, isUuid, validationError } from './journey-core.js';
+
+/** The stored design of a plan, if it has a valid one; a broken one reads as none rather than failing the page. */
+const techPlanDesignOf = (content: unknown): ArchitectureDesign | null => { try { return techPlanDesign(content); } catch { return null; } };
 
 export type ProjectAction = 'pause' | 'complete' | 'resume' | 'cancel' | 'archive' | 'unarchive';
 
@@ -225,7 +230,7 @@ export class JourneyService {
     const assignment = this.core.assignmentFor(ctx, stageKey);
     // Schedule has no AI: the editor starts from the accepted services and a typical working day.
     const techPlanPreview = definition.artifactType === 'techplan' && inputsSatisfied(ctx.route, ctx.dep, stageKey)
-      ? await this.core.techPlanFor(ctx, stageKey, (current?.content as unknown as TechPlan | undefined)?.ownerNotes ?? null) : null;
+      ? await this.core.techPlanFor(ctx, stageKey, (current?.content as unknown as TechPlan | undefined)?.ownerNotes ?? null, techPlanDesignOf(current?.content)) : null;
     // Titles are translated like every stage title on this page.
     const requests = await stageRequests(this.prisma, projectId, stage.id).then((value) => ({ outgoing: value.outgoing.map((item) => ({ ...item, fromTitle: tr(item.fromTitle), targetTitle: tr(item.targetTitle) })), incoming: value.incoming.map((item) => ({ ...item, fromTitle: tr(item.fromTitle), targetTitle: tr(item.targetTitle) })) }));
     const concept = definition.artifactType === 'concept' ? await this.conceptView(ctx, stageKey, current?.content ?? null) : null;
@@ -348,9 +353,14 @@ export class JourneyService {
     if (definition.artifactType === 'techplan') {
       // The plan itself is always computed from the accepted inputs; the owner contributes only notes.
       let notes: string | null = null;
-      try { notes = techPlanNotes(input.content); } catch (error) { validationError(error); }
+      let design: ArchitectureDesign | null = null;
+      try {
+        notes = techPlanNotes(input.content);
+        // Only an application has a design to edit; a site's architecture stays the platform's.
+        design = ctx.type.key === 'web_app' ? techPlanDesign(input.content) : null;
+      } catch (error) { validationError(error); }
       if (!inputsSatisfied(ctx.route, ctx.dep, key as StageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
-      content = await this.core.techPlanFor(ctx, key as StageKey, notes);
+      content = await this.core.techPlanFor(ctx, key as StageKey, notes, design);
     } else {
       try { content = inProject(ctx, () => normalizeFor(ctx, definition.artifactType, input.content)); } catch (error) { validationError(error); }
     }
@@ -615,7 +625,7 @@ export class JourneyService {
     if (await CommentsService.openBlocking(this.prisma, stage.id)) throw new ConflictException('BLOCKING_COMMENTS_OPEN');
     const version = await this.core.versionContent(versionId);
     if (!version) throw new NotFoundException('VERSION_NOT_FOUND');
-    if (definition.artifactType === 'techplan' && !sameTechPlan(await this.core.techPlanFor(ctx, stageKey, null), version.content as unknown as TechPlan)) throw new ConflictException('TECHPLAN_OUTDATED');
+    if (definition.artifactType === 'techplan' && !sameTechPlan(await this.core.techPlanFor(ctx, stageKey, null, techPlanDesignOf(version.content)), version.content as unknown as TechPlan)) throw new ConflictException('TECHPLAN_OUTDATED');
     if (definition.artifactType === 'handoff') {
       const pack = version.content as unknown as HandoffArtifact;
       if (pack.checks.some((check) => check.required && check.status === 'failed')) throw new UnprocessableEntityException('REQUIRED_CHECKS_FAILED');
