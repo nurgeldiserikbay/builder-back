@@ -4458,7 +4458,7 @@ paths:
       operationId: skipStage
       summary: Skip an optional stage with a written reason
       description: >-
-        Only stages marked optional (the idea review) can be skipped. The reason is stored on the stage and in the
+        Only stages marked optional (the idea review, feature suggestions) can be skipped, also before their inputs are ready. The reason is stored on the stage and in the
         activity log as stage_skipped; the stages after it open as if it were accepted. A skipped stage can be reopened.
         400 STAGE_NOT_OPTIONAL or INVALID_REASON (10–500 characters); 409 STAGE_ALREADY_DONE or STAGE_IN_REVIEW.
       x-implementation-status: implemented
@@ -6782,7 +6782,7 @@ components:
       in: path
       name: stageKey
       required: true
-      schema: { type: string, enum: [goal, process, offer, products, schedule, sitemap, techplan, content, design, build] }
+      schema: { type: string, enum: [goal, idea, process, suggestions, offer, products, schedule, sitemap, features, screens, techplan, content, design, build, handoff] }
     RuleId:
       in: path
       name: ruleId
@@ -8408,7 +8408,7 @@ components:
                         steps: { type: array, items: { type: string } }
                         checks: { type: array, items: { type: string } }
                         doneWhen: { type: string }
-                artifactType: { type: string, enum: [brief, idea, process, offer, catalog, schedule, sitemap, features, screens, techplan, content, design, site, handoff] }
+                artifactType: { type: string, enum: [brief, idea, process, suggestions, offer, catalog, schedule, sitemap, features, screens, techplan, content, design, site, handoff] }
                 status: { $ref: '#/components/schemas/StageStatus' }
                 statusLabel: { type: string }
                 statusExplanation: { type: string }

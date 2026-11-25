@@ -8,7 +8,7 @@ import { type BookingConfig, type Schedule } from './schedule.js';
 import { type BusinessProcess } from './process.js';
 import { TECHPLAN_VERSION, buildTechPlan, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
-import { projectTypeOf, stageTitle, routeAncestors, routeInputs, stageDefinitions, type ArtifactType, type StageKey } from './catalog.js';
+import { projectTypeOf, stageTitle, routeAncestors, routeInputs, stageDefinitions, type ArtifactType, type ProjectTypeKey, type StageKey } from './catalog.js';
 import { ArtifactValidationError, defaultDesign, normalizeArtifact, contentImageIds, type Brief, type ContentArtifact, type DesignArtifact, type Offer } from './artifacts.js';
 import { inlineImages } from '../images/image-processing.js';
 import { type ImageInfo } from './site-renderer.js';
@@ -32,6 +32,8 @@ export type AssignmentRow = { id: string; stageId: string; stageKey: string; rol
 export type Viewer = { kind: 'member'; role: string; stageKeys: string[] } | { kind: 'specialist'; assignments: AssignmentRow[] };
 export const editableProject = (status: string) => status === 'active' || status === 'live';
 export const notEditableCode = (status: string) => (status === 'locked' ? 'STAGE_LOCKED' : status === 'in_review' ? 'STAGE_IN_REVIEW' : 'STAGE_ACCEPTED_REOPEN_FIRST');
+/** normalizeArtifact with what the project is: some artifacts say honestly what the platform builds for its kind. */
+export const normalizeFor = (ctx: { type: { key: ProjectTypeKey } }, type: ArtifactType, raw: unknown) => normalizeArtifact(type, raw, ctx.type.key);
 export const normalizedOrRaw = (type: ArtifactType, value: unknown) => { try { return normalizeArtifact(type, value); } catch { return value; } };
 export const SPECIALIST_READ_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 

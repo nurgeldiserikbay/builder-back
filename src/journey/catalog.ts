@@ -1,10 +1,10 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.10.0';
+export const ROUTE_CATALOG_VERSION = '1.11.0';
 
-export type StageKey = 'goal' | 'idea' | 'process' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'build' | 'handoff';
-export type ArtifactType = 'brief' | 'idea' | 'process' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'site' | 'handoff';
+export type StageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'build' | 'handoff';
+export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'content' | 'design' | 'site' | 'handoff';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking' | 'web_app';
 
@@ -179,6 +179,37 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
       ],
     },
   },
+  suggestions: {
+    key: 'suggestions',
+    version: '1.0.0',
+    title: 'Предложения функций',
+    purpose: 'Подскажем, что обычно бывает в таких продуктах: напоминания, онлайн-оплата, уведомления, отчёты. Каждое предложение объясняет, что оно даёт и из какого шага вашего процесса вытекает. Вы решаете: в первую версию, потом или не нужно.',
+    outcome: 'Список возможностей с решением по каждой: в первую версию, потом или не нужно, — и причиной.',
+    artifactType: 'suggestions',
+    inputs: ['idea', 'process'],
+    ai: {
+      level: 'ai_full',
+      whatItDoes: 'ИИ отберёт из каталога то, что подходит вашему процессу и целям, и объяснит каждое предложение. Решаете вы — ИИ ничего не добавляет в продукт сам.',
+      instructionExamples: ['Предложи, что поможет клиентам возвращаться', 'Что нужно для работы с несколькими филиалами?', 'Онлайн-оплата пока не нужна'],
+    },
+    acceptance: ['По каждому предложению принято решение', 'Понятно, что входит в первую версию, а что отложено'],
+    acceptExplanation: 'Выбранное «в первую версию» станет обязательными функциями ТЗ, «потом» — функциями на потом. Если ТЗ уже есть, оно получит уведомление об изменении.',
+    importHint: 'Есть свой список желаемых функций? Вставьте текст — каждая строка станет предложением, по которому вы примете решение.',
+    optional: { why: 'Можно пропустить, если вы точно знаете, что войдёт в первую версию. Позже к предложениям можно вернуться.' },
+    playbook: {
+      version: '1.0.0',
+      instructions: [
+        'Suggest capabilities the product may need, from the idea review and the business process, in plain words and in the project language.',
+        'Choose from the catalog first (see below). Use its key as catalogKey and key, keep its title, and source «catalog». Suggest a catalog item only if the project type and the process fit it.',
+        'You may add up to 4 suggestions of your own with source «ai» and catalogKey null — only when a step of the process or a goal of the idea clearly needs it.',
+        'basis: for every suggestion, the scenario step («Сценарий «Запись»: клиент выбирает время») or the goal of the idea it follows from. No basis — no suggestion.',
+        'value: what it gives the business, one sentence. effort: small, medium or large. support for your own items: code or not_yet (never promise «site»); payments, SMS, messengers and analytics are account.',
+        'decision: leave an empty string — the owner decides. Keep the decisions the owner already made.',
+        'Never suggest what the process already has. 3–12 suggestions in total.',
+        'Catalog (key: title — value): reminders, cancel_booking, pay_online, prepay_booking, owner_alerts, order_alerts, status_updates, client_account, staff_roles, reports, export, search, messenger, faq, reviews, analytics.',
+      ],
+    },
+  },
   offer: {
     key: 'offer',
     version: '1.0.0',
@@ -282,7 +313,7 @@ export const stageDefinitions: Record<StageKey, StageDefinition> = {
     purpose: 'Запишем техническое задание: что должен уметь ваш продукт, кто им пользуется и что войдёт в первую версию. У каждой функции — понятное «готово»: по нему вы, ИИ и разработчик поймёте, что она сделана.',
     outcome: 'Кратко о продукте, роли, функции с приоритетом и критериями «готово», общие требования, ограничения и открытые вопросы.',
     artifactType: 'features',
-    inputs: ['goal', 'process'],
+    inputs: ['goal', 'process', 'suggestions'],
     ai: {
       level: 'ai_full',
       whatItDoes: 'ИИ составит ТЗ по цели и бизнес-процессу: роли, функции с критериями «готово», требования и ограничения — и предложит, что сделать в первой версии, а что потом. Вы решаете, что войдёт в первую версию.',
@@ -455,7 +486,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Одна страница, которая рассказывает о вас и ведёт к одному действию: позвонить, написать или прийти.',
     goodFor: 'Мастерам, небольшим услугам, мероприятиям, запуску продукта.',
     examples: ['Мастер маникюра', 'Торты на заказ', 'Репетитор', 'Мероприятие'],
-    stages: ['goal', 'idea', 'process', 'features', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница сайта в виде файла и все тексты проекта.',
   },
   company_site: {
@@ -464,7 +495,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Подробная страница компании: услуги и цены, о вас, как работаете, контакты и часы работы.',
     goodFor: 'Небольшим компаниям, салонам, студиям, сервисам.',
     examples: ['Автосервис', 'Стоматология', 'Юридическая консультация', 'Студия йоги'],
-    stages: ['goal', 'idea', 'process', 'features', 'offer', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'offer', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница компании в виде файла, список услуг и все тексты проекта.',
   },
   multipage: {
@@ -473,7 +504,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Несколько страниц с меню: главная, услуги, о вас, вопросы, контакты — у каждой свой адрес и своё описание для поисковиков.',
     goodFor: 'Компаниям с несколькими направлениями услуг, клиникам, школам, сервисам, которым тесно на одной странице.',
     examples: ['Стоматология', 'Языковая школа', 'Ремонт квартир', 'Юридическая фирма'],
-    stages: ['goal', 'idea', 'process', 'features', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт из нескольких страниц с меню, файлы всех страниц, карта сайта и все тексты проекта.',
   },
   store: {
@@ -482,7 +513,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Витрина с товарами, корзина и заказ без регистрации: клиент выбирает товары и способ получения, а вы получаете заказ в Telegram и видите все заказы в проекте.',
     goodFor: 'Небольшим магазинам и мастерским: до 60 товаров, самовывоз или доставка, оплата при получении или переводом.',
     examples: ['Кондитерская', 'Цветы', 'Мыло ручной работы', 'Кофе в зёрнах'],
-    stages: ['goal', 'idea', 'process', 'features', 'products', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'products', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный магазин с витриной, корзиной и формой заказа, каталог и все тексты проекта. Заказы принимаются, когда сайт опубликован на BuildPath. Онлайн-оплаты пока нет.',
   },
   booking: {
@@ -491,7 +522,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Сайт с записью: клиент выбирает услугу, мастера и свободное время, а вы получаете запись в Telegram и видите все записи в проекте.',
     goodFor: 'Салонам красоты, барбершопам, массажу, тренерам, репетиторам — всем, кто работает по времени.',
     examples: ['Барбершоп', 'Маникюр', 'Массаж', 'Автомойка'],
-    stages: ['goal', 'idea', 'process', 'features', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт с онлайн-записью, список услуг, расписание и все тексты проекта. Запись работает, когда сайт опубликован на BuildPath.',
   },
   web_app: {
@@ -500,7 +531,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Приложение со входом, ролями и своей логикой: кабинет клиента, учёт заявок, внутренняя система. BuildPath доведёт его до полного пакета — функции, экраны с прототипом, архитектуру и контракт API, — а ИИ-агент напишет по нему код приложения.',
     goodFor: 'Тем, кому нужен личный кабинет, учёт или внутренний сервис.',
     examples: ['Кабинет клиента сервиса', 'Учёт заявок и выездов', 'Запись на курсы с кабинетом ученика', 'Внутренняя система для сотрудников'],
-    stages: ['goal', 'idea', 'process', 'features', 'screens', 'techplan', 'handoff'],
+    stages: ['goal', 'idea', 'process', 'suggestions', 'features', 'screens', 'techplan', 'handoff'],
     resultExplanation: 'Пакет для разработки — техническое задание, права по ролям, схема данных, контракт API и кликабельный прототип — и код всего приложения, который пишет ИИ-агент и проверяет платформа. Запускаете вы: на своём Render или сервере.',
   },
 };

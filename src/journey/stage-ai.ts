@@ -117,6 +117,13 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
         constraints: object(['deadline', 'budget', 'legal', 'dataLocation'], { deadline: { type: 'string' }, budget: { type: 'string' }, legal: { type: 'string' }, dataLocation: { type: 'string' } }),
       });
     }
+    case 'suggestions': {
+      const object = (required: string[], properties: Record<string, unknown>) => ({ type: 'object', additionalProperties: false, required, properties });
+      const fields = { key: { type: 'string' }, title: { type: 'string' }, value: { type: 'string' }, basis: { type: 'string' }, source: { type: 'string', enum: ['catalog', 'ai'] },
+        catalogKey: { type: ['string', 'null'] }, support: { type: 'string', enum: ['code', 'account', 'not_yet', 'site'] }, effort: { type: 'string', enum: ['small', 'medium', 'large'] },
+        decision: { type: 'string', enum: ['', 'now', 'later', 'no'] }, reason: { type: 'string' } };
+      return object(['items'], { items: { type: 'array', items: object(Object.keys(fields), fields) } });
+    }
     case 'features': {
       const strings = { type: 'array', items: { type: 'string' } };
       return {

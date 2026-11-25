@@ -98,6 +98,11 @@ export function artifactSummary(type: string, content: unknown): string {
     const value = content as { problem?: string; segments?: Array<{ name: string }>; metrics?: Array<{ text: string }> };
     return [value.problem && tr("Проблема: {0}", [value.problem.slice(0, 200)]), tr("Для кого: {0}", [(value.segments ?? []).map((segment) => segment.name).join(', ')]), tr("Цели: {0}", [(value.metrics ?? []).map((metric) => metric.text).join(' · ')])].filter(Boolean).join('\n');
   }
+  if (type === 'suggestions') {
+    const value = content as { items?: Array<{ title: string; decision: string }> };
+    const items = value.items ?? [];
+    return [tr("В первую версию: {0}", [items.filter((item) => item.decision === 'now').map((item) => item.title).join(' · ') || '—']), tr("Потом: {0}", [items.filter((item) => item.decision === 'later').map((item) => item.title).join(' · ') || '—'])].join('\n');
+  }
   if (type === 'features') {
     const value = content as { roles?: Array<{ name: string }>; features?: Array<{ title: string; priority: string }> };
     return [tr("Роли: {0}", [(value.roles ?? []).map((role) => role.name).join(', ')]), tr("Обязательные функции: {0}", [(value.features ?? []).filter((feature) => feature.priority === 'must').map((feature) => feature.title).join(' · ')])].join('\n');

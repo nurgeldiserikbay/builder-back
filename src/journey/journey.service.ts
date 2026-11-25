@@ -1,4 +1,5 @@
 import { ideaMarkdown, importIdeaText, type IdeaReview } from './idea.js';
+import { importSuggestionsText, suggestionsMarkdown, type Suggestions } from './suggestions.js';
 import { tr } from '../i18n/i18n.js';
 import { assertBrowserGate } from '../quality/browser-gate.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
@@ -34,7 +35,7 @@ import { docxParagraphs, DocumentError, pdfParagraphs, textParagraphs, type Para
 import { importSpec, importSpecText, type SpecImport } from './spec-import.js';
 import { FIRST_VERSION_SOFT_LIMIT, buildHandoff as buildHandoffPackage, normalizeFeatures, renderPrototype, specMarkdown, type AppFeatures, type AppScreens, type HandoffArtifact } from './webapp.js';
 import type { BusinessProcess } from './process.js';
-import { inProject, acceptRoles, editableProject, notEditableCode, normalizedOrRaw, isUuid, validationError } from './journey-core.js';
+import { inProject, normalizeFor, acceptRoles, editableProject, notEditableCode, normalizedOrRaw, isUuid, validationError } from './journey-core.js';
 
 export type ProjectAction = 'pause' | 'complete' | 'resume' | 'cancel' | 'archive' | 'unarchive';
 
@@ -307,7 +308,7 @@ export class JourneyService {
           configured: Boolean(ai), remainingToday: ai ? await this.core.remainingAiRuns(projectId) : 0,
           budget: assignment ? { limit: assignment.aiBudget, used: assignment.aiUsed } : null,
           month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null,
-          templateAvailable: !ai && (['content', 'design', 'idea', 'process', 'sitemap', 'features', 'screens'] as string[]).includes(stageKey),
+          templateAvailable: !ai && (['content', 'design', 'idea', 'process', 'suggestions', 'sitemap', 'features', 'screens'] as string[]).includes(stageKey),
         },
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
@@ -343,7 +344,7 @@ export class JourneyService {
       if (!inputsSatisfied(ctx.route, ctx.dep, key as StageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
       content = await this.core.techPlanFor(ctx, key as StageKey, notes);
     } else {
-      try { content = inProject(ctx, () => normalizeArtifact(definition.artifactType, input.content)); } catch (error) { validationError(error); }
+      try { content = inProject(ctx, () => normalizeFor(ctx, definition.artifactType, input.content)); } catch (error) { validationError(error); }
     }
     const base = await this.core.versionContent(stage.currentVersionId);
     const changed = changedKeys(definition.artifactType, base?.content ?? null, content);
@@ -435,6 +436,7 @@ export class JourneyService {
         }
         const text = (source as { text: string }).text;
         if (definition.artifactType === 'idea') return importIdeaText(text);
+        if (definition.artifactType === 'suggestions') return normalizeFor(ctx, 'suggestions', importSuggestionsText(text));
         return definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : definition.artifactType === 'catalog' ? importCatalogText(text) : importContentText(text, sitemap);
       });
     } catch (error) { validationError(error); }
@@ -975,6 +977,8 @@ export class JourneyService {
       }
       const idea = get<IdeaReview>('idea');
       if (idea) lines.push('', tr("## Разбор идеи"), '', ...ideaMarkdown(idea));
+      const suggestions = get<Suggestions>('suggestions');
+      if (suggestions?.items.length) lines.push('', tr("## Предложения функций"), '', suggestionsMarkdown(suggestions));
       if (offer) {
         lines.push('', tr("## Услуги"), '');
         for (const service of offer.services) lines.push(`- ${service.name}${service.price ? ` — ${service.price}` : ''}${service.description ? `. ${service.description}` : ''}`);

@@ -1,4 +1,6 @@
 import { ideaIssues, normalizeIdea, type IdeaReview } from './idea.js';
+import { normalizeSuggestions, suggestionsIssues, withHonestSupport, type Suggestions } from './suggestions.js';
+import type { ProjectTypeKey } from './catalog.js';
 import { featuresIssues, normalizeFeatures, normalizeScreens, screensIssues, type AppFeatures, type AppScreens } from './webapp.js';
 import type { QualityReport } from '../quality/gate.js';
 // Typed artifact schemas, deterministic validation, locking/merge rules, templates and text import.
@@ -200,7 +202,8 @@ export function normalizeDesign(raw: unknown): DesignArtifact {
   return { palette, font, corners: corner, heroLayout };
 }
 
-export function normalizeArtifact(type: ArtifactType, raw: unknown): unknown {
+/** projectType: some artifacts say what the platform builds for this kind of project (suggestions); pass it where known. */
+export function normalizeArtifact(type: ArtifactType, raw: unknown, projectType?: ProjectTypeKey): unknown {
   switch (type) {
     case 'brief': return normalizeBrief(raw);
     case 'offer': return normalizeOffer(raw);
@@ -210,6 +213,7 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown): unknown {
     case 'techplan': return normalizeTechPlan(raw);
     case 'process': return normalizeProcess(raw);
     case 'idea': return normalizeIdea(raw);
+    case 'suggestions': { const value = normalizeSuggestions(raw); return projectType ? withHonestSupport(value, projectType) : value; }
     case 'sitemap': return normalizeSitemap(raw);
     case 'catalog': return normalizeCatalog(raw);
     case 'features': return normalizeFeatures(raw);
@@ -227,6 +231,7 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'schedule') return ['timezone', 'services', 'masters', 'rules'];
   if (type === 'techplan') return ['ownerNotes'];
   if (type === 'process') return ['actors', 'scenarios', 'rules', 'data'];
+  if (type === 'suggestions') return ['items'];
   if (type === 'idea') return ['problem', 'segments', 'value', 'alternatives', 'revenue', 'risks', 'metrics', 'constraints'];
   if (type === 'sitemap') return ['pages'];
   if (type === 'catalog') return ['products', 'delivery', 'payment', 'minOrder'];
@@ -322,6 +327,7 @@ export function completenessIssues(type: ArtifactType, content: unknown, context
   if (type === 'schedule') issues.push(...scheduleIssues(content as Schedule));
   if (type === 'process') issues.push(...processIssues(content as BusinessProcess));
   if (type === 'idea') issues.push(...ideaIssues(content as IdeaReview));
+  if (type === 'suggestions') issues.push(...suggestionsIssues(content as Suggestions));
   if (type === 'sitemap') issues.push(...sitemapIssues(content as Sitemap));
   if (type === 'catalog') issues.push(...catalogIssues(content as Catalog));
   if (type === 'offer' && (content as Offer).services.length === 0) issues.push({ key: 'services', message: 'Добавьте хотя бы одну услугу.' });
