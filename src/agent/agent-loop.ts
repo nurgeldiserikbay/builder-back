@@ -20,7 +20,11 @@ const DEMO_LIMIT = 6_000_000;
 
 export interface AgentLimits { turns: number; wallMs: number; costTiyn: number | null }
 export interface AgentStep { at: string; kind: 'note' | 'tool'; tool?: string; summary: string; status?: 'ok' | 'failed'; output?: string }
-export interface AgentCheck { id: 'install' | 'test' | 'build' | 'start' | 'deploy_files' | 'pwa' | 'demo'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number }
+export interface AgentCheck {
+  id: 'install' | 'test' | 'cases' | 'build' | 'start' | 'deploy_files' | 'pwa' | 'demo'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number;
+  /** For «cases»: the result of each test-plan case found in the test names, as the platform's own run saw it. */
+  cases?: Record<string, 'passed' | 'failed'>;
+}
 export interface AgentFile { path: string; content: string }
 export interface AgentOutcome {
   stopReason: 'finished' | 'turns' | 'time' | 'budget' | 'stopped' | 'model_error';
@@ -200,6 +204,8 @@ export async function platformChecks(workspace: Workspace): Promise<AgentCheck[]
   const results: AgentCheck[] = [];
   let failed = false;
   for (const item of plan) {
+    // Right after the tests: the platform runs the test files itself, with a reporter it reads, to see each case's result.
+    if (item.id === 'build') results.push(await casesCheck(workspace, results.find((check) => check.id === 'install')?.status === 'passed'));
     // The preview is built even when the main build failed: it is a separate page and does not hide that failure.
     if (!item.present || (failed && item.id !== 'demo') || (item.id === 'demo' && results[0]?.status !== 'passed')) { results.push({ id: item.id, command: item.command, status: 'skipped', exitCode: null, output: '', durationMs: 0 }); continue; }
     const result = await workspace.exec(item.command, item.timeoutMs);
@@ -223,6 +229,37 @@ export async function platformChecks(workspace: Workspace): Promise<AgentCheck[]
   const built = results.find((check) => check.id === 'build')?.status === 'passed';
   results.splice(results.findIndex((check) => check.id === 'deploy_files') + 1, 0, built ? await pwaCheck(workspace) : { id: 'pwa', command: PWA_COMMAND, status: 'skipped', exitCode: null, output: '', durationMs: 0 });
   return results;
+}
+
+export const CASES_COMMAND = 'node --test --test-reporter=tap';
+const CASE_LINE = /^\s*(not ok|ok) \d+ - .*?\[case:([a-z][a-z0-9_]{0,31})\](.*)$/;
+
+/**
+ * Results of test-plan cases from TAP output: a test whose name holds [case:<key>] proves that case. Skipped and to-do tests
+ * prove nothing; a case with several tests passes only when all of them pass.
+ */
+export function parseCaseResults(tap: string): Record<string, 'passed' | 'failed'> {
+  const out: Record<string, 'passed' | 'failed'> = {};
+  for (const line of tap.split('\n')) {
+    const match = CASE_LINE.exec(line);
+    if (!match || /#\s*(SKIP|TODO)\b/i.test(match[3] ?? '')) continue;
+    const key = match[2]!;
+    out[key] = match[1] === 'ok' && out[key] !== 'failed' ? 'passed' : 'failed';
+  }
+  return out;
+}
+
+/** The «cases» check: informative — it says which cases passed, it does not decide whether the application passed. */
+async function casesCheck(workspace: Workspace, installed: boolean): Promise<AgentCheck> {
+  if (!installed) return { id: 'cases', command: CASES_COMMAND, status: 'skipped', exitCode: null, output: '', durationMs: 0 };
+  const result = await workspace.exec(CASES_COMMAND, 600_000);
+  const cases = parseCaseResults(result.stdout);
+  const keys = Object.keys(cases);
+  const failedKeys = keys.filter((key) => cases[key] === 'failed');
+  return {
+    id: 'cases', command: CASES_COMMAND, status: result.timedOut ? 'timed_out' : !keys.length ? 'skipped' : failedKeys.length ? 'failed' : 'passed', exitCode: result.exitCode,
+    output: keys.length ? `${keys.length - failedKeys.length}/${keys.length} cases passed${failedKeys.length ? `; failed: ${failedKeys.join(', ')}` : ''}` : 'No test names hold [case:<key>].', durationMs: result.durationMs, cases,
+  };
 }
 
 /**
