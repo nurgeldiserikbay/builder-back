@@ -38,6 +38,7 @@ test('the stage closes the idea phase on every route and is optional', () => {
 test('the document comes from the accepted stages, names its sources and numbers its diagrams', () => {
   const document = conceptDocument(full(), normalizeConcept({ pitch: 'Онлайн-запись в студию маникюра.' }), 'x');
   assert.equal(document.title, 'Концепция продукта «Студия»');
+  assert.equal(conceptDocument({ ...full(), brief: { ...(brief as object), businessName: 'Студия «Ноготок»' } as never }, normalizeConcept({}), 'x').title, 'Концепция продукта: Студия «Ноготок»');
   assert.deepEqual(document.diagrams.map((diagram) => [diagram.key, diagram.number]), [['process', 1], ['data', 2]]);
   assert.match(document.markdown, /Схема 1\. Как идёт работа/);
   assert.match(document.markdown, /Схема 2\. Какие данные/);

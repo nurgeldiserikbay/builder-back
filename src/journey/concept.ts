@@ -190,7 +190,9 @@ export function conceptDocument(input: ConceptInputs, concept: Concept, name: st
   add('glossary', tr('Словарь'), null, concept.glossary.map((item) => `- **${item.term}** — ${item.meaning}`), tr('Терминов, которым нужно объяснение, нет.'));
   add('questions', tr('Открытые вопросы'), null, concept.questions.map((item) => `- ${item.text}`), tr('Открытых вопросов нет.'));
 
-  const title = tr('Концепция продукта «{0}»', [brief?.businessName || name]);
+  // A name already in quotes («Ноготок») is not quoted again.
+  const titleName = brief?.businessName || name;
+  const title = /[«»"]/.test(titleName) ? tr('Концепция продукта: {0}', [titleName]) : tr('Концепция продукта «{0}»', [titleName]);
   const markdown = [
     `# ${title}`, '',
     ...sections.flatMap((section) => [`## ${section.title}`, '', section.markdown || `_${section.empty}_`, ...(section.source ? ['', `_${tr('Источник: этап «{0}»', [section.source])}_`] : []), '']),

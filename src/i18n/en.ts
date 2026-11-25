@@ -3326,4 +3326,5 @@ export const en: Record<string, string> = {
   "вручную, вне продукта": "by hand, outside the product",
   "риск принят": "risk accepted",
   "Напишите в двух-трёх предложениях, что это за продукт и для кого — с этого начнут читать.": "Write in two or three sentences what the product is and for whom — readers start here.",
+  "Концепция продукта: {0}": "Product concept: {0}",
 };
