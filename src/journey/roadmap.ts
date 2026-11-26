@@ -215,8 +215,10 @@ export function scheduleOf(value: Roadmap, release: number | null = null): Roadm
 
 export interface RoadmapIssue { code: string; severity: 'blocking' | 'important' | 'minor'; target: string; message: string; fix: string }
 
-export function roadmapIssues(value: Roadmap, features: AppFeatures | null, contracts: Contracts | null): RoadmapIssue[] {
+export function roadmapIssues(value: Roadmap, features: AppFeatures | null, contracts: Contracts | null, stack: string | null = null): RoadmapIssue[] {
   const issues: RoadmapIssue[] = [];
+  // «Технологии»: on the developer's own stack the AI agent does not write code, so its modules need a specialist.
+  if (stack === 'developer') for (const module of value.modules.filter((item) => item.executor !== 'specialist')) issues.push({ code: 'ROADMAP_AI_OTHER_STACK', severity: 'important', target: module.key, message: tr('Модуль «{0}» поручен ИИ, а приложение пишется на своём стеке разработчика — там ИИ-агент код не пишет.', [module.name]), fix: tr('Укажите исполнителем специалиста или выберите в решении «Технологии» профиль BuildPath.') });
   const name = (key: string) => value.modules.find((module) => module.key === key)?.name ?? key;
   const cycle = findCycle(value);
   if (cycle) issues.push({ code: 'ROADMAP_CYCLE', severity: 'blocking', target: cycle[0]!, message: tr('Модули ждут друг друга по кругу: {0}.', [cycle.map(name).join(' → ')]), fix: tr('Уберите одну из зависимостей: иначе ни один из них нельзя начать.') });

@@ -9,6 +9,7 @@ import { ArtifactValidationError } from './artifacts.js';
 import type { ArchitectureDesign } from './architecture.js';
 import type { IdeaReview } from './idea.js';
 import type { AppFeatures } from './webapp.js';
+import { HOSTING_SUBDOMAIN } from '../choices/cards.js';
 
 export const LAUNCH_VERSION = '1.0.0';
 export const LAUNCH_ITEMS = ['domain', 'legal', 'email', 'backups', 'monitoring', 'migration', 'analytics', 'audit'] as const;
@@ -38,6 +39,8 @@ export interface LaunchFacts {
   features: AppFeatures | null;
   idea: IdeaReview | null;
   design: ArchitectureDesign | null;
+  /** The «Адрес приложения» decision: own domain or the hosting's address; null when not decided. */
+  domainChoice?: 'own_domain' | 'host_address' | null;
   /** Module stages of the accepted plan (§4.9) that are not accepted yet; absent for projects without them. */
   modulesOpen?: string[];
 }
@@ -51,7 +54,7 @@ export function launchItems(facts: LaunchFacts): LaunchItemInfo[] {
   const mail = (facts.design?.components ?? []).some((item) => item.kind === 'email');
   const metrics = (facts.idea?.metrics ?? []).map((item) => item.text).filter(Boolean);
   return [
-    { key: 'domain', title: tr('Свой адрес сайта'), why: tr('Адрес вида имя.onrender.com работает, но клиенты больше доверяют своему домену. Сертификат HTTPS хостинг выпускает сам.'), required: false },
+    { key: 'domain', title: tr('Свой адрес сайта'), why: facts.domainChoice === 'own_domain' ? tr('В решении «Адрес приложения» выбран свой домен: подключите его у хостинга и проверьте приложение по нему.') : tr('Адрес вида имя.onrender.com работает, но клиенты больше доверяют своему домену. Сертификат HTTPS хостинг выпускает сам.'), required: facts.domainChoice === 'own_domain' },
     { key: 'legal', title: tr('Политика конфиденциальности, согласие и условия'), why: sensitive ? tr('Приложение хранит личные данные: по закону нужны политика и согласие, а при оплате — оферта.') : tr('Если вы собираете хоть какие-то данные людей, нужна политика конфиденциальности.'), required: sensitive },
     { key: 'email', title: tr('Почта для писем приложения'), why: mail ? tr('Приложение отправляет письма: нужен почтовый сервис (например, Resend) и подтверждённый домен отправителя, иначе письма уйдут в спам.') : tr('Нужна, если приложение отправляет письма: восстановление пароля, уведомления.'), required: mail },
     { key: 'backups', title: tr('Резервные копии и проверка восстановления'), why: tr('Копии базы делаются по расписанию, и хотя бы раз вы восстановили из копии в тестовом окружении.'), required: true },
@@ -79,6 +82,10 @@ export function launchIssues(value: LaunchChecklist, facts: LaunchFacts): Launch
   if (!deployment || !deployment.ok) issues.push({ code: 'LAUNCH_NOT_DEPLOYED', severity: 'blocking', target: 'deployment', message: deployment ? tr('Приложение по адресу {0} не ответило при последней проверке.', [deployment.url]) : tr('Не указан адрес, где работает приложение.'), fix: tr('Разверните приложение и проверьте адрес в «Пакете для разработки», блок «Запуск у вас».') });
   else {
     if (!deployment.url.startsWith('https://')) issues.push({ code: 'LAUNCH_NO_HTTPS', severity: 'blocking', target: 'deployment', message: tr('Приложение открывается без HTTPS: пароли и данные пойдут открытым текстом.'), fix: tr('Включите HTTPS у хостинга и проверьте адрес с https://.') });
+    // Own domain chosen, but the checked address is still the hosting's: people would be given the wrong address.
+    let host = '';
+    try { host = new URL(deployment.url).hostname; } catch { host = ''; }
+    if (facts.domainChoice === 'own_domain' && HOSTING_SUBDOMAIN.test(host)) issues.push({ code: 'LAUNCH_DOMAIN_NOT_CHECKED', severity: 'important', target: 'domain', message: tr('Выбран свой домен, а проверен адрес хостинга {0}.', [host]), fix: tr('Подключите домен у хостинга и проверьте приложение по нему в «Пакете для разработки», блок «Запуск у вас».') });
     if (deployment.database !== 'postgres') issues.push({ code: 'LAUNCH_MEMORY_DATABASE', severity: 'blocking', target: 'deployment', message: tr('Приложение работает без базы данных: всё введённое пропадёт при перезапуске.'), fix: tr('Укажите DATABASE_URL у хостинга, выполните миграцию и проверьте адрес снова.') });
   }
   for (const item of launchItems(facts)) {

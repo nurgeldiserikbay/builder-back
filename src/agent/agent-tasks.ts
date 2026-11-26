@@ -471,6 +471,7 @@ export class AgentTasksService {
     const configured = Boolean(this.agentModel()) && Boolean(this.agentWorkspace());
     const active = tasks.find((task) => AGENT_ACTIVE.includes(task.status));
     const repository = await this.choices.repositoryFor(projectId);
+    const ownStack = await this.ownStack(projectId);
     const main = await mainLine(this.prisma, projectId);
     const versionOf = (row: { result: unknown } | null | undefined) => ((row?.result as { merge?: { version?: number } } | null)?.merge?.version ?? null);
     let branch = null;
@@ -483,7 +484,7 @@ export class AgentTasksService {
       branch = {
         name: branchNameFor({ id: '', kind: 'change_app', moduleKey: module }), tasks: own.tasks, headId: own.head?.id ?? null, headStatus: own.head?.status ?? null,
         startedFrom, behind: preview.behind, merge: preview.state, conflicts: preview.conflicts.slice(0, 30), markers: preview.markers.slice(0, 30), changed: preview.changed,
-        canSync: configured && this.core.canWrite(ctx, via) && (preview.state === 'conflict' || preview.state === 'markers') && !active && !anyActive && Boolean(stage.currentVersionId),
+        canSync: configured && !ownStack && this.core.canWrite(ctx, via) && (preview.state === 'conflict' || preview.state === 'markers') && !active && !anyActive && Boolean(stage.currentVersionId),
       };
     }
     return {
@@ -492,7 +493,9 @@ export class AgentTasksService {
         mainLine: { version: main.version, head: main.head ? { id: main.head.id, moduleKey: main.head.moduleKey, status: main.head.status, statusLabel: tr(statusLabels[main.head.status] ?? main.head.status), createdAt: main.head.createdAt, files: ((main.head.files ?? []) as unknown[]).length } : null },
         branch,
         deployment: await this.prisma.appDeployment.findUnique({ where: { projectId }, select: { url: true, ok: true, status: true, database: true, error: true, checkedAt: true, checkedVia: true } }),
-        canStart: configured && this.core.canWrite(ctx, via) && Boolean(stage.currentVersionId) && !active && !anyActive && (!module || inputsSatisfied(ctx.route, ctx.dep, via)),
+        canStart: configured && !ownStack && this.core.canWrite(ctx, via) && Boolean(stage.currentVersionId) && !active && !anyActive && (!module || inputsSatisfied(ctx.route, ctx.dep, via)),
+        // «Технологии» = свой стек разработчика: the agent does not write that code.
+        ownStack,
         // Another task of the project is running: one at a time per project.
         busy: anyActive && !active,
         // The newest finished task with code is what a change starts from.
@@ -503,6 +506,11 @@ export class AgentTasksService {
         history: tasks.slice(1).map((task) => ({ id: task.id, kind: task.kind, instruction: task.instruction, status: task.status, statusLabel: tr(statusLabels[task.status] ?? task.status), createdAt: task.createdAt, finishedAt: task.finishedAt, costTiyn: task.costTiyn })),
       },
     };
+  }
+
+  /** «Технологии» = свой стек разработчика: the agent writes only its supported profile. */
+  private async ownStack(projectId: string): Promise<boolean> {
+    return (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'technologies' } }, select: { optionKey: true } }))?.optionKey === 'developer';
   }
 
   /** Queues «собери приложение по пакету»: the package must be built and its inputs accepted; one task at a time per project. */
@@ -526,6 +534,8 @@ export class AgentTasksService {
     if ((input.baseTaskId || input.fromRepository) && !instruction) throw new BadRequestException('CHANGE_INSTRUCTION_REQUIRED');
     const { ctx, stage } = await this.context(userId, projectId, 'write', input.module ?? null);
     if (!this.agentModel() || !this.agentWorkspace()) throw new ServiceUnavailableException('AGENT_NOT_CONFIGURED');
+    // «Технологии»: on the developer's own stack the agent does not write code — it writes only its supported profile.
+    if (await this.ownStack(projectId)) throw new ConflictException('AGENT_STACK_NOT_SUPPORTED');
     type Base = { id: string | null; files: AgentFile[]; digest: string; repository: { branch: string; commit: string | null; truncated: boolean } | null; line?: number };
     let base: Base | null = null;
     // The main-line version the module's new code will rest on (module branches); null outside modules.

@@ -234,7 +234,7 @@ export class JourneyCore {
     };
   }
 
-  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { project?: { id: string } }, key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null; launch?: LaunchFacts; module?: ModuleFacts }> {
+  async checkContext(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { project?: { id: string } }, key: StageKey): Promise<{ sitemap: Sitemap | null; features?: AppFeatures | null; process?: BusinessProcess | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null; launch?: LaunchFacts; module?: ModuleFacts; stack?: string | null }> {
     // A module is checked against what is true now: its tasks, its cases' results and the agent's last build of it.
     if (isModuleStageKey(key) && ctx.project) return { sitemap: null, module: await this.moduleFactsFor({ ...ctx, project: ctx.project }, key) };
     // The launch is checked against what the platform knows now: the test plan's state and the last deployment check.
@@ -249,7 +249,9 @@ export class JourneyCore {
     // The plan is checked against the ТЗ (every must feature planned) and the contracts (every module implemented).
     if (key === 'roadmap') {
       const inputs = await this.acceptedInputs(ctx, key);
-      return { sitemap: null, features: (inputs.features?.content as AppFeatures | undefined) ?? null, contracts: (inputs.contracts?.content as Contracts | undefined) ?? null };
+      // The «Технологии» decision: on the developer's own stack the AI agent does not write code.
+      const stack = ctx.project ? (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId: ctx.project.id, cardKey: 'technologies' } }, select: { optionKey: true } }))?.optionKey ?? null : null;
+      return { sitemap: null, features: (inputs.features?.content as AppFeatures | undefined) ?? null, contracts: (inputs.contracts?.content as Contracts | undefined) ?? null, stack };
     }
     // Contracts are checked against the ТЗ (coverage, rights) and the architecture's schema (owners of records).
     if (key === 'contracts') {
@@ -288,10 +290,12 @@ export class JourneyCore {
     let design: ArchitectureDesign | null = null;
     try { design = techPlanDesign(inputs.techplan?.content) ?? null; } catch { design = null; }
     const deployment = await this.prisma.appDeployment.findUnique({ where: { projectId: ctx.project.id }, select: { url: true, ok: true, database: true, checkedAt: true, checkedVia: true } });
+    const domain = (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId: ctx.project.id, cardKey: 'domain' } }, select: { optionKey: true } }))?.optionKey ?? null;
     return {
       readiness: await testPlanReadiness(this.prisma, ctx.project.id),
       deployment: deployment ? { ...deployment, checkedAt: deployment.checkedAt.toISOString() } : null,
       features: (inputs.features?.content as AppFeatures | undefined) ?? null, idea: (inputs.idea?.content as IdeaReview | undefined) ?? null, design,
+      domainChoice: domain === 'own_domain' || domain === 'host_address' ? domain : null,
       modulesOpen: ctx.stages.filter((stage) => isModuleStageKey(stage.stageKey) && !isSatisfied(stage.status) && stage.status !== 'blocked').map((stage) => stage.title ?? stage.stageKey),
     };
   }
