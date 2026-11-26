@@ -1,3 +1,4 @@
+import { branchNameFor } from '../agent/module-branch.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
 import { PrismaService } from '../database/prisma.service.js';
@@ -144,7 +145,7 @@ export class NetworkAgentService {
         const kept = new Set(files.map((file) => file.path));
         removed = base.map((file) => file.path).filter((path) => !kept.has(path) && safeRepoPath(path));
       }
-      payload = { taskId: task.id, branch: `buildpath/agent-${task.id.slice(0, 8)}`, message: `BuildPath: ${ctx.project.name.slice(0, 60)}${task.moduleKey ? ` — ${task.moduleKey}` : ''} (${task.id.slice(0, 8)})`, removed: removed.slice(0, 500) };
+      payload = { taskId: task.id, branch: branchNameFor(task), message: `BuildPath: ${ctx.project.name.slice(0, 60)}${task.moduleKey ? ` — ${task.moduleKey}` : ''} (${task.id.slice(0, 8)})`, removed: removed.slice(0, 500) };
     }
     if (kind === 'deploy') {
       // The branch the last successful push sent, so the owner's command can deploy exactly that code.

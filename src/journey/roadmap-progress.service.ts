@@ -1,3 +1,4 @@
+import { MERGE_KIND } from '../agent/module-branch.js';
 import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PlanScheduleService } from './plan-schedule.service.js';
 import { PrismaService } from '../database/prisma.service.js';
@@ -84,7 +85,7 @@ export class RoadmapProgressService {
         progress: total ? Math.round((done / total) * 100) : 0, hoursDone: done, hoursTotal: total, tasks };
     };
     // The agent's latest task per module, so people see which module is being built and how it went.
-    const agentRuns = await this.prisma.agentTask.findMany({ where: { projectId, moduleKey: { not: null } }, orderBy: { createdAt: 'desc' }, select: { id: true, moduleKey: true, status: true, createdAt: true, finishedAt: true }, take: 50 });
+    const agentRuns = await this.prisma.agentTask.findMany({ where: { projectId, moduleKey: { not: null }, kind: { not: MERGE_KIND } }, orderBy: { createdAt: 'desc' }, select: { id: true, moduleKey: true, status: true, createdAt: true, finishedAt: true }, take: 50 });
     // The owner's remarks on scenarios are tasks too: in the module of the case's task, without an estimate.
     const extras = rows.filter((row) => row.fromCaseKey);
     const homeOf = (row: (typeof rows)[number]) => (plan.modules.some((module) => module.key === row.moduleKey) ? row.moduleKey : plan.modules[0]?.key);

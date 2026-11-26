@@ -22,6 +22,7 @@ import { expandedSchema, type ArchitectureDesign } from './architecture.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { stageFor, stageTitle, ROUTE_CATALOG_VERSION, projectTypes, routeInputs, statusExplanations, type StageKey, definitionOf, moduleStageDefinition, isModuleStageKey, moduleKeyOf } from './catalog.js';
 import { syncModuleStages, MODULE_REMOVED_NOTE } from './module-stages.js';
+import { mergeIntoMainLine, mergePreview } from '../agent/module-branch.js';
 import { setPlanBaseline } from './plan-schedule.service.js';
 import { appMonitoringView } from '../monitoring/app-monitor.js';
 import { changedKeys, completenessIssues, importBriefText, importContentText, importOfferText, lockableKeys, stableStringify, normalizeArtifact, sectionTypeLabels, importCatalogText, type Brief, type ContentArtifact, type Offer, type SiteArtifact } from './artifacts.js';
@@ -671,6 +672,12 @@ export class JourneyService {
       // What the next stages need from this one: every required item of the hand-over list.
       const missing = missingRequired(stageOutputs(definition.artifactType, version.content, await this.core.checkContext(ctx, key as StageKey)));
       if (missing.length) throw new UnprocessableEntityException(`STAGE_OUTPUTS_MISSING:${missing.map((item) => item.key).join(',')}`);
+      // An accepted module enters the main line of code: one that cannot be merged cleanly is not accepted, whatever is
+      // explained — it is brought up to the main line first («Согласовать с основной линией»).
+      if (isModuleStageKey(stageKey) && ctx.type.key === 'web_app') {
+        const preview = await mergePreview(this.prisma, { projectId: ctx.project.id, moduleKey: moduleKeyOf(stageKey)!, moduleName: this.core.title(ctx, stageKey) });
+        if (preview.state === 'conflict' || preview.state === 'markers') throw new ConflictException('MODULE_MERGE_CONFLICT');
+      }
       // The quality review: each blocking finding is fixed or explained by the owner for this very version.
       await this.review.assertPasses(ctx, stageKey, stage.id, version);
     }
@@ -702,6 +709,15 @@ export class JourneyService {
     if (completed.count) await this.core.event(tx, ctx.project.id, userId, 'assignments_completed', key, { count: completed.count });
     await this.core.writeStatuses(tx, { project: ctx.project, statuses: { ...ctx.statuses, [stageKey]: 'approved' } }, unlockDependents(ctx.route, { ...ctx.statuses, [stageKey]: 'approved' }));
     await this.core.event(tx, ctx.project.id, userId, 'stage_accepted', key, { versionNumber: version.versionNumber, ...(approvals ? { approvals: approvals.count, policy: approvals.policy } : {}) });
+    // Module branches: the accepted module's code becomes a new version of the main line (checked by the platform next).
+    if (isModuleStageKey(stageKey) && ctx.type.key === 'web_app') {
+      try {
+        await mergeIntoMainLine(tx, { projectId: ctx.project.id, moduleKey: moduleKeyOf(stageKey)!, moduleName: this.core.title(ctx, stageKey), userId });
+      } catch (error) {
+        if ((error as { code?: string }).code === 'MODULE_MERGE_CONFLICT') throw new ConflictException('MODULE_MERGE_CONFLICT');
+        throw error;
+      }
+    }
     const notices = await this.changes.createChangeNotices(tx, ctx, stageKey, stage.approvedVersionId, version as never, userId);
     // An accepted plan of an application creates its module stages (§4.9); a new plan version adds, renames or sets them
     // aside. After the notices: a module set aside has nothing to decide about the new plan.

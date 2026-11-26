@@ -19,6 +19,8 @@ import type { Contracts } from '../journey/contracts.js';
 import type { Roadmap } from '../journey/roadmap.js';
 import type { TestPlan } from '../journey/testplan.js';
 import { markModuleStarted, recordRunResults } from '../journey/plan-results.js';
+import { branchNameFor, mainLine, mergePreview, moduleBranch, MERGE_KIND, syncInstruction } from './module-branch.js';
+import { platformChecks } from './agent-loop.js';
 
 /**
  * A free Render instance is stopped after about 15 minutes without incoming requests, and work in the background does not
@@ -141,7 +143,7 @@ export function moduleInstruction(input: { roadmap: Roadmap; module: string; tes
  * Step 5: a change described in words. The folder already holds the code of an earlier task; the agent changes it and keeps
  * the rest working. The owner's words and the package are untrusted data, as in the first build.
  */
-export function buildChangePrompt(input: { locale: string; projectName: string; inputs: Record<string, unknown>; instruction: string; base: { source: 'task'; taskId: string } | { source: 'repository'; branch: string; commit: string | null; truncated: boolean }; baseFiles: AgentFile[] }): { system: string; task: string } {
+export function buildChangePrompt(input: { locale: string; projectName: string; inputs: Record<string, unknown>; instruction: string; base: { source: 'task'; taskId: string } | { source: 'repository'; branch: string; commit: string | null; truncated: boolean } | { source: 'line'; version: number }; baseFiles: AgentFile[] }): { system: string; task: string } {
   const base = buildAgentPrompt({ ...input, instruction: null });
   const system = [
     base.system,
@@ -150,6 +152,8 @@ export function buildChangePrompt(input: { locale: string; projectName: string; 
   const task = [
     `Task: change the application «${input.projectName.slice(0, 120)}» as the owner asks below. Base: ${input.base.source === 'task'
       ? `the result of task ${input.base.taskId.slice(0, 8)}`
+      : input.base.source === 'line'
+      ? `this module's code merged with version ${input.base.version} of the project's main line; where both changed the same lines the file holds conflict markers to resolve`
       : `the owner's repository, branch ${input.base.branch}${input.base.commit ? ` at commit ${input.base.commit.slice(0, 12)}` : ''} — it may hold the owner's own edits, keep them`}, ${input.baseFiles.length} files are already in the folder:`,
     input.base.source === 'repository' && input.base.truncated ? 'Some files of the repository (binary, very large or beyond the limit) were not copied: do not recreate or delete them; if the change needs one of them, say so in notDone.' : '',
     input.baseFiles.slice(0, 400).map((file) => `- ${file.path}`).join('\n'),
@@ -255,6 +259,8 @@ export class AgentRunner {
     await this.recoverInterrupted().catch(() => undefined);
     // Queued tasks wait for a kick: start them now that the process is up.
     this.kick();
+    // A main-line version is queued by accepting a module, not by this service: a light poll picks such tasks up.
+    setInterval(() => this.kick(), 30_000).unref();
   }
 
   async loop(stopping: () => boolean): Promise<void> {
@@ -281,6 +287,42 @@ export class AgentRunner {
     return true;
   }
 
+  /**
+   * A new main-line version (an accepted module merged in) is built and checked like the agent's own result: install, tests,
+   * build, start, the contracts. No AI takes part and nothing is charged. The files stay whatever the checks say.
+   */
+  private async checkMainLine(task: NonNullable<Awaited<ReturnType<PrismaService['agentTask']['findUnique']>>>, finish: (data: Record<string, unknown>) => Promise<unknown>): Promise<void> {
+    const provider = this.agentWorkspace();
+    if (!provider) { await finish({ status: 'unavailable', errorCode: 'AGENT_NOT_CONFIGURED' }); return; }
+    const files = (task.files ?? []) as unknown as AgentFile[];
+    let workspace;
+    try {
+      workspace = await provider.open({ lifetimeMs: 40 * 60_000, internet: true, labels: { kind: 'line_merge', task: task.id } });
+    } catch (error) {
+      await finish({ status: 'failed', errorCode: error instanceof WorkspaceError ? error.code : 'SANDBOX_START_FAILED' });
+      return;
+    }
+    let checks: AgentCheck[];
+    try {
+      for (const file of files) {
+        const folder = file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/')) : '';
+        if (folder) await workspace.exec(`mkdir -p '${folder.replace(/'/g, `'\\''`)}'`, 20_000);
+        await workspace.write(file.path, file.content);
+      }
+      checks = await platformChecks(workspace, await this.contractProbes(task.inputVersionIds));
+    } catch (error) {
+      await finish({ status: 'failed', errorCode: error instanceof WorkspaceError ? error.code : 'SANDBOX_FAILED' });
+      return;
+    } finally {
+      await workspace.close();
+    }
+    const main = checks.filter((check) => check.id !== 'demo' && check.id !== 'cases' && check.id !== 'contract');
+    const passed = main.some((check) => check.status === 'passed') && main.every((check) => check.status === 'passed' || (check.status === 'skipped' && (check.id === 'build' || check.id === 'pwa')));
+    const status = passed ? 'succeeded' : 'failed';
+    await finish({ status, result: { ...((task.result ?? {}) as object), stopReason: 'finished', checks } as never });
+    await this.prisma.projectEvent.create({ data: { projectId: task.projectId, actorUserId: task.requestedByUserId, type: 'agent_task_finished', stageKey: 'handoff', details: { taskId: task.id, status, kind: MERGE_KIND, files: files.length } } });
+  }
+
   /** The operations of the contracts version among a task's inputs; none when the project had no accepted contracts. */
   private async contractProbes(inputVersionIds: string[]): Promise<ContractProbe[]> {
     if (!inputVersionIds.length) return [];
@@ -293,6 +335,7 @@ export class AgentRunner {
     const task = await this.prisma.agentTask.findUnique({ where: { id } });
     if (!task || task.status !== 'running') return;
     const finish = (data: Record<string, unknown>) => this.prisma.agentTask.updateMany({ where: { id, status: 'running' }, data: { ...data, finishedAt: new Date() } as never });
+    if (task.kind === MERGE_KIND) { await this.checkMainLine(task, finish); return; }
     const configured = this.agentModel();
     // Each task gets its own copy: a switch to the reserve model lasts for that task only.
     const model = configured?.forTask ? configured.forTask() : configured;
@@ -423,14 +466,31 @@ export class AgentTasksService {
   async get(userId: string, projectId: string, module: string | null = null) {
     const { ctx, stage, via } = await this.context(userId, projectId, 'read', module);
     // A module's page sees its own tasks; the package page sees all of them.
-    const tasks = await this.prisma.agentTask.findMany({ where: { projectId, ...(module ? { moduleKey: module } : {}) }, orderBy: { createdAt: 'desc' }, take: 10, omit: { demoHtml: true, baseFiles: true } });
+    const tasks = await this.prisma.agentTask.findMany({ where: { projectId, ...(module ? { moduleKey: module, kind: { not: MERGE_KIND } } : {}) }, orderBy: { createdAt: 'desc' }, take: 10, omit: { demoHtml: true, baseFiles: true } });
     const anyActive = module ? await this.prisma.agentTask.count({ where: { projectId, status: { in: AGENT_ACTIVE } } }) > 0 : false;
     const configured = Boolean(this.agentModel()) && Boolean(this.agentWorkspace());
     const active = tasks.find((task) => AGENT_ACTIVE.includes(task.status));
     const repository = await this.choices.repositoryFor(projectId);
+    const main = await mainLine(this.prisma, projectId);
+    const versionOf = (row: { result: unknown } | null | undefined) => ((row?.result as { merge?: { version?: number } } | null)?.merge?.version ?? null);
+    let branch = null;
+    if (module) {
+      // The module's own line of code and what merging it into the main line would give now.
+      const own = await moduleBranch(this.prisma, projectId, module);
+      const roadmap = (await this.core.acceptedInputs(ctx, via)).roadmap?.content as Roadmap | undefined;
+      const preview = await mergePreview(this.prisma, { projectId, moduleKey: module, moduleName: roadmap?.modules.find((item) => item.key === module)?.name ?? module });
+      const startedFrom = own.head?.lineTaskId ? versionOf(await this.prisma.agentTask.findUnique({ where: { id: own.head.lineTaskId }, select: { result: true } })) : null;
+      branch = {
+        name: branchNameFor({ id: '', kind: 'change_app', moduleKey: module }), tasks: own.tasks, headId: own.head?.id ?? null, headStatus: own.head?.status ?? null,
+        startedFrom, behind: preview.behind, merge: preview.state, conflicts: preview.conflicts.slice(0, 30), markers: preview.markers.slice(0, 30), changed: preview.changed,
+        canSync: configured && this.core.canWrite(ctx, via) && (preview.state === 'conflict' || preview.state === 'markers') && !active && !anyActive && Boolean(stage.currentVersionId),
+      };
+    }
     return {
       data: {
         configured, profile: APP_PROFILE, limits: agentLimits(), repository,
+        mainLine: { version: main.version, head: main.head ? { id: main.head.id, moduleKey: main.head.moduleKey, status: main.head.status, statusLabel: tr(statusLabels[main.head.status] ?? main.head.status), createdAt: main.head.createdAt, files: ((main.head.files ?? []) as unknown[]).length } : null },
+        branch,
         deployment: await this.prisma.appDeployment.findUnique({ where: { projectId }, select: { url: true, ok: true, status: true, database: true, error: true, checkedAt: true, checkedVia: true } }),
         canStart: configured && this.core.canWrite(ctx, via) && Boolean(stage.currentVersionId) && !active && !anyActive && (!module || inputsSatisfied(ctx.route, ctx.dep, via)),
         // Another task of the project is running: one at a time per project.
@@ -446,26 +506,57 @@ export class AgentTasksService {
   }
 
   /** Queues «собери приложение по пакету»: the package must be built and its inputs accepted; one task at a time per project. */
-  async start(userId: string, projectId: string, input: { instruction: string | null; baseTaskId?: string | null; fromRepository?: boolean; module?: string | null }) {
+  async start(userId: string, projectId: string, input: { instruction: string | null; baseTaskId?: string | null; fromRepository?: boolean; module?: string | null; sync?: boolean }) {
     let instruction = input.instruction?.trim() || null;
     // Step 9a: a module of the accepted plan; the words come from the plan, the test plan and the contracts.
     let moduleRoadmap: Roadmap | null = null;
+    let moduleName = '';
     if (input.module) {
       const { ctx } = await this.context(userId, projectId, 'write', input.module);
       const inputs = await this.core.acceptedInputs(ctx, 'handoff');
       moduleRoadmap = (inputs.roadmap?.content as Roadmap | undefined) ?? null;
       if (!moduleRoadmap) throw new ConflictException('ROADMAP_NOT_APPROVED');
-      if (!moduleRoadmap.modules.some((item) => item.key === input.module)) throw new NotFoundException('MODULE_NOT_FOUND');
+      const module = moduleRoadmap.modules.find((item) => item.key === input.module);
+      if (!module) throw new NotFoundException('MODULE_NOT_FOUND');
+      moduleName = module.name;
       instruction = runWithLocale(contentLocale(ctx.project.locale), () => moduleInstruction({ roadmap: moduleRoadmap!, module: input.module!, testplan: (inputs.testplan?.content as TestPlan | undefined) ?? null, contracts: (inputs.contracts?.content as Contracts | undefined) ?? null }));
     }
     if (instruction && instruction.length > MAX_INSTRUCTION) throw new BadRequestException('INSTRUCTION_TOO_LONG');
     // Step 5: a change needs the words of what to change and what it starts from: an earlier task or the repository.
     if ((input.baseTaskId || input.fromRepository) && !instruction) throw new BadRequestException('CHANGE_INSTRUCTION_REQUIRED');
-    if (instruction && instruction.length > MAX_INSTRUCTION) throw new BadRequestException('INSTRUCTION_TOO_LONG');
     const { ctx, stage } = await this.context(userId, projectId, 'write', input.module ?? null);
     if (!this.agentModel() || !this.agentWorkspace()) throw new ServiceUnavailableException('AGENT_NOT_CONFIGURED');
-    let base: { id: string | null; files: AgentFile[]; digest: string; repository: { branch: string; commit: string | null; truncated: boolean } | null } | null = null;
-    if (input.baseTaskId && !input.fromRepository) {
+    type Base = { id: string | null; files: AgentFile[]; digest: string; repository: { branch: string; commit: string | null; truncated: boolean } | null; line?: number };
+    let base: Base | null = null;
+    // The main-line version the module's new code will rest on (module branches); null outside modules.
+    let lineTaskId: string | null = null;
+    let freshBranch = false;
+    if (input.module) {
+      // A module's code has its own branch: it continues from the module's last result, or starts from the main line
+      // (from scratch before the first module is accepted). Another module's unfinished work is never its base.
+      const branch = await moduleBranch(this.prisma, projectId, input.module);
+      if (input.sync) {
+        // Bring the module up to the main line: the merged code, conflicts marked, for the agent to resolve.
+        const preview = await mergePreview(this.prisma, { projectId, moduleKey: input.module, moduleName });
+        if (preview.state !== 'conflict' && preview.state !== 'markers') throw new ConflictException('MODULE_NOTHING_TO_SYNC');
+        const files = preview.state === 'conflict' ? preview.files : ((branch.head?.files ?? []) as unknown as AgentFile[]);
+        const conflicts = preview.state === 'conflict' ? preview.conflicts : preview.markers.map((path) => ({ path, kind: 'both_changed' as const }));
+        instruction = runWithLocale(contentLocale(ctx.project.locale), () => syncInstruction({ moduleName, conflicts }));
+        base = { id: null, files, digest: filesDigestOf(files), repository: null, line: preview.mainVersion };
+        lineTaskId = preview.state === 'conflict' ? preview.mainHeadId : branch.head?.lineTaskId ?? null;
+      } else if (branch.head) {
+        const files = branch.head.files as unknown as AgentFile[];
+        base = { id: branch.head.id, files, digest: branch.head.filesDigest!, repository: null };
+        lineTaskId = branch.head.lineTaskId;
+      } else {
+        freshBranch = true;
+        const main = await mainLine(this.prisma, projectId);
+        const files = (main.head?.files ?? []) as unknown as AgentFile[];
+        if (main.head && files.length) base = { id: main.head.id, files, digest: filesDigestOf(files), repository: null };
+        lineTaskId = main.head?.id ?? null;
+      }
+    }
+    if (input.baseTaskId && !input.fromRepository && !input.module) {
       const found = await this.prisma.agentTask.findFirst({ where: { id: input.baseTaskId, projectId }, select: { id: true, status: true, files: true, filesDigest: true } });
       if (!found) throw new NotFoundException('AGENT_TASK_NOT_FOUND');
       const files = (found.files ?? []) as unknown as AgentFile[];
@@ -475,7 +566,7 @@ export class AgentTasksService {
     if (!stage.currentVersionId) throw new ConflictException('HANDOFF_NOT_BUILT');
     if (!inputsSatisfied(ctx.route, ctx.dep, 'handoff')) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     if (await this.core.remainingAiRuns(projectId) < 1) throw new HttpException('AI_DAILY_LIMIT_REACHED', HttpStatus.TOO_MANY_REQUESTS);
-    if (input.fromRepository) {
+    if (input.fromRepository && !input.module) {
       // Read now and kept with the task: the run uses exactly this code even if the branch moves meanwhile.
       const snapshot = await this.choices.readMainBranch(userId, projectId);
       base = { id: null, files: snapshot.files, digest: filesDigestOf(snapshot.files), repository: { branch: snapshot.branch, commit: snapshot.commit, truncated: snapshot.truncated } };
@@ -485,22 +576,25 @@ export class AgentTasksService {
     try {
       const inputs = await this.core.acceptedInputs(ctx, 'handoff');
       const packageInputs = Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.content]));
+      const source = !base ? null : base.repository ? 'repository' : base.line !== undefined ? 'line' : 'task';
       const prompt = base
-        ? buildChangePrompt({ locale: ctx.project.locale, projectName: ctx.project.name, inputs: packageInputs, instruction: instruction!, base: base.repository ? { source: 'repository', ...base.repository } : { source: 'task', taskId: base.id! }, baseFiles: base.files })
+        ? buildChangePrompt({ locale: ctx.project.locale, projectName: ctx.project.name, inputs: packageInputs, instruction: instruction!, base: base.repository ? { source: 'repository', ...base.repository } : base.line !== undefined ? { source: 'line', version: base.line } : { source: 'task', taskId: base.id! }, baseFiles: base.files })
         : buildAgentPrompt({ locale: ctx.project.locale, projectName: ctx.project.name, inputs: packageInputs, instruction });
       const kind = base ? CHANGE_KIND : KIND;
       const created = await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`agent:${projectId}`}))`;
         if (await tx.agentTask.count({ where: { projectId, status: { in: AGENT_ACTIVE } } })) throw new ConflictException('AGENT_TASK_RUNNING');
+        // The main line may have moved since the base was chosen (a module accepted meanwhile): start again from fresh state.
+        if (freshBranch && ((await mainLine(tx, projectId)).head?.id ?? null) !== lineTaskId) throw new ConflictException('MODULE_BRANCH_MOVED');
         const task = await tx.agentTask.create({ data: {
           projectId, kind, instruction, baseTaskId: base?.id ?? null, baseFilesDigest: base?.digest ?? null,
-          moduleKey: input.module ?? null,
-          baseSource: base ? (base.repository ? 'repository' : 'task') : null, baseFiles: base?.repository ? base.files as never : undefined, baseCommit: base?.repository?.commit ?? null, profile: `${APP_PROFILE.key}@${APP_PROFILE.version}`, sourceVersionId: stage.currentVersionId!,
+          moduleKey: input.module ?? null, lineTaskId,
+          baseSource: source, baseFiles: base && !base.id ? base.files as never : undefined, baseCommit: base?.repository?.commit ?? null, profile: `${APP_PROFILE.key}@${APP_PROFILE.version}`, sourceVersionId: stage.currentVersionId!,
           inputVersionIds: Object.values(inputs).map((value) => value.versionId), prompt: prompt as never,
           promptDigest: promptDigestOf(prompt), limits: agentLimits() as never, locale: ctx.project.locale, requestedByUserId: userId,
         } });
-        await this.core.event(tx, projectId, userId, 'agent_task_started', 'handoff', { taskId: task.id, kind, baseTaskId: base?.id ?? null, baseSource: base ? (base.repository ? 'repository' : 'task') : null, withInstruction: Boolean(instruction), module: input.module ?? null });
-        if (input.module && moduleRoadmap) await markModuleStarted(tx, { projectId, roadmap: moduleRoadmap, module: input.module, userId });
+        await this.core.event(tx, projectId, userId, input.sync ? 'module_sync_started' : 'agent_task_started', 'handoff', { taskId: task.id, kind, baseTaskId: base?.id ?? null, baseSource: source, withInstruction: Boolean(instruction), module: input.module ?? null });
+        if (input.module && moduleRoadmap && !input.sync) await markModuleStarted(tx, { projectId, roadmap: moduleRoadmap, module: input.module, userId });
         return task;
       });
       if (process.env.SANDBOX_WORKER !== 'external') this.runner.kick();
@@ -534,7 +628,8 @@ export class AgentTasksService {
   }
 
   /**
-   * Step 2: sends the task's files to the owner's repository on the branch buildpath/agent-<task>, with a pull request that
+   * Step 2: sends the task's files to the owner's repository on the branch buildpath/agent-<task> (buildpath/module-<key> for a
+   * module, buildpath/main-line for the main line), with a pull request that
    * carries the agent's report and the platform's checks. Confirmed every time; the main branch is written only when the
    * repository is still empty. Owners and managers only (the same rule as other pushes).
    */
@@ -554,8 +649,12 @@ export class AgentTasksService {
       const kept = new Set(files.map((file) => file.path));
       change = { removed: baseFiles.map((file) => file.path).filter((path) => !kept.has(path)) };
     }
-    const text = runWithLocale(contentLocale(ctx.project.locale), () => pullRequestText({ taskId, projectName: ctx.project.name, profile: task.profile, model: task.model, report: result.report ?? null, checks: result.checks ?? [], instruction: task.instruction, change }));
-    const pushed = await this.choices.pushBranch(userId, projectId, { branch: `buildpath/agent-${taskId.slice(0, 8)}`, files, ...text });
+    // A main-line version says what it is: the platform merged an accepted module, no AI wrote it.
+    const merge = (task.result as { merge?: { version: number; module: string } } | null)?.merge;
+    const report = merge ? runWithLocale(contentLocale(ctx.project.locale), () => ({ summary: tr('Основная линия кода, версия {0}: платформа влила принятый модуль «{1}». ИИ в этом слиянии не участвовал.', [merge.version, merge.module]), done: [], notDone: [] })) : result.report ?? null;
+    const text = runWithLocale(contentLocale(ctx.project.locale), () => pullRequestText({ taskId, projectName: ctx.project.name, profile: task.profile, model: task.model, report, checks: result.checks ?? [], instruction: task.instruction, change }));
+    // One branch per module and one for the main line: a later push of the same module updates its pull request.
+    const pushed = await this.choices.pushBranch(userId, projectId, { branch: branchNameFor(task), files, ...text });
     const updated = await this.prisma.agentTask.update({ where: { id: taskId }, data: { pushedBranch: pushed.branch, pullRequestUrl: pushed.pullRequestUrl, commitUrl: pushed.commitUrl, pushedAt: new Date() } });
     await this.core.event(this.prisma, projectId, userId, 'agent_task_pushed', 'handoff', { taskId, branch: pushed.branch, pullRequest: Boolean(pushed.pullRequestUrl), mainBranch: pushed.mainBranch });
     return { data: { ...this.view(updated), mainBranch: pushed.mainBranch } };

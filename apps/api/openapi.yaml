@@ -4428,7 +4428,7 @@ paths:
       tags: [Journey]
       operationId: acceptStage
       summary: Accept the current version of a stage
-      description: Requires owner or manager, accepted inputs, a complete artifact and, for the build stage, no failed required checks on a build from the currently accepted versions. For the build stage the quality report must have passed (422 QUALITY_GATE_FAILED; 409 BUILD_NOT_QUALITY_CHECKED for builds made before the gate) and, when the build's quality profile has a required browser rule, the browser check of that build must meet it (409 BROWSER_CHECK_PENDING; 422 BROWSER_CHECK_REQUIRED when the check failed or could not run; 422 BROWSER_GATE_FAILED). Refused with APPROVAL_POLICY_ACTIVE when the stage has an approval policy — then reviewers approve via /approve. Other stages must pass the quality review — 409 REVIEW_BLOCKING_OPEN with the finding ids while a blocking finding is neither fixed nor explained via /review/override.
+      description: Requires owner or manager, accepted inputs, a complete artifact and, for the build stage, no failed required checks on a build from the currently accepted versions. For the build stage the quality report must have passed (422 QUALITY_GATE_FAILED; 409 BUILD_NOT_QUALITY_CHECKED for builds made before the gate) and, when the build's quality profile has a required browser rule, the browser check of that build must meet it (409 BROWSER_CHECK_PENDING; 422 BROWSER_CHECK_REQUIRED when the check failed or could not run; 422 BROWSER_GATE_FAILED). Refused with APPROVAL_POLICY_ACTIVE when the stage has an approval policy — then reviewers approve via /approve. Other stages must pass the quality review — 409 REVIEW_BLOCKING_OPEN with the finding ids while a blocking finding is neither fixed nor explained via /review/override. A module stage m_<module> of a web application must merge cleanly into the main line of code (409 MODULE_MERGE_CONFLICT otherwise, whatever is explained — bring it up first with POST agent/tasks with module and sync true); accepting it creates the next main-line version (a line_merge agent task with the merged files, event module_merged) which the platform then builds and checks without AI or charge.
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -4993,7 +4993,7 @@ paths:
         - $ref: '#/components/parameters/ProjectId'
         - { in: query, name: module, required: false, description: 'A module of the accepted plan: only its tasks, readable and startable by whoever can read or lead its module stage m_<module>; busy tells another task of the project is running.', schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,31}$' } }
       responses:
-        '200': { description: 'data: configured, profile, limits, canStart, busy, changeBase (the task a change would start from, or null), changeFromRepository (a change can start from the repository), repository, deployment (url, ok, status, database, error, checkedAt) or null, latest (with pushed: branch, pullRequestUrl, commitUrl, at; hasDemo), history' }
+        '200': { description: 'data: configured, profile, limits, canStart, busy, changeBase (the task a change would start from, or null), changeFromRepository (a change can start from the repository), repository, deployment (url, ok, status, database, error, checkedAt) or null, latest (with pushed: branch, pullRequestUrl, commitUrl, at; hasDemo), history, mainLine { version (0 before the first accepted module), head { id, moduleKey, status, statusLabel, createdAt, files } | null }, branch (with module only; null otherwise) { name buildpath/module-<key>, tasks, headId, headStatus, startedFrom (main-line version or null), behind, merge nothing | ready | conflict | markers, conflicts[] (path, kind both_changed | changed_and_deleted | too_large), markers[], changed, canSync }. A module page lists only the module''s own tasks, not main-line versions.' }
         '404': { $ref: '#/components/responses/Problem' }
     post:
       tags: [Journey]
@@ -5013,7 +5013,14 @@ paths:
         pushed, published or deployed. 503 AGENT_NOT_CONFIGURED.
         module (step 9a): one module of the accepted implementation plan; no instruction — the platform writes it from the plan,
         the contracts and the test plan (409 ROADMAP_NOT_APPROVED, 404 MODULE_NOT_FOUND). With build_app it starts from an empty
-        folder, with change_app from baseTaskId. Its unfinished, unblocked tasks become «в работе». The package sent to the agent
+        folder, with change_app from baseTaskId. Its unfinished, unblocked tasks become «в работе».
+        Module branches (catalog 1.17.0+): a module task takes no kind, baseTaskId or base (400 INVALID_BODY). It continues from
+        the module's own last result since the module was last merged (the last successful one, else the last with code); a new
+        branch starts from the main line's last version, or from an empty folder before the first module is accepted (409
+        MODULE_BRANCH_MOVED if the main line moved meanwhile — ask again). Each task keeps lineTaskId, the main-line version it
+        rests on. sync: true (only with module) brings the module up to the main line when merging would conflict: the agent gets
+        the three-way merge of the main line and the module with conflict markers in the conflicting files and resolves them;
+        the result rests on the current main line (409 MODULE_NOTHING_TO_SYNC when there is no conflict and no marker). The package sent to the agent
         holds the contracts, the plan and the automatic cases of the test plan; its tests name the case they prove ([case:<key>]).
         After the run the platform runs `node --test --test-reporter=tap` itself (check «cases», informative), records each
         automatic case it finds (plan_case_results, source run), marks plan tasks whose cases all pass «готова» and moves a task
@@ -5030,7 +5037,7 @@ paths:
         required: false
         content:
           application/json:
-            schema: { type: object, additionalProperties: false, properties: { kind: { type: string, enum: [build_app, change_app] }, baseTaskId: { type: string, format: uuid, description: 'With change_app: start from this task' }, base: { type: string, enum: [repository], description: 'With change_app: start from the main branch of the connected repository' }, instruction: { type: [string, 'null'], maxLength: 2000 }, module: { type: string, pattern: '^[a-z][a-z0-9_]{0,31}$', description: 'A module of the accepted implementation plan; no instruction then. Needs the right to lead its module stage m_<module> (or the handoff stage) and the module stage''s inputs accepted (STAGE_INPUTS_NOT_ACCEPTED); 404 MODULE_NOT_FOUND.' } } }
+            schema: { type: object, additionalProperties: false, properties: { kind: { type: string, enum: [build_app, change_app] }, baseTaskId: { type: string, format: uuid, description: 'With change_app: start from this task' }, base: { type: string, enum: [repository], description: 'With change_app: start from the main branch of the connected repository' }, instruction: { type: [string, 'null'], maxLength: 2000 }, module: { type: string, pattern: '^[a-z][a-z0-9_]{0,31}$', description: 'A module of the accepted implementation plan; no instruction, kind or base then. Needs the right to lead its module stage m_<module> (or the handoff stage) and the module stage''s inputs accepted (STAGE_INPUTS_NOT_ACCEPTED); 404 MODULE_NOT_FOUND.' }, sync: { type: boolean, enum: [true], description: 'With module: bring the module up to the main line (resolve merge conflicts).' } } }
       responses:
         '202': { description: 'data: the queued task' }
         '400': { $ref: '#/components/responses/Problem' }
@@ -5082,7 +5089,8 @@ paths:
       operationId: pushAgentTask
       summary: Send the agent's code to the owner's repository on its own branch with a pull request
       description: |
-        Branch buildpath/agent-<first 8 characters of the task id>, made from the repository's main branch, and a pull request (GitHub,
+        Branch buildpath/agent-<first 8 characters of the task id> (buildpath/module-<key> for a module's task, buildpath/main-line
+        for a main-line version — the same branch every time, so its request is updated), made from the repository's main branch, and a pull request (GitHub,
         Gitea/Forgejo), merge request (GitLab) or pull request (Bitbucket) whose text is the agent's report, the platform's checks and a
         note that AI wrote the code. A repeat adds a commit to the same branch and finds the open request. An empty repository has
         nothing to branch from: the code becomes its first commit on the main branch (mainBranch true). A git server over SSH gets the
