@@ -272,7 +272,7 @@ export class JourneyCore {
   async moduleFactsFor(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { project: { id: string } }, key: StageKey): Promise<ModuleFacts> {
     const inputs = await this.acceptedInputs(ctx, key);
     const testplan = inputs.testplan ? { plan: inputs.testplan.content as TestPlan, versionNumber: inputs.testplan.versionNumber } : null;
-    return moduleFacts(this.prisma, { projectId: ctx.project.id, moduleKey: moduleKeyOf(key)!, roadmap: (inputs.roadmap?.content as Roadmap | undefined) ?? null, testplan });
+    return moduleFacts(this.prisma, { projectId: ctx.project.id, moduleKey: moduleKeyOf(key)!, roadmap: (inputs.roadmap?.content as Roadmap | undefined) ?? null, testplan, contracts: (inputs.contracts?.content as Contracts | undefined) ?? null });
   }
 
   async launchFacts(ctx: Parameters<JourneyCore['acceptedInputs']>[0] & { project: { id: string } }, key: StageKey): Promise<LaunchFacts> {
