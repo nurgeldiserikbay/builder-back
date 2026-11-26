@@ -400,6 +400,7 @@ model Project {
   networkAgents   NetworkAgent[]
   planSchedule    PlanSchedule?
   appIncidents    AppIncident[]
+  feedbackInbox    FeedbackInbox?
 }
 
 model ProjectMember {
@@ -2595,3 +2596,21 @@ model AppIncident {
   @@index([projectId, startedAt(sort: Desc)], map: "app_incidents_project_started_idx")
   @@map("app_incidents")
 }
+
+/// Feedback from a launched application (PRODUCT_LIFECYCLE §4.12): the app's own form posts to a public address with this
+/// token; each message becomes a backlog item (source app_feedback). The token is public by nature — it is in the app's
+/// page — so it only lets people leave a message, nothing else; it can be turned off or replaced.
+model FeedbackInbox {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId      String    @unique @map("project_id") @db.Uuid
+  token          String    @unique @db.VarChar(48)
+  enabled        Boolean   @default(true)
+  received       Int       @default(0)
+  lastReceivedAt DateTime? @map("last_received_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("feedback_inboxes")
+}
+

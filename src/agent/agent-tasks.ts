@@ -19,6 +19,7 @@ import type { Contracts } from '../journey/contracts.js';
 import type { Roadmap } from '../journey/roadmap.js';
 import type { TestPlan } from '../journey/testplan.js';
 import { markModuleStarted, recordRunResults } from '../journey/plan-results.js';
+import { feedbackUrl } from '../feedback/feedback.service.js';
 import { branchNameFor, mainLine, mergePreview, moduleBranch, MERGE_KIND, syncInstruction } from './module-branch.js';
 import { platformChecks } from './agent-loop.js';
 
@@ -73,7 +74,15 @@ const json = (value: unknown, max: number) => {
 };
 
 /** What the agent is told: the profile's rules (platform text) and the project's package (untrusted data). */
-export function buildAgentPrompt(input: { locale: string; projectName: string; inputs: Record<string, unknown>; instruction: string | null }): { system: string; task: string } {
+/**
+ * The owner turned on feedback from the application (feedback.service.ts): one small form sends people's messages to the
+ * platform. It is the only place the application may send anything outside itself, and only what the person typed.
+ */
+export function feedbackRule(url: string): string {
+  return `- Feedback form: a «Сообщить о проблеме или идее» link (in the project's language) in the footer or the menu of every role and of the sign-in page opens a small form: kind (problem or idea), text (required, up to 2000 characters), optional contact (how to reach the person). It sends with fetch("${url}", { method: "POST", body: new URLSearchParams({ kind, text, contact, page: location.pathname, website: "" }) }) — form-encoded, no JSON, no headers, no credentials, nothing else about the user or the data —, shows «Спасибо» on any 2xx and a calm message if it fails, and never blocks the app. Add a hidden, empty field named website (a trap for bots). In the preview (build:demo) the form only shows «Спасибо» and sends nothing. This address is the only exception to «do not send data outside the app».`;
+}
+
+export function buildAgentPrompt(input: { locale: string; projectName: string; inputs: Record<string, unknown>; instruction: string | null; feedbackUrl?: string | null }): { system: string; task: string } {
   const language = contentLocale(input.locale) === 'en' ? 'English' : input.locale === 'kk' ? 'Kazakh' : 'Russian';
   const system = [
     'You are the BuildPath agent: a senior full-stack developer working alone in a throwaway Linux machine with Node.js 20, npm and internet access to package registries. You build the application from the accepted project package and leave it working, tested and ready to deploy.',
@@ -94,6 +103,7 @@ export function buildAgentPrompt(input: { locale: string; projectName: string; i
     `- Preview for the owner: npm run build:demo writes ONE self-contained file ${DEMO_PATH} (all JS and CSS inline, for example with vite-plugin-singlefile) that runs the real client in the browser with no server and no network: API calls go to an in-browser implementation of the same routes, rights and rules over the in-memory data layer (keep route handlers framework-independent so the server and the preview share them). Seed believable demo data and one demo account per role, and show a small bar, in the app's language, saying this is a demo and which role the user is in, with a role switcher. No cookies, localStorage, external fonts, images by URL or analytics: the preview runs in a sandboxed frame where they do not work.`,
     '- Write .env.example with every variable and a README.md for the owner: what the app does, how to run it locally, the variables. Never write real secrets or .env files.',
     '- Mobile-first UI in the language of the project, clear labels, empty states and error messages, no lorem ipsum. Validate input on the server.',
+    ...(input.feedbackUrl ? [feedbackRule(input.feedbackUrl)] : []),
     'Rules of the package are requirements: implement the roles, data and features of the first version and their acceptance criteria. Do not invent features outside the package. If something cannot be done in this stack (payments, outgoing messages, external integrations), leave a clear stub that says so and list it in notDone.',
     'Security: never weaken rights between roles; parameterized SQL only; no eval; no secrets in code; do not send data anywhere outside the app.',
     'Long-running commands: start a dev server only in the background with a timeout and stop it; prefer tests.',
@@ -143,7 +153,7 @@ export function moduleInstruction(input: { roadmap: Roadmap; module: string; tes
  * Step 5: a change described in words. The folder already holds the code of an earlier task; the agent changes it and keeps
  * the rest working. The owner's words and the package are untrusted data, as in the first build.
  */
-export function buildChangePrompt(input: { locale: string; projectName: string; inputs: Record<string, unknown>; instruction: string; base: { source: 'task'; taskId: string } | { source: 'repository'; branch: string; commit: string | null; truncated: boolean } | { source: 'line'; version: number }; baseFiles: AgentFile[] }): { system: string; task: string } {
+export function buildChangePrompt(input: { locale: string; projectName: string; inputs: Record<string, unknown>; instruction: string; feedbackUrl?: string | null; base: { source: 'task'; taskId: string } | { source: 'repository'; branch: string; commit: string | null; truncated: boolean } | { source: 'line'; version: number }; baseFiles: AgentFile[] }): { system: string; task: string } {
   const base = buildAgentPrompt({ ...input, instruction: null });
   const system = [
     base.system,
@@ -587,9 +597,12 @@ export class AgentTasksService {
       const inputs = await this.core.acceptedInputs(ctx, 'handoff');
       const packageInputs = Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.content]));
       const source = !base ? null : base.repository ? 'repository' : base.line !== undefined ? 'line' : 'task';
+      // Feedback from the application, when the owner turned it on: the form goes into the code (feedbackRule).
+      const inbox = await this.prisma.feedbackInbox.findUnique({ where: { projectId }, select: { token: true, enabled: true } });
+      const feedback = inbox?.enabled ? feedbackUrl(inbox.token) : null;
       const prompt = base
-        ? buildChangePrompt({ locale: ctx.project.locale, projectName: ctx.project.name, inputs: packageInputs, instruction: instruction!, base: base.repository ? { source: 'repository', ...base.repository } : base.line !== undefined ? { source: 'line', version: base.line } : { source: 'task', taskId: base.id! }, baseFiles: base.files })
-        : buildAgentPrompt({ locale: ctx.project.locale, projectName: ctx.project.name, inputs: packageInputs, instruction });
+        ? buildChangePrompt({ feedbackUrl: feedback, locale: ctx.project.locale, projectName: ctx.project.name, inputs: packageInputs, instruction: instruction!, base: base.repository ? { source: 'repository', ...base.repository } : base.line !== undefined ? { source: 'line', version: base.line } : { source: 'task', taskId: base.id! }, baseFiles: base.files })
+        : buildAgentPrompt({ feedbackUrl: feedback, locale: ctx.project.locale, projectName: ctx.project.name, inputs: packageInputs, instruction });
       const kind = base ? CHANGE_KIND : KIND;
       const created = await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`agent:${projectId}`}))`;

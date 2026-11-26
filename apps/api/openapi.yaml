@@ -4640,7 +4640,7 @@ paths:
       tags: [Journey]
       operationId: listBacklog
       summary: «Развитие» — what comes next for the project
-      description: 'Gathers, without overwriting, what accepted stages postponed: ТЗ functions with priority later (source spec_later), suggestions with decision later (suggestion), and the owner''s open remarks on main scenarios (remark). items[] (id, title, details, source spec_later | suggestion | remark | feedback | owner, priority high | medium | low, status open | next | done | dropped, version, createdAt), currentVersion, canEdit, canStartVersion, specStatus.'
+      description: 'Gathers, without overwriting, what accepted stages postponed: ТЗ functions with priority later (source spec_later), suggestions with decision later (suggestion), and the owner''s open remarks on main scenarios (remark). items[] (id, title, details, source spec_later | suggestion | remark | feedback | owner | app_feedback (a message from the launched application''s own form, see /feedback/{token}), priority high | medium | low, status open | next | done | dropped, version, createdAt), currentVersion, canEdit, canStartVersion, specStatus.'
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -4978,6 +4978,57 @@ paths:
       responses:
         '200': { description: 'ok' }
         '409': { description: 'NETWORK_AGENT_JOB_NOT_RUNNING' }
+  /projects/{projectId}/feedback-inbox:
+    get:
+      tags: [Journey]
+      operationId: feedbackInbox
+      summary: Feedback from the launched application — state (web applications)
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'data — enabled, url (the public address the application posts to; null before it is turned on or when PUBLIC_API_URL is not set), received, lastReceivedAt, configured' }
+        '404': { description: FEEDBACK_NOT_FOR_PROJECT (not a web application) }
+    put:
+      tags: [Journey]
+      operationId: setFeedbackInbox
+      summary: Turn the application's feedback form on or off, or give it a new address
+      description: 'Write access. Body { enabled?: boolean, renew?: true }; renew replaces the token and the old address stops working at once. While it is on, every AI agent task of the project is told to put a «Сообщить о проблеме или идее» form into the application that posts to this address (form-encoded: kind, text, contact, page and an empty trap field website). An application built before needs a new agent task (or a developer) to get the form.'
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { enabled: { type: boolean }, renew: { type: boolean, enum: [true] } } }
+      responses:
+        '200': { description: same as GET }
+        '400': { description: INVALID_BODY }
+  /feedback/{token}:
+    post:
+      tags: [Journey]
+      operationId: receiveAppFeedback
+      summary: A message from the launched application's own feedback form (public)
+      description: 'No session and no cookies; allowed from any origin (exempt from the origin check, answer carries Access-Control-Allow-Origin *). Send application/x-www-form-urlencoded so the browser needs no preflight; JSON is read too. Fields: kind problem | idea (anything else is problem), text (3–2000, required), contact (≤200), page (≤300), website (must stay empty: a filled one is treated as a bot — answered 202, nothing stored). The message becomes a backlog item (source app_feedback; priority high for a problem, medium for an idea), shown as plain text. Limits: 10 messages an hour from one address, 300 a day per application (429 FEEDBACK_TOO_MANY). An unknown, turned-off or replaced address is 404 FEEDBACK_NOT_FOUND.'
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{24,48}$' } }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { type: object, properties: { kind: { type: string }, text: { type: string }, contact: { type: string }, page: { type: string }, website: { type: string } } }
+      responses:
+        '202': { description: '{ ok: true }' }
+        '400': { description: FEEDBACK_TEXT_REQUIRED }
+        '404': { description: FEEDBACK_NOT_FOUND }
+        '429': { description: FEEDBACK_TOO_MANY }
   /network-agent/monitor:
     post:
       tags: [Journey]

@@ -22,7 +22,9 @@ export interface OriginRequest {
 }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-const EXEMPT = [/^\/api\/v1\/telegram\/webhook$/, /^\/api\/v1\/payments\/freedompay\/result$/];
+// The feedback form of a launched application posts from the application's own origin; it carries no session and can
+// only leave a message (feedback.service.ts).
+const EXEMPT = [/^\/api\/v1\/telegram\/webhook$/, /^\/api\/v1\/payments\/freedompay\/result$/, /^\/api\/v1\/feedback\/[A-Za-z0-9_-]{24,48}$/];
 
 function header(request: OriginRequest, name: string): string | undefined {
   const value = request.headers[name];
