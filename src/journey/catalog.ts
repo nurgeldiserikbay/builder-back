@@ -404,9 +404,10 @@ export const stageDefinitions: Record<CatalogStageKey, StageDefinition> = {
     acceptExplanation: 'Экраны и прототип войдут в пакет для разработки.',
     importHint: null,
     playbook: {
-      version: '1.1.0',
+      version: '1.2.0',
       instructions: [
         'Design the screens of the web application from the accepted features, for each role; plain words in the project language.',
+        'Follow the access matrix of the ТЗ (confirmedInputs.features.access: role, data, actions, scope): put a feature only on screens of roles the feature lists; show lists, tables and details only of data the role may view; add a form only where the role may create or edit that data; when the scope is own, the list shows only the role\'s own records — say so in its title.',
         'Each role starts on a home screen. 2–6 screens per role, at most 20 in total. Keys: short latin snake_case, unique.',
         'Each screen: role key, a short purpose, the feature keys it serves, 1–6 blocks (kind list, table, form, details, text, actions, stats, search; title; field names) and links to other screen keys.',
         'Every must feature must appear on at least one screen. Do not invent features that are not in the list.',
