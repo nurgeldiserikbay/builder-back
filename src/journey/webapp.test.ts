@@ -510,4 +510,68 @@ describe('web application route (database)', async () => {
     await journey.dismissProposal(owner.id, projectId, 'process', stale.proposalId);
     await assert.rejects(journey.dismissProposal(owner.id, projectId, 'process', stale.proposalId), /PROPOSAL_CLOSED/);
   });
+
+  it('architecture: «Исправить» adds what the platform would draw, and the AI changes the design only after a preview', { skip }, async () => {
+    const billing = new BillingService(prisma!);
+    const core = new JourneyCore(prisma!, billing);
+    core.provider = null;
+    const worktime = new WorktimeService(prisma!);
+    const stageAi = new StageAiService(prisma!, core, worktime);
+    const review = new StageReviewService(prisma!, core, stageAi);
+    const journey = new JourneyService(prisma!, billing, worktime, core, stageAi, new ChangeNoticesService(prisma!, core), review);
+    const email = `arch-ai-${randomUUID()}@test.local`;
+    const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), name: 'Owner' } });
+    users.push(owner.id);
+    const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
+    await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
+    const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Архитектура', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
+    const versionOf = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId!;
+    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'goal', await versionOf('goal'));
+    for (const key of ['idea', 'suggestions', 'concept']) await journey.skip(owner.id, projectId, key, 'Не нужно для этого проекта');
+    for (const key of ['process', 'features', 'screens']) {
+      await journey.generate(owner.id, projectId, key, { instruction: null, saveAs: 'one_off', targetKey: null });
+      await journey.accept(owner.id, projectId, key, await versionOf(key));
+    }
+    type Design = { schema: { entities: Array<{ key: string; name: string }>; relations: unknown[] }; components: Array<{ key: string; kind: string; name: string }>; threats: Array<{ key: string; asset: string; how: string; mitigation: string }>; decisions: unknown[]; environments: unknown[] };
+    const template = ((await journey.stage(owner.id, projectId, 'techplan')).data.options.techplan!.preview as unknown as { design: Design }).design;
+    // A design that lost its server and its threats: the review says so, and «Исправить» carries what to add back.
+    const broken: Design = { ...template, components: template.components.filter((item) => item.kind !== 'server_api'), threats: [] };
+    await journey.saveDraft(owner.id, projectId, 'techplan', { content: { ownerNotes: null, design: broken }, baseVersionId: null });
+    const findings = (await journey.stage(owner.id, projectId, 'techplan')).data.review!.findings;
+    const core1 = findings.find((finding) => finding.code === 'ARCH_CORE_MISSING')!;
+    assert.deepEqual(core1.autoFix && { kind: core1.autoFix.kind, part: (core1.autoFix as { part: string }).part, kinds: ((core1.autoFix as { items: Array<{ kind: string }> }).items).map((item) => item.kind) }, { kind: 'arch_add', part: 'components', kinds: ['server_api'] });
+    const personal = findings.find((finding) => finding.code === 'ARCH_THREATS_PERSONAL');
+    if (personal) assert.ok(((personal.autoFix as { items: Array<{ asset: string; mitigation: string }> }).items).every((threat) => threat.asset === 'personal_data' && threat.mitigation));
+
+    // The AI: it sees only what people own (notes and design), and its answer is a preview until applied.
+    const requests: Array<{ schemaName: string; user: string; maxOutputTokens?: number }> = [];
+    core.provider = {
+      name: 'fake', model: 'fake-1',
+      async generate(request) {
+        requests.push(request);
+        const draft = JSON.parse(request.user).currentDraft as { ownerNotes: string | null; design: Design };
+        return { ownerNotes: draft.ownerNotes, design: { ...draft.design, components: [...draft.design.components, { key: 'server_api', kind: 'server_api', name: 'Сервер', note: '' }, { key: 'sms', kind: 'sms', name: 'SMS', note: 'напоминания' }, { key: 'x', kind: 'rocket', name: 'Ракета', note: '' }], threats: [{ key: 't_sms', asset: 'availability', actor: 'outsider', how: 'Шлёт тысячи запросов на SMS-код.', mitigation: 'Не больше 3 SMS в час на номер.' }] } };
+      },
+    };
+    const before = await versionOf('techplan');
+    const proposal = (await journey.proposeChange(owner.id, projectId, 'techplan', { instruction: 'Добавь SMS-напоминания', targetKey: null })).data;
+    const request = requests.at(-1)!;
+    assert.equal(request.schemaName, 'buildpath_techplan');
+    assert.equal(request.maxOutputTokens, 12000);
+    assert.deepEqual(Object.keys(JSON.parse(request.user).currentDraft).sort(), ['design', 'ownerNotes']);
+    assert.equal(await versionOf('techplan'), before, 'nothing is saved before applying');
+    const content = proposal.content as { design: Design; components: Array<{ title: string }> };
+    // A kind outside the catalog cannot be drawn: it is dropped. The computed plan follows the proposed design.
+    assert.deepEqual(content.design.components.filter((item) => ['sms', 'server_api', 'rocket'].includes(item.kind)).map((item) => item.kind).sort(), ['server_api', 'sms']);
+    assert.ok(content.components.some((item) => item.title === 'SMS'));
+    assert.ok(!proposal.findings.some((finding) => finding.code === 'ARCH_CORE_MISSING'));
+    const applied = (await journey.applyProposal(owner.id, projectId, 'techplan', proposal.proposalId)).data;
+    const saved = (await journey.stage(owner.id, projectId, 'techplan')).data;
+    assert.equal(saved.current!.id, applied.versionId);
+    assert.equal((saved.options.techplan as { outdated: boolean }).outdated, false, 'the saved plan is the one the platform computes from that design');
+    // «Let the AI fix it» works on architecture findings too.
+    const open = saved.review!.findings.find((finding) => !finding.ownerDecides);
+    if (open) assert.ok((await review.fix(owner.id, projectId, 'techplan', { findingIds: [open.id] })).data.versionNumber > applied.versionNumber);
+  });
 });

@@ -15,6 +15,8 @@ import { templateFeatures, templateScreens, type AppFeatures } from './webapp.js
 import { costOf } from '../budget/budget.js';
 import { StageAiError, buildStagePrompt } from './stage-ai.js';
 import { normalizeAiOutput } from './ai-normalize.js';
+import { techPlanDesign, techPlanNotes, type TechPlan } from './techplan.js';
+import { normalizeDesign, type ArchitectureDesign } from './architecture.js';
 import { reviewStage, type ReviewFinding } from './stage-review.js';
 import { canEdit, inputsSatisfied } from './stage-state.js';
 import { JourneyCore } from './journey-core.js';
@@ -48,6 +50,10 @@ export class StageAiService {
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     if (!inputsSatisfied(ctx.route, ctx.dep, stageKey)) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const base = await this.core.versionContent(stage.currentVersionId);
+    // An application's architecture: the AI edits the design people own (schema, components, decisions, threats,
+    // environments) and the notes; everything else in the plan is computed from them by the platform, as on a save.
+    const appPlan = definition.artifactType === 'techplan' && ctx.type.key === 'web_app';
+    const planFrom = async (notes: string | null, design: ArchitectureDesign | null) => this.core.techPlanFor(ctx, stageKey, notes, design);
     if (input.targetKey && (!base || !lockableKeys(definition.artifactType, base.content).includes(input.targetKey))) throw new NotFoundException('TARGET_NOT_FOUND');
     if (stageKey === 'goal' && !base && !input.instruction) throw new BadRequestException('DESCRIPTION_REQUIRED');
     // The AI a specialist directs sees what the specialist sees: hidden parts replaced, extra results the owner opened added.
@@ -108,7 +114,7 @@ export class StageAiService {
       specialistPlaybook: playbook ? { instructions: playbook.instructions, checklist: playbook.checklist } : null,
       stage: definition, locale: ctx.project.locale, projectTypeTitle: ctx.type.title,
       inputs: Object.fromEntries([...Object.entries(inputs), ...Object.entries(extras)].map(([inputKey, value]) => [inputKey, value.content])),
-      current: base?.content ?? null, lockedKeys: stage.lockedKeys, targetKey: input.targetKey, rules: ruleTexts, instruction: instruction?.text ?? null,
+      current: appPlan && base ? { ownerNotes: (base.content as TechPlan).ownerNotes ?? null, design: techPlanDesign(base.content) } : base?.content ?? null, lockedKeys: stage.lockedKeys, targetKey: input.targetKey, rules: ruleTexts, instruction: instruction?.text ?? null,
       ownerConversation: input.conversation ?? null,
     });
     // Tokens are spent even when the output is rejected, so failures record usage too.
@@ -126,6 +132,9 @@ export class StageAiService {
     };
     let merged: unknown;
     let proposal: unknown;
+    let proposedDesign: ArchitectureDesign | null = null;
+    // The plan from a merged answer: the notes as merged (they may be protected), the design as the AI proposed it.
+    const appPlanOf = async (content: unknown) => (appPlan ? planFrom(techPlanNotes(content), proposedDesign) : content);
     try {
       const detailed = provider.generateDetailed ? await provider.generateDetailed(prompt) : { output: await provider.generate(prompt), usage: null };
       usage = detailed.usage;
@@ -134,10 +143,16 @@ export class StageAiService {
         const section = (raw as { section?: unknown })?.section;
         const baseContent = base!.content as ContentArtifact;
         proposal = input.targetKey === 'seo' ? baseContent : normalizeContent({ sections: [{ ...(section as object), key: input.targetKey }], seo: baseContent.seo });
+      } else if (appPlan) {
+        const answer = (raw && typeof raw === 'object' ? raw : {}) as { ownerNotes?: unknown; design?: unknown };
+        // A request about the notes only leaves the design as it is.
+        proposedDesign = input.targetKey && base ? techPlanDesign(base.content) : normalizeDesign(answer.design);
+        proposal = await planFrom(techPlanNotes({ ownerNotes: answer.ownerNotes ?? null }), proposedDesign);
       } else {
         proposal = inProject(ctx, () => normalizeAiOutput(raw, (value) => normalizeFor(ctx, definition.artifactType, value)));
       }
       merged = inProject(ctx, () => normalizeFor(ctx, definition.artifactType, mergeProposal(definition.artifactType, base?.content ?? null, proposal, stage.lockedKeys, input.targetKey)));
+      merged = await appPlanOf(merged);
     } catch (error) {
       const code = error instanceof StageAiError ? error.code : error instanceof ArtifactValidationError ? 'AI_OUTPUT_REJECTED' : 'AI_FAILED';
       await recordFailure(code);
@@ -151,7 +166,7 @@ export class StageAiService {
     if (fresh && fresh.currentVersionId !== baseId) {
       const latest = await this.core.versionContent(fresh.currentVersionId);
       try {
-        merged = inProject(ctx, () => normalizeFor(ctx, definition.artifactType, mergeProposal(definition.artifactType, latest?.content ?? null, proposal, fresh.lockedKeys, input.targetKey)));
+        merged = await appPlanOf(inProject(ctx, () => normalizeFor(ctx, definition.artifactType, mergeProposal(definition.artifactType, latest?.content ?? null, proposal, fresh.lockedKeys, input.targetKey))));
         baseId = latest?.id ?? null;
       } catch { /* keep the answer merged on the version it was asked for */ }
     }

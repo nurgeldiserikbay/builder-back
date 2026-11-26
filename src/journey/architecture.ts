@@ -221,30 +221,40 @@ export function templateDesign(input: { process: BusinessProcess | null; feature
   return normalizeDesign({ schema: { entities: schemaEntities, relations }, components, decisions, threats, environments: [{ key: 'test', where: '', notes: '' }, { key: 'prod', where: '', notes: '' }] });
 }
 
-export interface ArchitectureIssue { code: string; severity: 'important' | 'minor'; target: string; message: string; fix: string }
+/** «Исправить» without the AI: items from the platform's first design to add to a part of the design (the editor adds them). */
+export type ArchitectureFix = { kind: 'arch_add'; part: 'entities' | 'components' | 'threats'; items: Array<SchemaEntity | DesignComponent | DesignThreat>; relations?: SchemaRelation[] };
+export interface ArchitectureIssue { code: string; severity: 'important' | 'minor'; target: string; message: string; fix: string; autoFix?: ArchitectureFix }
 
 /** What the architecture owes the ТЗ (PRODUCT_LIFECYCLE §4.6 «Требования к результату»). */
-export function designIssues(design: ArchitectureDesign, features: AppFeatures | null): ArchitectureIssue[] {
+export function designIssues(design: ArchitectureDesign, features: AppFeatures | null, template: ArchitectureDesign | null = null): ArchitectureIssue[] {
   const issues: ArchitectureIssue[] = [];
   const entities = new Set(design.schema.entities.map((entity) => entity.key));
-  for (const key of new Set((features?.features ?? []).flatMap((feature) => feature.data ?? []))) {
-    if (!entities.has(key)) issues.push({ code: 'ARCH_ENTITY_MISSING', severity: 'important', target: 'schema', message: tr('Данные «{0}» есть в ТЗ, но их нет в схеме данных.', [key]), fix: tr('Добавьте запись в схему или уберите эти данные из функций ТЗ.') });
+  const add = (part: ArchitectureFix['part'], items: ArchitectureFix['items'], relations?: SchemaRelation[]): { autoFix?: ArchitectureFix } => (items.length ? { autoFix: { kind: 'arch_add', part, items, ...(relations?.length ? { relations } : {}) } } : {});
+  const missingData = [...new Set((features?.features ?? []).flatMap((feature) => feature.data ?? []))].filter((key) => !entities.has(key));
+  for (const key of missingData) {
+    // The record as the platform would draw it from the process, with its links to records already in the schema.
+    const entity = template?.schema.entities.find((item) => item.key === key);
+    const linked = template?.schema.relations.filter((relation) => (relation.from === key && (entities.has(relation.to) || relation.to === key)) || (relation.to === key && entities.has(relation.from))) ?? [];
+    issues.push({ code: 'ARCH_ENTITY_MISSING', severity: 'important', target: 'schema', message: tr('Данные «{0}» есть в ТЗ, но их нет в схеме данных.', [entity?.name ?? key]), fix: tr('Добавьте запись в схему или уберите эти данные из функций ТЗ.'), ...add('entities', entity ? [entity] : [], linked) });
   }
   const kinds = new Set(design.components.map((item) => item.kind));
-  if (design.schema.entities.length && !(kinds.has('database') && kinds.has('server_api'))) issues.push({ code: 'ARCH_CORE_MISSING', severity: 'important', target: 'components', message: tr('Есть данные, но нет сервера приложения или базы данных — их негде хранить и обрабатывать.'), fix: tr('Добавьте «Сервер приложения» и «Базу данных».') });
+  const core = (['server_api', 'database'] as const).filter((kind) => !kinds.has(kind)).map((kind) => template?.components.find((item) => item.kind === kind) ?? { key: kind, kind, name: tr(COMPONENT_CATALOG[kind].title), note: '' });
+  if (design.schema.entities.length && core.length) issues.push({ code: 'ARCH_CORE_MISSING', severity: 'important', target: 'components', message: tr('Есть данные, но нет сервера приложения или базы данных — их негде хранить и обрабатывать.'), fix: tr('Добавьте «Сервер приложения» и «Базу данных».'), ...add('components', core) });
   const names = design.components.map((item) => item.name.toLowerCase());
   for (const service of features?.services ?? []) {
-    if (!names.includes(service.name.toLowerCase())) issues.push({ code: 'ARCH_SERVICE_MISSING', severity: 'important', target: 'components', message: tr('Интеграция «{0}» есть в ТЗ, но не стала компонентом архитектуры.', [service.name]), fix: tr('Добавьте компонент с тем же названием: оплата, почта, мессенджер или внешний сервис.') });
+    const component = template?.components.find((item) => item.name.toLowerCase() === service.name.toLowerCase());
+    if (!names.includes(service.name.toLowerCase())) issues.push({ code: 'ARCH_SERVICE_MISSING', severity: 'important', target: 'components', message: tr('Интеграция «{0}» есть в ТЗ, но не стала компонентом архитектуры.', [service.name]), fix: tr('Добавьте компонент с тем же названием: оплата, почта, мессенджер или внешний сервис.'), ...add('components', component ? [component] : []) });
   }
   for (const key of QUALITY_KEYS) {
     if (!features?.quality?.[key] || design.decisions.some((decision) => decision.quality === key && decision.chosen)) continue;
     issues.push({ code: 'ARCH_QUALITY_NO_DECISION', severity: 'minor', target: 'decisions', message: tr('Требование «{0}» из ТЗ без решения: не видно, как его выполнить.', [features.quality[key]]), fix: tr('Добавьте решение: что выбрали, из каких вариантов и почему.') });
   }
   const assets = new Set(design.threats.map((threat) => threat.asset));
-  if (features && features.sensitivity !== 'normal' && !assets.has('personal_data')) issues.push({ code: 'ARCH_THREATS_PERSONAL', severity: 'important', target: 'threats', message: tr('Продукт хранит личные данные, но угроз для них не описано.'), fix: tr('Опишите, кто может получить чужие данные и что этому мешает.') });
+  const typical = (asset: DesignThreat['asset']) => template?.threats.filter((threat) => threat.asset === asset) ?? [];
+  if (features && features.sensitivity !== 'normal' && !assets.has('personal_data')) issues.push({ code: 'ARCH_THREATS_PERSONAL', severity: 'important', target: 'threats', message: tr('Продукт хранит личные данные, но угроз для них не описано.'), fix: tr('Опишите, кто может получить чужие данные и что этому мешает.'), ...add('threats', typical('personal_data')) });
   // Money is at stake when the ТЗ says so, a payment service is in its integrations, or the design has payments.
   const paysInSpec = (features?.services ?? []).some((service) => PAYMENT_NAME.test(service.name));
-  if ((features?.sensitivity === 'payments' || paysInSpec || kinds.has('payments')) && !assets.has('money')) issues.push({ code: 'ARCH_THREATS_MONEY', severity: 'important', target: 'threats', message: tr('В продукте есть деньги, но угроз для них не описано.'), fix: tr('Опишите, как могут обмануть с оплатой и что этому мешает.') });
+  if ((features?.sensitivity === 'payments' || paysInSpec || kinds.has('payments')) && !assets.has('money')) issues.push({ code: 'ARCH_THREATS_MONEY', severity: 'important', target: 'threats', message: tr('В продукте есть деньги, но угроз для них не описано.'), fix: tr('Опишите, как могут обмануть с оплатой и что этому мешает.'), ...add('threats', typical('money')) });
   for (const threat of design.threats) if (!threat.mitigation) issues.push({ code: 'ARCH_THREAT_NO_MITIGATION', severity: 'important', target: threat.key, message: tr('У угрозы «{0}» нет меры против неё.', [threat.how]), fix: tr('Напишите, что этому мешает: проверка на сервере, журнал, ограничение.') });
   for (const decision of design.decisions) if (!decision.chosen) issues.push({ code: 'ARCH_DECISION_OPEN', severity: 'minor', target: decision.key, message: tr('Решение «{0}» не принято.', [decision.title]), fix: tr('Выберите вариант и запишите почему.') });
   return issues;

@@ -404,6 +404,11 @@ ${nav ? `<nav class="screens" aria-label="${tr('Другие экраны рол
 const slug = (value: string) => pathFor(value).slice(1).replace(/-/g, '_') || 'item';
 const plural = (value: string) => `${slug(value)}s`;
 
+/** The platform's first design for an application: what «Исправить» on an architecture finding takes its additions from. */
+export function templateDesignFor(process: BusinessProcess | null, features: AppFeatures): ArchitectureDesign {
+  return templateDesign({ process, features, entities: entitiesOf(process, features), kindOf: fieldKind });
+}
+
 function entitiesOf(process: BusinessProcess | null, features: AppFeatures): ProcessEntity[] {
   const own = (process?.data ?? []).filter((entity) => entity.key !== 'user');
   const roles = features.roles.map((role) => role.name).join(' · ');

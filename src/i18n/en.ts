@@ -4010,4 +4010,9 @@ export const en: Record<string, string> = {
   "Нажмите «Согласовать с основной линией»: агент сведёт обе версии, платформа проверит результат.": "Press «Bring up to the main line»: the agent combines both versions and the platform checks the result.",
   "В коде модуля остались пометки конфликта: {0}.": "Conflict markers are left in the module's code: {0}.",
   "Запустите согласование ещё раз или поручите агенту убрать пометки.": "Run the bring-up again or ask the agent to remove the markers.",
+  "ИИ правит проектные решения: схему данных, компоненты, решения, угрозы и меры, окружения. Сначала он показывает, что изменит, — сохраняете вы. Сценарии и контракт API платформа пересчитает из новых решений сама.": "The AI edits the design decisions: the data schema, components, decisions, threats and their mitigations, environments. It first shows what it will change — you save it. The platform recomputes the scenarios and the API contract from the new decisions itself.",
+  "Добавь угрозы для оплаты и меры против них": "Add threats to payments and what stops them",
+  "Добавь в заказ поле «способ доставки» со статусами": "Add a «delivery method» field with statuses to the order",
+  "Добавь рассылку SMS-напоминаний": "Add SMS reminders",
+  "Опиши решение, где хранить резервные копии": "Describe a decision on where to keep backups",
 };
