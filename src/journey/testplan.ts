@@ -253,3 +253,9 @@ export function testPlanChanges(before: TestPlan, after: TestPlan): string[] {
   if (JSON.stringify(before.skipped) !== JSON.stringify(after.skipped)) lines.push(tr('Изменены ненужные классы'));
   return lines;
 }
+
+/** Cases the AI added are marked as its own; a case already in the plan keeps who wrote it, whatever the AI claims. */
+export function markAiCases(base: TestPlan | null, next: TestPlan): TestPlan {
+  const before = new Map((base?.cases ?? []).map((item) => [item.key, item.source]));
+  return { ...next, cases: next.cases.map((item) => ({ ...item, source: before.get(item.key) ?? 'ai' })) };
+}

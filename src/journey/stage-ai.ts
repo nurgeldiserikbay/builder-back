@@ -6,6 +6,9 @@ import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
 import { ACTOR_KINDS, CAPABILITIES } from './process.js';
 import { BLOCK_KINDS, PRIORITIES, SENSITIVITY } from './webapp.js';
 import { COMPONENT_CATALOG, FIELD_TYPES, RELATION_KINDS, THREAT_ACTORS, THREAT_ASSETS } from './architecture.js';
+import { CHANNELS, METHODS } from './contracts.js';
+import { EXECUTORS } from './roadmap.js';
+import { CASE_CLASSES, CASE_METHODS } from './testplan.js';
 
 export interface StageAiRequest {
   system: string; user: string; schemaName: string; schema: Record<string, unknown>;
@@ -190,6 +193,28 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
         }),
       });
     }
+    case 'contracts': case 'roadmap': case 'testplan': {
+      // The engineering stages of an application: the whole structure comes back, every part the request does not concern unchanged.
+      const obj = (properties: Record<string, unknown>) => ({ type: 'object', additionalProperties: false, required: Object.keys(properties), properties });
+      const str = { type: 'string' };
+      const strs = { type: 'array', items: str };
+      if (type === 'contracts') return obj({
+        modules: { type: 'array', items: obj({ key: str, name: str, owns: strs, features: strs }) },
+        operations: { type: 'array', items: obj({ key: str, module: str, method: { type: 'string', enum: [...METHODS] }, path: str, summary: str, feature: nullableString, roles: strs, entity: nullableString, action: { type: 'string', enum: [...ACCESS_ACTIONS, 'other'] }, errors: { type: 'array', items: obj({ status: { type: 'integer' }, code: str, when: str }) } }) },
+        events: { type: 'array', items: obj({ key: str, module: str, name: str, when: str, to: str, channel: { type: 'string', enum: [...CHANNELS] } }) },
+        integrations: { type: 'array', items: obj({ key: str, service: str, call: str, onError: str }) },
+      });
+      if (type === 'roadmap') return obj({
+        modules: { type: 'array', items: obj({ key: str, name: str, summary: str, contractModule: nullableString, dependsOn: strs, executor: { type: 'string', enum: [...EXECUTORS] }, tasks: { type: 'array', items: obj({ key: str, title: str, feature: nullableString, release: { type: 'integer', enum: [1, 2, 3] }, hours: { type: 'number' }, aiRequests: { type: 'integer' } }) } }) },
+        risks: { type: 'array', items: obj({ key: str, text: str, action: str, module: nullableString }) },
+        hoursPerDay: { type: 'number' }, notes: str,
+      });
+      return obj({
+        cases: { type: 'array', items: obj({ key: str, title: str, class: { type: 'string', enum: [...CASE_CLASSES] }, actor: nullableString, honest: { type: 'boolean' }, given: str, steps: strs, expected: str, mustNot: str, links: strs, task: nullableString, method: { type: 'string', enum: [...CASE_METHODS] }, blocking: { type: 'boolean' }, source: { type: 'string', enum: ['platform', 'owner', 'ai'] }, plain: str }) },
+        skipped: { type: 'array', items: obj({ class: { type: 'string', enum: [...CASE_CLASSES] }, why: str }) },
+        notes: str,
+      });
+    }
     default:
       throw new StageAiError('AI_NOT_SUPPORTED_FOR_STAGE');
   }
@@ -241,6 +266,7 @@ export function buildStagePrompt(input: StagePromptInput): StageAiRequest {
     system, user, schemaName: `buildpath_${input.stage.artifactType}`, schema: outputSchema(input.stage.artifactType, Boolean(input.targetKey && input.stage.artifactType === 'content')),
     // The whole design comes back every time: a larger answer than a form's.
     ...(input.stage.artifactType === 'techplan' ? { maxOutputTokens: 12000, timeoutMs: 120_000 } : {}),
+    ...(['contracts', 'roadmap', 'testplan'].includes(input.stage.artifactType) ? { maxOutputTokens: 16000, timeoutMs: 180_000 } : {}),
   };
 }
 
