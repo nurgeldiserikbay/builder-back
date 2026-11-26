@@ -3842,6 +3842,11 @@ paths:
         the whole plan the platform computes from that design, as on a save. Component kinds outside the catalog are dropped.
         The design is not a lockable part: the preview is where the person decides. Sites keep their architecture computed
         (AI_NOT_USED_FOR_STAGE).
+        Contracts, the implementation plan and the test plan of a web application (playbooks 1.1.0): the AI returns the whole
+        document (schemas buildpath_contracts, buildpath_roadmap, buildpath_testplan) and the review checks it as for a save
+        (rights wider than the ТЗ, cycles, cases without a result). These documents are reviewed as a whole: their parts are
+        not locked against the AI and an owner's save does not lock them (lockedKeys stay empty); they remain comment targets.
+        Test cases the AI adds get source ai whatever it claims; a case already in the plan keeps its source.
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:

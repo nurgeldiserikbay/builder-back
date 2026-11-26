@@ -234,6 +234,14 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown, projectType?
   }
 }
 
+/**
+ * Engineering documents of an application (contracts, plan, test plan): one connected whole where a change in one part
+ * touches others. The AI's changes to them are always reviewed as a whole — a preview the person applies, or a fix the
+ * person asked for — so parts are not locked against it; their parts still serve as comment targets.
+ */
+export const REVIEWED_AS_WHOLE: ReadonlySet<ArtifactType> = new Set(['contracts', 'roadmap', 'testplan']);
+export const aiLocksFor = (type: ArtifactType, locked: string[]): string[] => (REVIEWED_AS_WHOLE.has(type) ? [] : locked);
+
 /** Keys that can be locked against AI rewrites: brief/offer/design fields or content section keys. */
 export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'content') return (content as ContentArtifact).sections.map((section) => section.key).concat('seo', ...((content as ContentArtifact).pageSeo ? ['pageSeo'] : []));

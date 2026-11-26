@@ -26,7 +26,7 @@ import { dataNames } from './screen-access.js';
 import { mergeIntoMainLine, mergePreview } from '../agent/module-branch.js';
 import { setPlanBaseline } from './plan-schedule.service.js';
 import { appMonitoringView } from '../monitoring/app-monitor.js';
-import { changedKeys, completenessIssues, importBriefText, importContentText, importOfferText, lockableKeys, stableStringify, normalizeArtifact, sectionTypeLabels, importCatalogText, type Brief, type ContentArtifact, type Offer, type SiteArtifact } from './artifacts.js';
+import { changedKeys, completenessIssues, importBriefText, importContentText, importOfferText, lockableKeys, stableStringify, normalizeArtifact, sectionTypeLabels, importCatalogText, type Brief, type ContentArtifact, type Offer, type SiteArtifact, aiLocksFor } from './artifacts.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderPages, renderSite, siteMeta } from './site-renderer.js';
 import { RESERVED_PATHS, SITEMAP_LIMITS, templateSitemap, type Sitemap } from './sitemap.js';
 import { CATALOG_LIMITS, templateCatalog, tenge, type Catalog } from './products.js';
@@ -399,7 +399,7 @@ export class JourneyService {
       return { data: { versionId: base.id, versionNumber: base.versionNumber, changed: [] } };
     }
     const valid = new Set(lockableKeys(definition.artifactType, content));
-    const locked = [...new Set([...stage.lockedKeys, ...changed])].filter((item) => valid.has(item));
+    const locked = aiLocksFor(definition.artifactType, [...new Set([...stage.lockedKeys, ...changed])].filter((item) => valid.has(item)));
     const version = await this.prisma.$transaction(async (tx) => {
       const created = await this.core.createVersion(tx, { projectId, stage, artifactType: definition.artifactType, content, origin: 'owner_edit', note: 'Изменено вручную', userId, lockedKeys: locked });
       await this.core.event(tx, projectId, userId, 'stage_draft_saved', key, { versionNumber: created.versionNumber, changed });

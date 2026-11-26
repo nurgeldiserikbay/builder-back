@@ -511,6 +511,77 @@ describe('web application route (database)', async () => {
     await assert.rejects(journey.dismissProposal(owner.id, projectId, 'process', stale.proposalId), /PROPOSAL_CLOSED/);
   });
 
+  it('contracts, plan and test plan: the AI proposes, the person applies; the AI\'s cases are marked as its own', { skip }, async () => {
+    const billing = new BillingService(prisma!);
+    const core = new JourneyCore(prisma!, billing);
+    core.provider = null;
+    const worktime = new WorktimeService(prisma!);
+    const stageAi = new StageAiService(prisma!, core, worktime);
+    const review = new StageReviewService(prisma!, core, stageAi);
+    const journey = new JourneyService(prisma!, billing, worktime, core, stageAi, new ChangeNoticesService(prisma!, core), review);
+    const email = `eng-ai-${randomUUID()}@test.local`;
+    const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), name: 'Owner' } });
+    users.push(owner.id);
+    const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
+    await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
+    const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Инженерия', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
+    const versionOf = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId!;
+    const accept = async (key: string) => journey.accept(owner.id, projectId, key, await versionOf(key));
+    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
+    await accept('goal');
+    for (const key of ['idea', 'suggestions', 'concept']) await journey.skip(owner.id, projectId, key, 'Не нужно для этого проекта');
+    for (const key of ['process', 'features', 'screens']) { await journey.generate(owner.id, projectId, key, { instruction: null, saveAs: 'one_off', targetKey: null }); await accept(key); }
+    const preview = (await journey.stage(owner.id, projectId, 'techplan')).data.options.techplan!.preview as unknown as { design: unknown };
+    await journey.saveDraft(owner.id, projectId, 'techplan', { content: { ownerNotes: null, design: preview.design }, baseVersionId: null });
+    await accept('techplan');
+    type Op = { key: string; roles: string[]; errors: Array<{ status: number; code: string; when: string }>; entity: string | null; action: string; method: string; path: string };
+    const template = ((await journey.stage(owner.id, projectId, 'contracts')).data.options.contracts as unknown as { template: { operations: Op[] } & Record<string, unknown> }).template;
+    await journey.saveDraft(owner.id, projectId, 'contracts', { content: template, baseVersionId: null });
+
+    let answer: (draft: Record<string, unknown>) => unknown = (draft) => draft;
+    const asked: string[] = [];
+    core.provider = { name: 'fake', model: 'fake-1', async generate(request) { asked.push(request.schemaName); return answer(JSON.parse(request.user).currentDraft as Record<string, unknown>); } };
+
+    // Contracts: the AI adds an edge case to an operation and widens a right the ТЗ does not give; the review says so before saving.
+    const target = template.operations.find((item) => item.roles.length && item.method === 'POST')!;
+    answer = (draft) => ({ ...draft, operations: (draft.operations as Op[]).map((item) => (item.key === target.key ? { ...item, errors: [...item.errors, { status: 409, code: 'SLOT_TAKEN', when: 'Это время уже занято' }], roles: [...item.roles, 'ghost_role'] } : item)) });
+    const before = await versionOf('contracts');
+    const proposal = (await journey.proposeChange(owner.id, projectId, 'contracts', { instruction: 'Добавь крайние случаи', targetKey: null })).data;
+    assert.equal(asked.at(-1), 'buildpath_contracts');
+    assert.equal(await versionOf('contracts'), before, 'nothing is saved before applying');
+    const proposed = (proposal.content as { operations: Op[] }).operations.find((item) => item.key === target.key)!;
+    assert.ok(proposed.errors.some((error) => error.code === 'SLOT_TAKEN'));
+    assert.ok(proposal.findings.some((finding) => finding.code.startsWith('CONTRACT_') && finding.target === target.key), 'a right wider than the ТЗ is a finding');
+    await journey.dismissProposal(owner.id, projectId, 'contracts', proposal.proposalId);
+    answer = (draft) => ({ ...draft, operations: (draft.operations as Op[]).map((item) => (item.key === target.key ? { ...item, errors: [...item.errors, { status: 409, code: 'SLOT_TAKEN', when: 'Это время уже занято' }] } : item)) });
+    const clean = (await journey.proposeChange(owner.id, projectId, 'contracts', { instruction: 'Добавь крайние случаи', targetKey: null })).data;
+    await journey.applyProposal(owner.id, projectId, 'contracts', clean.proposalId);
+    await accept('contracts');
+
+    // The plan: the AI moves a task to the second release.
+    type Module = { key: string; tasks: Array<{ key: string; release: number }> } & Record<string, unknown>;
+    const roadmap = ((await journey.stage(owner.id, projectId, 'roadmap')).data.options.roadmap as unknown as { template: { modules: Module[] } & Record<string, unknown> }).template;
+    await journey.saveDraft(owner.id, projectId, 'roadmap', { content: roadmap, baseVersionId: null });
+    const moved = roadmap.modules.flatMap((module) => module.tasks).at(-1)!;
+    answer = (draft) => ({ ...draft, modules: (draft.modules as Module[]).map((module) => ({ ...module, tasks: module.tasks.map((task) => (task.key === moved.key ? { ...task, release: 2 } : task)) })) });
+    const plan = (await journey.proposeChange(owner.id, projectId, 'roadmap', { instruction: 'Перенеси последнюю задачу во второй выпуск', targetKey: null })).data;
+    assert.equal(asked.at(-1), 'buildpath_roadmap');
+    assert.equal((plan.content as { modules: Module[] }).modules.flatMap((module) => module.tasks).find((task) => task.key === moved.key)!.release, 2);
+    await journey.applyProposal(owner.id, projectId, 'roadmap', plan.proposalId);
+    await accept('roadmap');
+
+    // The test plan: a case the AI adds is marked as the AI's, even if it claims otherwise; existing cases keep their author.
+    type Case = { key: string; source: string; class: string } & Record<string, unknown>;
+    const cases = ((await journey.stage(owner.id, projectId, 'testplan')).data.options.testplan as unknown as { template: { cases: Case[] } & Record<string, unknown> }).template;
+    await journey.saveDraft(owner.id, projectId, 'testplan', { content: cases, baseVersionId: null });
+    answer = (draft) => ({ ...draft, cases: [...(draft.cases as Case[]), { ...(draft.cases as Case[])[0]!, key: 'fake_booking', title: 'Ложная запись', class: 'dishonest', honest: false, source: 'platform', plain: 'Мы проверим, что ложные записи не проходят.' }] });
+    const tests = (await journey.proposeChange(owner.id, projectId, 'testplan', { instruction: 'Добавь злоупотребления', targetKey: null })).data;
+    assert.equal(asked.at(-1), 'buildpath_testplan');
+    const all = (tests.content as { cases: Case[] }).cases;
+    assert.equal(all.find((item) => item.key === 'fake_booking')!.source, 'ai');
+    assert.equal(all.find((item) => item.key === cases.cases[0]!.key)!.source, cases.cases[0]!.source);
+  });
+
   it('architecture: «Исправить» adds what the platform would draw, and the AI changes the design only after a preview', { skip }, async () => {
     const billing = new BillingService(prisma!);
     const core = new JourneyCore(prisma!, billing);

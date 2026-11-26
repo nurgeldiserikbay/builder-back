@@ -28,7 +28,8 @@ describe('contracts of a web application', () => {
     assert.ok(routeInputs(stages, 'handoff').includes('contracts'));
     // Sites have no contracts stage: the platform builds them itself.
     assert.ok(!projectTypes.booking.stages.includes('contracts'));
-    assert.equal(stageDefinitions.contracts.ai.level, 'none');
+    // The platform drafts them; the AI changes them only through a preview the person applies.
+    assert.equal(stageDefinitions.contracts.ai.level, 'ai_assist');
   });
 
   it('the first draft follows the access matrix: no operation is wider than the ТЗ allows, every must feature is covered', () => {
