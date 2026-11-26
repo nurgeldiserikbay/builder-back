@@ -1,10 +1,12 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
+import { PlanScheduleService } from './plan-schedule.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { tr } from '../i18n/i18n.js';
 import { acceptRoles, inProject } from './journey-core.js';
 import { JourneyCore } from './journey-core.js';
 import { scheduleOf, type Roadmap, type RoadmapModule } from './roadmap.js';
 import type { TestPlan } from './testplan.js';
+import { workingDaysFrom } from './plan-schedule.js';
 
 export const TASK_STATUSES = ['not_started', 'in_progress', 'review', 'done', 'done_with_note', 'blocked'] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
@@ -21,7 +23,7 @@ const finished = (status: TaskStatus) => status === 'done' || status === 'done_w
  */
 @Injectable()
 export class RoadmapProgressService {
-  constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore) {}
+  constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore, @Optional() private readonly schedule?: PlanScheduleService) {}
 
   private async plan(userId: string, projectId: string, access: 'read' | 'write') {
     const ctx = await this.core.load(userId, projectId, access, 'roadmap');
@@ -101,6 +103,7 @@ export class RoadmapProgressService {
       this.prisma.generationRun.count({ where: { projectId, createdAt: { gte: since }, provider: { not: 'template' } } }),
       this.prisma.timeEntry.findMany({ where: { projectId, startedAt: { gte: since }, status: { not: 'disputed' } }, select: { startedAt: true, endedAt: true } }),
     ]);
+    const promise = await this.prisma.planSchedule.findUnique({ where: { projectId } });
     const hoursSpent = Math.round(entries.reduce((sum, entry) => sum + (entry.endedAt.getTime() - entry.startedAt.getTime()), 0) / 360_000) / 10;
     const all = modules.flatMap((module) => module.tasks.map((task) => ({ ...task, module: module.name, critical: module.critical })));
     const next = all.filter((task) => !finished(task.status) && task.status !== 'blocked').sort((a, b) => Number(b.critical) - Number(a.critical) || a.release - b.release)[0] ?? null;
@@ -108,6 +111,8 @@ export class RoadmapProgressService {
       data: {
         versionNumber, hoursPerDay: plan.hoursPerDay, progress: total ? Math.round((done / total) * 100) : 0, hoursDone: done, hoursTotal: total,
         criticalPath: schedule?.criticalPath ?? [], expectedFinish: finish.toISOString().slice(0, 10), remainingCriticalHours: remainingCritical,
+        // What the plan promised when it was accepted; null for a plan accepted before the promise was kept.
+        promisedFinish: promise && promise.planVersion === versionNumber ? promise.baselineFinish.toISOString().slice(0, 10) : null,
         spent: { aiRequests: runs, specialistHours: hoursSpent }, planned: { aiRequests: schedule?.totalRequests ?? 0, hours: schedule?.totalHours ?? 0 },
         blocked: all.filter((task) => task.status === 'blocked').map((task) => ({ key: task.key, title: task.title, module: task.module, blockedBy: task.blockedBy })),
         late: all.filter((task) => task.late).map((task) => ({ key: task.key, title: task.title, module: task.module, dueDate: task.dueDate, critical: task.critical })),
@@ -153,6 +158,8 @@ export class RoadmapProgressService {
       await tx.planTaskState.upsert({ where: { projectId_taskKey: { projectId, taskKey } }, create: { projectId, taskKey, ...data }, update: data });
       if ((current?.status ?? 'not_started') !== status) await this.core.event(tx, projectId, userId, 'plan_task_status', 'roadmap', { taskKey, from: current?.status ?? 'not_started', to: status, ...(status === 'done_with_note' ? { note } : {}) });
     });
+    // A changed date or a blocked task can move the finish: worked out again now, not at the next hourly round.
+    await this.schedule?.check(projectId).catch(() => null);
     return this.view(userId, projectId);
   }
 
@@ -257,13 +264,4 @@ export class RoadmapProgressService {
 }
 
 /** A date `days` working days (Monday–Friday) after `from`. */
-export function workingDaysFrom(from: Date, days: number): Date {
-  const date = new Date(from);
-  let left = days;
-  while (left > 0) {
-    date.setUTCDate(date.getUTCDate() + 1);
-    const day = date.getUTCDay();
-    if (day !== 0 && day !== 6) left -= 1;
-  }
-  return date;
-}
+export { workingDaysFrom } from './plan-schedule.js';

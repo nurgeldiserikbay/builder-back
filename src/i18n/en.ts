@@ -3980,4 +3980,10 @@ export const en: Record<string, string> = {
   "Операции модуля отвечают так, как обещано в контрактах": "The module's operations answer as the contracts promise",
   "Операции модуля есть, без входа отвечают 401 и не падают — платформа проверяет это сама.": "The module's operations exist, answer 401 without sign-in and do not fail — the platform checks this itself.",
   "Операции отвечают по контрактам": "Operations answer as the contracts promise",
+  "BuildPath: срок проекта «{0}» сдвигается": "BuildPath: the finish of «{0}» is moving",
+  "Открыть план": "Open the plan",
+  "Срок проекта «{0}» сдвигается: по плану — {1}, сейчас выходит {2} (на {3} раб. дн. позже).": "The finish of «{0}» is moving: the plan said {1}, now it comes out {2} ({3} working days later).",
+  "На критическом пути осталось {0} ч.": "{0} h are left on the critical path.",
+  "Опаздывают задачи: {0}.": "Late tasks: {0}.",
+  "Решите, что делать: добавить людей или ИИ-агента на модули критического пути, перенести часть функций в следующий выпуск или согласиться с новым сроком.": "Decide what to do: add people or the AI agent to the critical-path modules, move some features to the next release, or accept the new date.",
 };

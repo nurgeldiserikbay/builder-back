@@ -22,6 +22,7 @@ import { expandedSchema, type ArchitectureDesign } from './architecture.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { stageFor, stageTitle, ROUTE_CATALOG_VERSION, projectTypes, routeInputs, statusExplanations, type StageKey, definitionOf, moduleStageDefinition, isModuleStageKey, moduleKeyOf } from './catalog.js';
 import { syncModuleStages, MODULE_REMOVED_NOTE } from './module-stages.js';
+import { setPlanBaseline } from './plan-schedule.service.js';
 import { changedKeys, completenessIssues, importBriefText, importContentText, importOfferText, lockableKeys, stableStringify, normalizeArtifact, sectionTypeLabels, importCatalogText, type Brief, type ContentArtifact, type Offer, type SiteArtifact } from './artifacts.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderPages, renderSite, siteMeta } from './site-renderer.js';
 import { RESERVED_PATHS, SITEMAP_LIMITS, templateSitemap, type Sitemap } from './sitemap.js';
@@ -702,6 +703,8 @@ export class JourneyService {
     // An accepted plan of an application creates its module stages (§4.9); a new plan version adds, renames or sets them
     // aside. After the notices: a module set aside has nothing to decide about the new plan.
     if (stageKey === 'roadmap' && ctx.type.key === 'web_app') {
+      // The plan's promise: its finish from today. People are told when the work moves it later (plan-schedule.service).
+      await setPlanBaseline(tx, { projectId: ctx.project.id, plan: version.content as Roadmap, planVersion: version.versionNumber });
       const synced = await syncModuleStages(tx, { projectId: ctx.project.id, userId, roadmap: version.content as Roadmap, typeStages: ctx.type.stages, stages: ctx.stages, statuses: { ...ctx.dep, roadmap: 'approved' }, definitionVersion: moduleStageDefinition.version });
       const gone = new Set([...synced.removed, ...synced.setAside].map((moduleKey) => `m_${moduleKey}`));
       return notices.filter((notice: { targetKey: StageKey }) => !gone.has(notice.targetKey));

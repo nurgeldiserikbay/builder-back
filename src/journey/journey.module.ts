@@ -16,11 +16,12 @@ import { ChangeProposalsService } from './change-proposals.service.js';
 import { PlaybooksService } from './playbooks.service.js';
 import { RoadmapProgressService } from './roadmap-progress.service.js';
 import { BacklogService } from './backlog.service.js';
+import { PlanScheduleService } from './plan-schedule.service.js';
 
 @Module({
   imports: [AuthModule, CatalogModule],
   controllers: [JourneyController, InviteInfoController],
-  providers: [JourneyCore, StageAiService, InterviewService, ChangeNoticesService, JourneyService, SpecialistsService, WorktimeService, ChangeDeadlinesService, CommentsService, StageReviewService, ChangeProposalsService, PlaybooksService, RoadmapProgressService, BacklogService],
+  providers: [JourneyCore, StageAiService, InterviewService, ChangeNoticesService, JourneyService, SpecialistsService, WorktimeService, ChangeDeadlinesService, CommentsService, StageReviewService, ChangeProposalsService, PlaybooksService, RoadmapProgressService, BacklogService, PlanScheduleService],
   exports: [JourneyService, SpecialistsService, WorktimeService, JourneyCore, CommentsService, StageReviewService, InterviewService],
 })
 export class JourneyModule {}

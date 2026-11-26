@@ -398,6 +398,7 @@ model Project {
   stagePlaybooks  StagePlaybook[]
   hostingConnection HostingConnection?
   networkAgents   NetworkAgent[]
+  planSchedule    PlanSchedule?
 }
 
 model ProjectMember {
@@ -2549,4 +2550,19 @@ model NetworkAgentJob {
   @@index([agentId, status, createdAt], map: "network_agent_jobs_agent_status_idx")
   @@index([projectId, createdAt], map: "network_agent_jobs_project_idx")
   @@map("network_agent_jobs")
+}
+
+/// The finish of an application's accepted implementation plan (PRODUCT_LIFECYCLE §4.8): the date it promised when it was
+/// accepted, the date the work points to now, and the date the owner was last told about. The owner and managers are told
+/// when the finish moves later by two working days or more; they see it in «Входящие» while it stays later.
+model PlanSchedule {
+  projectId      String    @id @map("project_id") @db.Uuid
+  planVersion    Int       @map("plan_version")
+  baselineFinish DateTime  @map("baseline_finish") @db.Date
+  forecastFinish DateTime  @map("forecast_finish") @db.Date
+  notifiedFinish DateTime? @map("notified_finish") @db.Date
+  checkedAt      DateTime  @default(now()) @map("checked_at") @db.Timestamptz(3)
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@map("plan_schedules")
 }

@@ -45,7 +45,7 @@ export class InboxService {
       items.push({ dueAt: null, count: 1, who: null, text: null, ...item, projectName: project.name, projectType: project.projectType });
     };
 
-    const [reviews, returned, notices, proposals, hours, disputes, mentions, requests] = await Promise.all([
+    const [reviews, returned, notices, proposals, hours, disputes, mentions, requests, myTasks, slips] = await Promise.all([
       // Stages waiting for acceptance, unless this person already gave their approval for the current version.
       managed.length ? this.prisma.projectStage.findMany({
         where: { projectId: { in: managed }, status: 'in_review' },
@@ -103,6 +103,16 @@ export class InboxService {
         where: { projectId: { in: managed }, status: 'open', closesAt: { gt: new Date() }, responses: { some: { status: 'sent' } } },
         select: { id: true, projectId: true, closesAt: true, stage: { select: { stageKey: true } }, responses: { where: { status: 'sent' }, orderBy: { createdAt: 'asc' }, select: { createdAt: true } } },
       }) : [],
+      // Tasks of an implementation plan given to this person and not done yet, in the projects they still work in.
+      projects.size ? this.prisma.planTaskState.findMany({
+        where: { assigneeUserId: userId, projectId: { in: [...projects.keys()] }, status: { notIn: ['done', 'done_with_note'] } },
+        select: { projectId: true, taskKey: true, title: true, dueDate: true, updatedAt: true, status: true },
+      }) : [],
+      // A plan whose finish moved later than it promised and people were told: the owner and managers decide what to do.
+      managed.length ? this.prisma.planSchedule.findMany({
+        where: { projectId: { in: managed }, notifiedFinish: { not: null } },
+        select: { projectId: true, baselineFinish: true, forecastFinish: true, notifiedFinish: true, checkedAt: true },
+      }) : [],
     ]);
 
     for (const stage of reviews) {
@@ -136,6 +146,32 @@ export class InboxService {
 
     for (const request of requests) {
       push({ id: `request:${request.id}`, kind: 'request_responses', projectId: request.projectId, stageKey: request.stage.stageKey, since: request.responses[0]!.createdAt.toISOString(), dueAt: request.closesAt.toISOString(), count: request.responses.length });
+    }
+
+    // One item per project: how many tasks, the nearest date; the plan's page shows which.
+    type TaskRow = { projectId: string; taskKey: string; title: string | null; dueDate: Date | null; updatedAt: Date };
+    const byProject = new Map<string, TaskRow[]>();
+    for (const task of myTasks as TaskRow[]) byProject.set(task.projectId, [...(byProject.get(task.projectId) ?? []), task]);
+    // A plan task's title is in the accepted plan (only the owner's remarks carry their own).
+    const titleOf = async (projectId: string, task: TaskRow) => {
+      if (task.title) return task.title;
+      const stage = await this.prisma.projectStage.findFirst({ where: { projectId, stageKey: 'roadmap' }, select: { approvedVersionId: true } });
+      const version = stage?.approvedVersionId ? await this.prisma.stageArtifactVersion.findUnique({ where: { id: stage.approvedVersionId }, select: { content: true } }) : null;
+      const plan = version?.content as { modules?: Array<{ tasks?: Array<{ key: string; title: string }> }> } | undefined;
+      return plan?.modules?.flatMap((module) => module.tasks ?? []).find((item) => item.key === task.taskKey)?.title ?? task.taskKey;
+    };
+    for (const [projectId, tasks] of byProject) {
+      const dated = tasks.filter((task) => task.dueDate).sort((a, b) => a.dueDate!.getTime() - b.dueDate!.getTime());
+      const oldest = tasks.reduce((first, task) => (task.updatedAt < first.updatedAt ? task : first));
+      push({ id: `tasks:${projectId}`, kind: 'plan_tasks', projectId, stageKey: 'roadmap', since: oldest.updatedAt.toISOString(), count: tasks.length,
+        dueAt: dated[0] ? new Date(`${dated[0].dueDate!.toISOString().slice(0, 10)}T23:59:59.000Z`).toISOString() : null,
+        text: tasks.length === 1 ? quote(await titleOf(projectId, tasks[0]!)) : null });
+    }
+    for (const slip of slips as Array<{ projectId: string; baselineFinish: Date; forecastFinish: Date; checkedAt: Date }>) {
+      // Still later than promised: the item stays until the finish is back or a new plan version makes a new promise.
+      if (slip.forecastFinish <= slip.baselineFinish) continue;
+      push({ id: `slip:${slip.projectId}:${slip.forecastFinish.toISOString().slice(0, 10)}`, kind: 'plan_slip', projectId: slip.projectId, stageKey: 'roadmap', since: slip.checkedAt.toISOString(),
+        text: `${slip.baselineFinish.toISOString().slice(0, 10)}→${slip.forecastFinish.toISOString().slice(0, 10)}` });
     }
 
     const updates = await this.updates(userId, memberships, assignments);
