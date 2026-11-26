@@ -2742,7 +2742,7 @@ paths:
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       responses:
-        '200': { description: 'data — waiting[] (id, kind: stage_review|stage_changes|change_notice|change_proposal|time_entries|dispute|mention|request_responses, projectId, projectName, projectType, stageKey, since, dueAt, count, who, text), updates[] (id, projectId, projectName, projectType, type, kind, stageKey, createdAt, details, actor { id, name, isMe } or null, unread), unreadUpdates, seenAt' }
+        '200': { description: 'data — waiting[] (id, kind: stage_review|stage_changes|change_notice|change_proposal|time_entries|dispute|mention|request_responses|plan_tasks|plan_slip — plan_tasks: unfinished implementation-plan tasks given to this person, one item per project, count, dueAt the nearest task date, text the title when there is one task; plan_slip: for the owner and managers while the plan''s finish is later than promised after they were told, text «promised→forecast» dates, projectId, projectName, projectType, stageKey, since, dueAt, count, who, text), updates[] (id, projectId, projectName, projectType, type, kind, stageKey, createdAt, details, actor { id, name, isMe } or null, unread), unreadUpdates, seenAt' }
         '401': { description: Not signed in }
   /me/inbox/seen:
     post:
@@ -4545,7 +4545,7 @@ paths:
       tags: [Journey]
       operationId: getRoadmapProgress
       summary: Progress of the accepted implementation plan («План реализации», web application route, catalog 1.14.0)
-      description: 'Modules with tasks (key, title, feature, release, hours, aiRequests, status, assigneeUserId, assignee, dueDate, note, blockedBy, late, checks { total, passed, failed } from the cases of the accepted test plan), progress per module and in total weighted by estimated hours, the critical path, the expected finish (today plus the remaining hours of the critical path in working days), blocked and late tasks, the next important task, AI requests and specialist hours spent since approval against the plan, people who can take a task, canEdit.  Also testPlanApproved, agentRunning, and per module agent { taskId, status, startedAt, finishedAt } of its latest agent task or null. The owner''s remarks on scenarios appear as tasks of their module with hours 0 and fromCase set; tasks of the plan have fromCase null.'
+      description: 'Modules with tasks (key, title, feature, release, hours, aiRequests, status, assigneeUserId, assignee, dueDate, note, blockedBy, late, checks { total, passed, failed } from the cases of the accepted test plan), progress per module and in total weighted by estimated hours, the critical path, the expected finish (today plus the remaining hours of the critical path in working days), promisedFinish (the finish fixed when this plan version was accepted, plan_schedules; null for a plan accepted before it was kept), blocked and late tasks, the next important task, AI requests and specialist hours spent since approval against the plan, people who can take a task, canEdit.  Also testPlanApproved, agentRunning, and per module agent { taskId, status, startedAt, finishedAt } of its latest agent task or null. The owner''s remarks on scenarios appear as tasks of their module with hours 0 and fromCase set; tasks of the plan have fromCase null.'
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:

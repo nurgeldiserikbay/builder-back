@@ -12,7 +12,7 @@ const exact: Record<string, ActivityKind> = {
   stage_generated: 'ai', stage_ai_reviewed: 'ai', app_code_generated: 'ai', voice_transcribed: 'ai', analysis_run_requested: 'ai',
   starter_check_requested: 'ai', interview_applied: 'stage', handoff_built: 'stage', assignments_completed: 'team',
   approval_policy_changed: 'stage', stage_request_created: 'team', stage_request_response: 'team', stage_request_filled: 'team', stage_request_cancelled: 'team', review_override: 'stage', ai_spend_limit_changed: 'money', choice_made: 'site',
-  browser_check_requested: 'site', deployment_checked: 'site', quality_profile_changed: 'site', route_created: 'stage', project_cancelled: 'other',
+  browser_check_requested: 'site', deployment_checked: 'site', quality_profile_changed: 'site', route_created: 'stage', project_cancelled: 'other', plan_finish_moved: 'stage', plan_task_status: 'stage',
 };
 const prefixes: Array<[string, ActivityKind]> = [
   ['specialist_payment_', 'money'], ['specialist_paid_', 'money'], ['top_up_', 'money'], ['refund_', 'money'], ['time_', 'money'], ['dispute_', 'money'],
@@ -50,7 +50,7 @@ export function canSee(viewer: ActivityViewer, event: { type: string; stageKey: 
 }
 
 /** Details shown in the log: short scalar facts only, never free text, contacts, tokens or file contents. */
-const detailKeys = ['versionNumber', 'sourceStageKey', 'role', 'rating', 'amount', 'status', 'outcome', 'buildVersion', 'approvals', 'byOwner', 'stageKeys'] as const;
+const detailKeys = ['versionNumber', 'sourceStageKey', 'role', 'rating', 'amount', 'status', 'outcome', 'buildVersion', 'approvals', 'byOwner', 'stageKeys', 'baseline', 'to', 'workingDaysLate'] as const;
 export function publicDetails(raw: unknown): Record<string, string | number | boolean | string[]> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const input = raw as Record<string, unknown>;
@@ -65,7 +65,7 @@ export function publicDetails(raw: unknown): Record<string, string | number | bo
   return out;
 }
 
-export type InboxKind = 'stage_review' | 'stage_changes' | 'change_notice' | 'change_proposal' | 'time_entries' | 'dispute' | 'mention' | 'request_responses';
+export type InboxKind = 'stage_review' | 'stage_changes' | 'change_notice' | 'change_proposal' | 'time_entries' | 'dispute' | 'mention' | 'request_responses' | 'plan_tasks' | 'plan_slip';
 export interface InboxItem {
   id: string;
   kind: InboxKind;
@@ -85,7 +85,7 @@ export interface InboxItem {
   text: string | null;
 }
 
-const urgency: Record<InboxKind, number> = { dispute: 0, change_notice: 1, stage_review: 2, stage_changes: 3, change_proposal: 4, request_responses: 5, time_entries: 6, mention: 7 };
+const urgency: Record<InboxKind, number> = { dispute: 0, change_notice: 1, stage_review: 2, stage_changes: 3, plan_slip: 4, change_proposal: 5, plan_tasks: 6, request_responses: 7, time_entries: 8, mention: 9 };
 
 /** Overdue first, then by deadline, then by how urgent the kind is, then the oldest. */
 export function orderInbox(items: InboxItem[], now: Date = new Date()): InboxItem[] {
