@@ -706,6 +706,23 @@ export function stageFor(key: StageKey, typeKey: string | null | undefined): Sta
       outcome: 'Схема данных, компоненты, решения, угрозы и меры, окружения, сценарии по шагам и контракт API.',
       acceptance: ['Все данные из ТЗ есть в схеме', 'Все интеграции из ТЗ стали компонентами', 'У денег и личных данных описаны угрозы и меры', 'По требованиям ТЗ приняты решения'],
       acceptExplanation: 'Архитектура станет договорённостью для разработки: по ней строятся контракты и план. Если позже изменится ТЗ, она получит уведомление.',
+      // The AI edits the decisions people own; the plan's base (scenarios, the API contract) is still computed from them.
+      ai: {
+        level: 'ai_assist',
+        whatItDoes: 'ИИ правит проектные решения: схему данных, компоненты, решения, угрозы и меры, окружения. Сначала он показывает, что изменит, — сохраняете вы. Сценарии и контракт API платформа пересчитает из новых решений сама.',
+        instructionExamples: ['Добавь угрозы для оплаты и меры против них', 'Добавь в заказ поле «способ доставки» со статусами', 'Добавь рассылку SMS-напоминаний', 'Опиши решение, где хранить резервные копии'],
+      },
+      playbook: {
+        version: '1.0.0',
+        instructions: [
+          'Return the whole design (schema, components, decisions, threats, environments) and ownerNotes, with every part the instruction does not concern exactly as in currentDraft: same keys, same order, same wording.',
+          'Keep the key of every existing entity, field, relation, component, decision and threat; give new items new lowercase keys (a-z, 0-9, _). A relation and a ref field point only at entity keys that exist.',
+          'Components come only from the catalog kinds in the schema; an outside service from the ТЗ (confirmedInputs.features.services) is a component with the same name. Do not add services the ТЗ does not have unless the instruction asks.',
+          'A threat names what is at risk (asset), who (actor), how in one concrete sentence, and a mitigation the server enforces (checks on the server, logs, limits, signatures) — never «be careful».',
+          'A decision lists the options considered, the chosen one, why, and what it changes; link it to the ТЗ requirement it answers (quality) when there is one. Do not mark a decision chosen unless the instruction or the inputs decide it; leave chosen empty for the owner otherwise.',
+          'Data fields use the given types; status fields list their values; personal data (email, phone) is required only when the ТЗ needs it. Do not invent prices, providers or hosting the inputs do not name.',
+        ],
+      },
     };
   }
   if (typeKey === 'web_app' && key === 'process') {

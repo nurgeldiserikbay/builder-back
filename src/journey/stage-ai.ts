@@ -5,6 +5,7 @@ import { sectionTypes } from './artifacts.js';
 import { corners, fonts, heroLayouts, palettes } from './site-renderer.js';
 import { ACTOR_KINDS, CAPABILITIES } from './process.js';
 import { BLOCK_KINDS, PRIORITIES, SENSITIVITY } from './webapp.js';
+import { COMPONENT_CATALOG, FIELD_TYPES, RELATION_KINDS, THREAT_ACTORS, THREAT_ASSETS } from './architecture.js';
 
 export interface StageAiRequest {
   system: string; user: string; schemaName: string; schema: Record<string, unknown>;
@@ -170,6 +171,25 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
         },
       };
     }
+    case 'techplan': {
+      // An application's design: what people own in the architecture. The rest of the plan is computed from it.
+      const obj = (properties: Record<string, unknown>) => ({ type: 'object', additionalProperties: false, required: Object.keys(properties), properties });
+      const str = { type: 'string' };
+      const field = obj({ key: str, name: str, type: { type: 'string', enum: [...FIELD_TYPES] }, required: { type: 'boolean' }, unique: { type: 'boolean' }, ref: nullableString, options: { type: 'array', items: str } });
+      return obj({
+        ownerNotes: nullableString,
+        design: obj({
+          schema: obj({
+            entities: { type: 'array', items: obj({ key: str, name: str, plain: str, fields: { type: 'array', items: field } }) },
+            relations: { type: 'array', items: obj({ key: str, from: str, to: str, kind: { type: 'string', enum: [...RELATION_KINDS] }, label: str }) },
+          }),
+          components: { type: 'array', items: obj({ key: str, kind: { type: 'string', enum: Object.keys(COMPONENT_CATALOG) }, name: str, note: str }) },
+          decisions: { type: 'array', items: obj({ key: str, title: str, options: { type: 'array', items: str }, chosen: str, why: str, consequences: str, quality: { type: ['string', 'null'], enum: [...QUALITY_KEYS, null] } }) },
+          threats: { type: 'array', items: obj({ key: str, asset: { type: 'string', enum: [...THREAT_ASSETS] }, actor: { type: 'string', enum: [...THREAT_ACTORS] }, how: str, mitigation: str }) },
+          environments: { type: 'array', items: obj({ key: { type: 'string', enum: ['test', 'prod'] }, where: str, notes: str }) },
+        }),
+      });
+    }
     default:
       throw new StageAiError('AI_NOT_SUPPORTED_FOR_STAGE');
   }
@@ -217,7 +237,11 @@ export function buildStagePrompt(input: StagePromptInput): StageAiRequest {
     ...(input.ownerConversation ? { ownerConversation: input.ownerConversation } : {}),
     ...(input.specialistPlaybook ? { specialistPlaybook: input.specialistPlaybook } : {}),
   });
-  return { system, user, schemaName: `buildpath_${input.stage.artifactType}`, schema: outputSchema(input.stage.artifactType, Boolean(input.targetKey && input.stage.artifactType === 'content')) };
+  return {
+    system, user, schemaName: `buildpath_${input.stage.artifactType}`, schema: outputSchema(input.stage.artifactType, Boolean(input.targetKey && input.stage.artifactType === 'content')),
+    // The whole design comes back every time: a larger answer than a form's.
+    ...(input.stage.artifactType === 'techplan' ? { maxOutputTokens: 12000, timeoutMs: 120_000 } : {}),
+  };
 }
 
 export type AiApiStyle = 'responses' | 'chat';

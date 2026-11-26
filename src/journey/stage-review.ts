@@ -1,7 +1,8 @@
 // Quality review of a stage result: deterministic rules for logic gaps and weak spots that a later stage would trip over.
 // Completeness (artifacts.ts) says what is missing; the review says what does not fit together or is risky.
 // A blocking finding stops acceptance until it is fixed or the owner explains in writing why the stage goes on anyway.
-import { designIssues, type ArchitectureDesign } from './architecture.js';
+import { designIssues, type ArchitectureDesign, type ArchitectureFix } from './architecture.js';
+import { templateDesignFor } from './webapp.js';
 import { contractIssues, type Contracts } from './contracts.js';
 import { roadmapIssues, type Roadmap } from './roadmap.js';
 import { testPlanIssues, type TestPlan } from './testplan.js';
@@ -54,7 +55,9 @@ export type AutoFix =
   | { kind: 'remove_actor'; actor: string }
   | { kind: 'remove_step'; scenario: string; step: string }
   | { kind: 'remove_link'; entity: string; to: string }
-  | { kind: 'add_junction'; a: string; b: string; name: string };
+  | { kind: 'add_junction'; a: string; b: string; name: string }
+  /** Architecture: add the platform's typical records, components or threats to the design (architecture.ts). */
+  | ArchitectureFix;
 export interface StageReview { rulesVersion: string; score: number; findings: ReviewFinding[]; blocking: number }
 
 /** Words that show a field or rule keeps or protects personal data. Stems, matched against the keyword stems of a text. */
@@ -665,8 +668,11 @@ export function reviewStage(type: string, content: unknown, context: { features?
     if (type === 'suggestions') suggestionsReview(content as Suggestions, push);
     if (type === 'techplan') {
       const design = (content as { design?: ArchitectureDesign | null }).design;
-      if (design) for (const issue of designIssues(design, context.features ?? null)) push({
+      // «Исправить» adds what the platform's first design would have: from the same process and ТЗ.
+      const template = design && context.features ? templateDesignFor(context.process ?? null, context.features) : null;
+      if (design) for (const issue of designIssues(design, context.features ?? null, template)) push({
         code: issue.code, severity: issue.severity, category: issue.code.startsWith('ARCH_THREAT') ? 'security' : 'logic', target: issue.target, where: tr('Архитектура'), message: issue.message, fix: issue.fix,
+        ...(issue.autoFix ? { autoFix: issue.autoFix } : {}),
       });
     }
     if (type === 'launch' && context.launch) for (const issue of launchIssues(content as LaunchChecklist, context.launch)) push({

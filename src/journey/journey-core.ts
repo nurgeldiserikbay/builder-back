@@ -260,7 +260,10 @@ export class JourneyCore {
     }
     if (key === 'concept') return { sitemap: null, concept: await this.conceptInputs(ctx, key) };
     // An application's architecture is checked against the ТЗ: its data, services and requirements.
-    if (key === 'techplan') return { sitemap: null, features: ((await this.acceptedInputs(ctx, key)).features?.content as AppFeatures | undefined) ?? null };
+    if (key === 'techplan') {
+      const inputs = await this.acceptedInputs(ctx, key);
+      return { sitemap: null, features: (inputs.features?.content as AppFeatures | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null };
+    }
     // Features are checked against the accepted process: the data they name must exist there.
     if (key === 'features') return { sitemap: null, process: ((await this.acceptedInputs(ctx, key)).process?.content as BusinessProcess | undefined) ?? null };
     // Screens are checked against the accepted functions: every role has screens, every must function is shown.
