@@ -29,8 +29,8 @@ describe('Карта сайта', () => {
 
   it('is part of the multi-page route and feeds texts, architecture and the build', () => {
     const route = projectTypes.multipage.stages;
-    assert.deepEqual(route, ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build']);
-    assert.deepEqual(routeInputs(route, 'content'), ['goal', 'offer', 'sitemap', 'process', 'features']);
+    assert.deepEqual(route, ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'sitemap', 'paths', 'techplan', 'content', 'design', 'build']);
+    assert.deepEqual(routeInputs(route, 'content'), ['goal', 'paths', 'offer', 'sitemap', 'process', 'features']);
     assert.deepEqual(routeInputs(route, 'techplan'), ['goal', 'process', 'sitemap', 'features']);
     assert.ok(routeInputs(route, 'build').includes('sitemap'));
     assert.ok(!routeInputs(projectTypes.landing.stages, 'content').includes('sitemap'));

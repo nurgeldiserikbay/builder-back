@@ -18,6 +18,7 @@ import { normalizeSchedule, scheduleIssues, type BookingConfig, type Schedule } 
 import { normalizeTechPlan } from './techplan.js';
 import { normalizeProcess, processIssues, type BusinessProcess } from './process.js';
 import { normalizeSitemap, sitemapIssues, type Sitemap } from './sitemap.js';
+import { normalizePaths, pathsIssues, type CustomerPaths } from './paths.js';
 import { catalogIssues, normalizeCatalog, templateCatalog, type Catalog } from './products.js';
 
 export type MainAction = 'call' | 'message' | 'visit' | 'email' | 'form';
@@ -270,6 +271,7 @@ export function normalizeArtifact(type: ArtifactType, raw: unknown, projectType?
     case 'concept': return normalizeConcept(raw);
     case 'suggestions': { const value = normalizeSuggestions(raw); return projectType ? withHonestSupport(value, projectType) : value; }
     case 'sitemap': return normalizeSitemap(raw);
+    case 'paths': return normalizePaths(raw);
     case 'catalog': return normalizeCatalog(raw);
     case 'features': return normalizeFeatures(raw);
     case 'screens': return normalizeScreens(raw);
@@ -304,6 +306,7 @@ export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'concept') return ['pitch', 'glossary', 'questions', 'notes'];
   if (type === 'idea') return ['problem', 'segments', 'value', 'alternatives', 'revenue', 'risks', 'metrics', 'constraints'];
   if (type === 'sitemap') return ['pages'];
+  if (type === 'paths') return ['paths'];
   if (type === 'catalog') return ['products', 'delivery', 'payment', 'minOrder'];
   if (type === 'features') return ['summary', 'roles', 'features', 'sensitivity', 'integrations', 'requirements', 'limits', 'questions', 'access', 'quality', 'services'];
   if (type === 'screens') return ['screens'];
@@ -423,6 +426,7 @@ export function completenessIssues(type: ArtifactType, content: unknown, context
     for (const issue of contractIssues(value, null, null).filter((item) => item.severity === 'blocking')) issues.push({ key: 'operations', message: issue.message });
   }
   if (type === 'sitemap') issues.push(...sitemapIssues(content as Sitemap));
+  if (type === 'paths') issues.push(...pathsIssues(content as CustomerPaths));
   if (type === 'catalog') issues.push(...catalogIssues(content as Catalog));
   if (type === 'offer' && (content as Offer).services.length === 0) issues.push({ key: 'services', message: 'Добавьте хотя бы одну услугу.' });
   if (type === 'content') {

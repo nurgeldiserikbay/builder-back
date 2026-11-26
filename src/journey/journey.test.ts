@@ -19,13 +19,13 @@ const brief: Brief = {
 
 describe('routes', () => {
   it('company site content depends on goal, offer, the business process and the ТЗ', () => {
-    assert.deepEqual(routeInputs(projectTypes.company_site.stages, 'content'), ['goal', 'offer', 'process', 'features']);
-    assert.deepEqual(routeInputs(projectTypes.landing.stages, 'content'), ['goal', 'process', 'features']);
+    assert.deepEqual(routeInputs(projectTypes.company_site.stages, 'content'), ['goal', 'paths', 'offer', 'process', 'features']);
+    assert.deepEqual(routeInputs(projectTypes.landing.stages, 'content'), ['goal', 'paths', 'process', 'features']);
   });
   it('computes dependents and ancestors transitively', () => {
-    assert.deepEqual(routeDependents(projectTypes.landing.stages, 'goal'), ['idea', 'process', 'suggestions', 'concept', 'features', 'techplan', 'content', 'design', 'build']);
-    assert.deepEqual(routeDependents(projectTypes.landing.stages, 'story'), ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'techplan', 'content', 'design', 'build']);
-    assert.deepEqual(routeAncestors(projectTypes.company_site.stages, 'build'), ['story', 'goal', 'idea', 'process', 'suggestions', 'features', 'offer', 'techplan', 'content', 'design']);
+    assert.deepEqual(routeDependents(projectTypes.landing.stages, 'goal'), ['idea', 'process', 'suggestions', 'concept', 'features', 'paths', 'techplan', 'content', 'design', 'build']);
+    assert.deepEqual(routeDependents(projectTypes.landing.stages, 'story'), ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'paths', 'techplan', 'content', 'design', 'build']);
+    assert.deepEqual(routeAncestors(projectTypes.company_site.stages, 'build'), ['story', 'goal', 'idea', 'process', 'suggestions', 'features', 'offer', 'paths', 'techplan', 'content', 'design']);
   });
   it('the idea in own words and (on sites) the goal come first, then the idea review, the business process and the ТЗ, and the architecture builds on them', () => {
     for (const type of Object.values(projectTypes)) {

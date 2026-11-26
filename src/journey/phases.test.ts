@@ -42,7 +42,8 @@ describe('phases of the common path', () => {
     assert.equal(live.find((phase) => phase.key === 'after')?.status, 'current');
     const half = phasesOf(route('landing', ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features']), { applies: true, live: false });
     assert.equal(half.find((phase) => phase.key === 'idea')?.status, 'done');
-    assert.equal(half.find((phase) => phase.status === 'current')?.key, 'tech');
+    // The customer path (since route 1.19.0) is the site's «Опыт пользователя» phase, after the ТЗ.
+    assert.equal(half.find((phase) => phase.status === 'current')?.key, 'experience');
   });
 
   it('an app launches through its own stage after the developer package; it has no publication', () => {

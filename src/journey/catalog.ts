@@ -1,9 +1,9 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.18.0';
+export const ROUTE_CATALOG_VERSION = '1.19.0';
 
-export type CatalogStageKey = 'story' | 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'build' | 'handoff' | 'launch';
+export type CatalogStageKey = 'story' | 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'paths' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'build' | 'handoff' | 'launch';
 /**
  * A module of an application's accepted plan becomes its own stage (PRODUCT_LIFECYCLE §4.9): `m_<module key>`. These stages
  * are not in a project type's list; they are created from the accepted plan, stand after the developer package on the map
@@ -15,7 +15,7 @@ export const MODULE_STAGE_PREFIX = 'm_';
 export const isModuleStageKey = (key: string): key is ModuleStageKey => key.startsWith(MODULE_STAGE_PREFIX) && /^m_[a-z][a-z0-9_]{0,31}$/.test(key);
 export const moduleStageKey = (moduleKey: string): ModuleStageKey => `${MODULE_STAGE_PREFIX}${moduleKey}` as ModuleStageKey;
 export const moduleKeyOf = (key: string): string | null => isModuleStageKey(key) ? key.slice(MODULE_STAGE_PREFIX.length) : null;
-export type ArtifactType = 'story' | 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'site' | 'handoff' | 'launch' | 'module';
+export type ArtifactType = 'story' | 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'paths' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'site' | 'handoff' | 'launch' | 'module';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking' | 'web_app';
 
@@ -392,6 +392,34 @@ export const stageDefinitions: Record<CatalogStageKey, StageDefinition> = {
       ],
     },
   },
+  paths: {
+    key: 'paths',
+    version: '1.0.0',
+    title: 'Путь клиента',
+    purpose: 'Пройдём сайт глазами клиента: кто приходит, откуда, чего он хочет, что открывает и видит по шагам — до звонка, заявки, записи или заказа. И что может его остановить. По этому пути пишутся тексты: порядок блоков, ответы на сомнения, кнопки.',
+    outcome: 'Пути разных посетителей: откуда пришли, чего хотят, шаги по сайту, чем заканчивается путь, сомнение и ответ на него; схема путей.',
+    artifactType: 'paths',
+    optional: { why: 'Можно пропустить, если сайт простой и вы хорошо знаете своих клиентов: тексты тогда пишутся по паспорту и ТЗ. Позже к пути клиента можно вернуться.' },
+    inputs: ['goal', 'idea', 'features', 'offer', 'sitemap', 'products', 'schedule'],
+    ai: {
+      level: 'ai_full',
+      whatItDoes: 'ИИ предложит пути по разбору идеи, ТЗ и страницам сайта: для каждой группы клиентов — откуда приходят, что ищут, что их может остановить. Проверьте: так ли ведут себя ваши клиенты.',
+      instructionExamples: ['Многие приходят из Instagram с телефона', 'Добавь путь для постоянных клиентов', 'Клиенты сомневаются в цене — где на сайте ответ?'],
+    },
+    acceptance: ['Каждый путь заканчивается понятным действием', 'До действия немного шагов', 'На главные сомнения на сайте есть ответ'],
+    acceptExplanation: 'Тексты выстраивают блоки по путям, отвечают на сомнения и ведут к действию. Если пути потом изменить, тексты получат уведомление.',
+    importHint: null,
+    contract: { explanation: 'Путь клиента — договорённость о том, как посетитель приходит к действию. Тексты строятся по нему; когда пути меняются, они получают уведомление.' },
+    playbook: {
+      version: '1.0.0',
+      instructions: [
+        'Propose 1–3 paths, one per kind of visitor from the idea review segments (or the goal audience). Do not invent visitors, sources or facts the inputs do not support.',
+        'Each path: who (a few words), from (one of the sources), what they want in one sentence, 2–4 steps through pages or blocks of this site (where — a page or block name, sees — what they see there), and the action at the end. Use the goal main action; booking only on a booking site, order only on a store.',
+        'doubt is what may stop this visitor (price, trust, distance, time); answer is the block or text on the site that answers it. Leave both empty when unsure.',
+        'Write in the project language.',
+      ],
+    },
+  },
   features: {
     key: 'features',
     version: '2.1.0',
@@ -567,7 +595,8 @@ export const stageDefinitions: Record<CatalogStageKey, StageDefinition> = {
     purpose: 'Соберём разделы сайта и напишем тексты для ваших клиентов. Это то, что посетитель будет читать.',
     outcome: 'Список блоков сайта с заголовками и текстами, а также описание для поисковиков.',
     artifactType: 'content',
-    inputs: ['goal'],
+    // paths: «Путь клиента» on routes since 1.19.0 — the texts answer its doubts and lead to its actions.
+    inputs: ['goal', 'paths'],
     ai: {
       level: 'ai_full',
       whatItDoes: 'ИИ напишет все тексты по паспорту проекта. Чтобы изменить один блок — нажмите «Изменить с ИИ» прямо на нём.',
@@ -577,7 +606,7 @@ export const stageDefinitions: Record<CatalogStageKey, StageDefinition> = {
     acceptExplanation: 'Принятые тексты пойдут в сборку сайта. Блоки, которые вы правили руками, ИИ без вашей просьбы не перепишет.',
     importHint: 'Если тексты уже готовы, вставьте их: каждый блок начните с заголовка на отдельной строке, между блоками — пустая строка. На многостраничном сайте блок с заголовком, как у страницы в меню («Услуги», «Контакты»), начинает эту страницу.',
     playbook: {
-      version: '1.2.0',
+      version: '1.3.0',
       instructions: [
         'Write for the audience from the brief, in the brief tone, in the project language.',
         'Single-page site: hero with the main action button first, contacts last; 4–7 sections in total.',
@@ -587,6 +616,7 @@ export const stageDefinitions: Record<CatalogStageKey, StageDefinition> = {
         'If the confirmed inputs contain a specification (ТЗ, features): describe only what the features with priority must or should do; never promise features with priority later or what its limits exclude.',
         'If the confirmed inputs contain a business process: tell visitors, in plain words, the rules from its rules list that matter to them before they book, order or write (cancellation, prepayment, returns, delivery, answer time), for example in a FAQ block or next to the main action. Use only those rules; never add other conditions.',
         'If the confirmed inputs contain a sitemap: write the blocks of every page in map order, with the block types the map lists for it, and set page to the page key (the home page is «home»); 4–7 blocks on the home page, 1–5 on the others; fill pageSeo for every page except home. Otherwise set page to null and return an empty pageSeo.',
+        'If the confirmed inputs contain customer paths: order the blocks the way visitors go (what they see first comes first), lead every path to its action, and answer each doubt with its answer in the block the path names or in a FAQ block. Use only the answers given; never invent guarantees or facts to answer a doubt.',
       ],
     },
   },
@@ -676,7 +706,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Одна страница, которая рассказывает о вас и ведёт к одному действию: позвонить, написать или прийти.',
     goodFor: 'Мастерам, небольшим услугам, мероприятиям, запуску продукта.',
     examples: ['Мастер маникюра', 'Торты на заказ', 'Репетитор', 'Мероприятие'],
-    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'techplan', 'content', 'design', 'build'],
+    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'paths', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница сайта в виде файла и все тексты проекта.',
   },
   company_site: {
@@ -685,7 +715,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Подробная страница компании: услуги и цены, о вас, как работаете, контакты и часы работы.',
     goodFor: 'Небольшим компаниям, салонам, студиям, сервисам.',
     examples: ['Автосервис', 'Стоматология', 'Юридическая консультация', 'Студия йоги'],
-    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'techplan', 'content', 'design', 'build'],
+    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'paths', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница компании в виде файла, список услуг и все тексты проекта.',
   },
   multipage: {
@@ -694,7 +724,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Несколько страниц с меню: главная, услуги, о вас, вопросы, контакты — у каждой свой адрес и своё описание для поисковиков.',
     goodFor: 'Компаниям с несколькими направлениями услуг, клиникам, школам, сервисам, которым тесно на одной странице.',
     examples: ['Стоматология', 'Языковая школа', 'Ремонт квартир', 'Юридическая фирма'],
-    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
+    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'sitemap', 'paths', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт из нескольких страниц с меню, файлы всех страниц, карта сайта и все тексты проекта.',
   },
   store: {
@@ -703,7 +733,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Витрина с товарами, корзина и заказ без регистрации: клиент выбирает товары и способ получения, а вы получаете заказ в Telegram и видите все заказы в проекте.',
     goodFor: 'Небольшим магазинам и мастерским: до 60 товаров, самовывоз или доставка, оплата при получении или переводом.',
     examples: ['Кондитерская', 'Цветы', 'Мыло ручной работы', 'Кофе в зёрнах'],
-    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'products', 'techplan', 'content', 'design', 'build'],
+    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'products', 'paths', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный магазин с витриной, корзиной и формой заказа, каталог и все тексты проекта. Заказы принимаются, когда сайт опубликован на BuildPath. Онлайн-оплаты пока нет.',
   },
   booking: {
@@ -712,7 +742,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Сайт с записью: клиент выбирает услугу, мастера и свободное время, а вы получаете запись в Telegram и видите все записи в проекте.',
     goodFor: 'Салонам красоты, барбершопам, массажу, тренерам, репетиторам — всем, кто работает по времени.',
     examples: ['Барбершоп', 'Маникюр', 'Массаж', 'Автомойка'],
-    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
+    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'schedule', 'paths', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт с онлайн-записью, список услуг, расписание и все тексты проекта. Запись работает, когда сайт опубликован на BuildPath.',
   },
   web_app: {

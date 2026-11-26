@@ -12,6 +12,7 @@ import type { BusinessProcess } from './process.js';
 import { measurable, type IdeaReview } from './idea.js';
 import type { Schedule } from './schedule.js';
 import type { Sitemap } from './sitemap.js';
+import type { CustomerPaths } from './paths.js';
 import type { TechPlan } from './techplan.js';
 import type { ArchitectureDesign } from './architecture.js';
 import { contractIssues, type Contracts } from './contracts.js';
@@ -92,6 +93,11 @@ const sitemap: OutputItem<Sitemap>[] = [
   { key: 'purpose', level: 'recommended', text: () => tr('У каждой страницы сказано, зачем она, — по этому пишут тексты'), met: (m) => m.pages.every((page) => filled(page.purpose)) },
 ];
 
+const paths: OutputItem<CustomerPaths>[] = [
+  { key: 'actions', level: 'required', text: () => tr('Чем заканчивается каждый путь — к этому действию тексты ведут посетителя'), met: (p) => p.paths.length > 0 && p.paths.every((path) => Boolean(path.action)) },
+  { key: 'doubts', level: 'recommended', text: () => tr('Сомнения и ответы — тексты отвечают на них, чтобы посетитель не ушёл'), met: (p) => p.paths.some((path) => filled(path.doubt) && filled(path.answer)) },
+];
+
 const content: OutputItem<ContentArtifact>[] = [
   { key: 'blocks', level: 'required', text: () => tr('Первый экран и контакты — без них сайт не собрать'), met: (c) => c.sections.some((section) => section.type === 'hero') && c.sections.some((section) => section.type === 'contacts') },
   { key: 'placeholders', level: 'required', text: () => tr('Нет мест в квадратных скобках — на сайт попадёт только настоящий текст'), met: (c) => !c.sections.some((section) => PLACEHOLDER.test(JSON.stringify(section))) },
@@ -146,7 +152,7 @@ const testplan: OutputItem<TestPlan>[] = [
 ];
 
 const OUTPUTS: Partial<Record<ArtifactType, OutputItem<never>[]>> = {
-  story, brief, idea, suggestions, concept, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan, contracts, roadmap, testplan,
+  story, brief, idea, suggestions, concept, offer, process, features, screens, sitemap, paths, content, design, schedule, catalog, techplan, contracts, roadmap, testplan,
 } as unknown as Partial<Record<ArtifactType, OutputItem<never>[]>>;
 
 export interface StageOutputItem { key: string; text: string; level: OutputLevel; met: boolean }

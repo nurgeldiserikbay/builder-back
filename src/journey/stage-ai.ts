@@ -1,4 +1,5 @@
 // Replaceable AI adapter for stage agents. Output is always schema-checked by artifacts.ts before use.
+import { pathActions, pathSources } from './paths.js';
 import { ACCESS_ACTIONS, QUALITY_KEYS, SERVICE_ACCESS } from './spec-extras.js';
 import type { ArtifactType, StageDefinition } from './catalog.js';
 import { sectionTypes } from './artifacts.js';
@@ -86,6 +87,17 @@ export function outputSchema(type: ArtifactType, targeted: boolean): Record<stri
         properties: {
           pages: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'path', 'title', 'purpose', 'sections'], properties: {
             key: { type: 'string' }, path: { type: 'string' }, title: { type: 'string' }, purpose: { type: 'string' }, sections: { type: 'array', items: { type: 'string', enum: [...sectionTypes] } },
+          } } },
+        },
+      };
+    case 'paths':
+      return {
+        type: 'object', additionalProperties: false, required: ['paths'],
+        properties: {
+          paths: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['key', 'who', 'from', 'wants', 'steps', 'action', 'doubt', 'answer'], properties: {
+            key: { type: 'string' }, who: { type: 'string' }, from: { type: 'string', enum: [...pathSources] }, wants: { type: 'string' },
+            steps: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['where', 'sees'], properties: { where: { type: 'string' }, sees: { type: 'string' } } } },
+            action: { type: 'string', enum: [...pathActions] }, doubt: { type: 'string' }, answer: { type: 'string' },
           } } },
         },
       };

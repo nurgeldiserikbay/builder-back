@@ -1,3 +1,4 @@
+import { pathsMarkdown, type CustomerPaths, actionAvailable, pathActions, pathSources, PATH_ACTION_LABELS, PATH_SOURCE_LABELS, PATHS_LIMITS } from './paths.js';
 import { launchItems, launchMarkdown, normalizeLaunch } from './launch.js';
 import { CASE_CLASSES, CASE_METHODS, TESTPLAN_LIMITS, normalizeTestPlan, templateTestPlan, testPlanMarkdown, type TestPlan } from './testplan.js';
 import { EXECUTORS, ROADMAP_LIMITS, normalizeRoadmap, roadmapMarkdown, scheduleOf, templateRoadmap, type Roadmap } from './roadmap.js';
@@ -341,7 +342,7 @@ export class JourneyService {
           configured: Boolean(ai), remainingToday: ai ? await this.core.remainingAiRuns(projectId) : 0,
           budget: assignment ? { limit: assignment.aiBudget, used: assignment.aiUsed } : null,
           month: ctx.viewer.kind === 'member' ? await this.billing.remainingAi(projectId) : null,
-          templateAvailable: !ai && (['content', 'design', 'idea', 'process', 'suggestions', 'concept', 'sitemap', 'features', 'screens'] as string[]).includes(stageKey),
+          templateAvailable: !ai && (['content', 'design', 'idea', 'process', 'suggestions', 'concept', 'sitemap', 'paths', 'features', 'screens'] as string[]).includes(stageKey),
         },
         options: {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
@@ -355,6 +356,13 @@ export class JourneyService {
           ...(definition.artifactType === 'process' ? { process: { capabilities: capabilitiesFor(ctx.type.key), actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS, situations: { version: SITUATIONS_VERSION, items: situationsFor(ctx.type.key) } } } : {}),
           ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.core.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
           ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap(briefOf(inputs), (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
+          // «Путь клиента»: where visitors come from, the actions this site can take, and the pages and blocks to pass.
+          ...(definition.artifactType === 'paths' ? { paths: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => ({
+            limits: PATHS_LIMITS,
+            sources: pathSources.map((id) => ({ id, label: PATH_SOURCE_LABELS[id] })),
+            actions: pathActions.filter((id) => actionAvailable(id, ctx.type.key)).map((id) => ({ id, label: PATH_ACTION_LABELS[id] })),
+            places: [...new Set([...((inputs.sitemap?.content as Sitemap | undefined)?.pages.map((page) => page.title) ?? []), ...Object.values(sectionTypeLabels)])].filter(Boolean).slice(0, 20),
+          })) } : {}),
           ...(stageKey === 'content' && ctx.route.includes('sitemap') ? { pages: (await this.core.checkContext(ctx, stageKey)).sitemap?.pages ?? null } : {}),
           // The ТЗ as a document to download, from the version on screen, in the project's language.
           ...(definition.artifactType === 'features' ? { backlogNext: await this.prisma.backlogItem.findMany({ where: { projectId, status: 'next' }, orderBy: { createdAt: 'asc' }, select: { id: true, title: true, details: true, version: true, source: true } }) } : {}),
@@ -1246,6 +1254,8 @@ export class JourneyService {
         lines.push('', tr('## Карта сайта'), '');
         for (const page of map.pages) lines.push(`- \`${page.path}\` — ${page.title}${page.purpose ? `: ${page.purpose}` : ''}`);
       }
+      const paths = get<CustomerPaths>('paths');
+      if (paths?.paths.length) lines.push('', tr('## Путь клиента'), '', ...pathsMarkdown(paths));
       const store = get<Catalog>('products');
       if (store) {
         lines.push('', tr('## Каталог товаров'), '');

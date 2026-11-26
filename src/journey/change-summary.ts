@@ -1,4 +1,5 @@
 // Deterministic, plain-language description of what changed between two accepted versions of a stage.
+import { pathsChanges, type CustomerPaths } from './paths.js';
 import { normalizeRoadmap, roadmapChanges } from './roadmap.js';
 import { normalizeTestPlan, testPlanChanges } from './testplan.js';
 import { launchChanges, normalizeLaunch } from './launch.js';
@@ -110,6 +111,7 @@ export function describeChanges(key: StageKey, beforeRaw: unknown, afterRaw: unk
           : type === 'concept' ? conceptChanges(normalizeConcept(beforeRaw ?? {}), normalizeConcept(afterRaw ?? {}))
           : type === 'suggestions' ? suggestionsChanges(normalizeSuggestions(beforeRaw ?? {}), normalizeSuggestions(afterRaw ?? {}))
           : type === 'sitemap' ? sitemapChanges(beforeRaw as Sitemap, afterRaw as Sitemap)
+          : type === 'paths' ? pathsChanges(beforeRaw as CustomerPaths, afterRaw as CustomerPaths)
           : type === 'catalog' ? catalogChanges(beforeRaw as Catalog, afterRaw as Catalog)
           : type === 'features' ? featuresChanges(beforeRaw as AppFeatures, afterRaw as AppFeatures)
           : type === 'screens' ? screensChanges(beforeRaw as AppScreens, afterRaw as AppScreens)

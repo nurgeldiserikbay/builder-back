@@ -1,4 +1,5 @@
 // AI requests on a stage (drafts, targeted rewrites) and their history.
+import { templatePaths } from './paths.js';
 import { templateConcept } from './concept.js';
 import { tr } from '../i18n/i18n.js';
 import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, HttpException, HttpStatus, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
@@ -76,6 +77,7 @@ export class StageAiService {
       else if (stageKey === 'goal' && inputs.story) draft = briefFromStory(inputs.story.content as Story);
       else if (stageKey === 'content') draft = inProject(ctx, () => templateContent(inputs.goal?.content as Brief ?? emptyBrief(), (inputs.offer?.content as Offer | undefined) ?? null, (inputs.sitemap?.content as Sitemap | undefined) ?? null));
       else if (stageKey === 'sitemap') draft = inProject(ctx, () => templateSitemap(briefOf(inputs), (inputs.offer?.content as Offer | undefined) ?? null));
+      else if (stageKey === 'paths') draft = inProject(ctx, () => templatePaths({ brief: briefOf(inputs), idea: (inputs.idea?.content as IdeaReview | undefined) ?? null, sitemap: (inputs.sitemap?.content as Sitemap | undefined) ?? null, offer: (inputs.offer?.content as Offer | undefined) ?? null, projectType: ctx.type.key }));
       else if (stageKey === 'design') draft = defaultDesign;
       else if (stageKey === 'idea') draft = templateIdea(briefOf(inputs), (inputs.story?.content as Story | undefined) ?? null);
       else if (stageKey === 'process') draft = inProject(ctx, () => templateProcess(ctx.type.key, briefOf(inputs)));
