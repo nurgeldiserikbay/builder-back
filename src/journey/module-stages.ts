@@ -9,6 +9,7 @@ import type { Roadmap } from './roadmap.js';
 import { isSatisfied, type StageStatus, type StatusMap } from './stage-state.js';
 import type { TestPlan } from './testplan.js';
 import type { Contracts } from './contracts.js';
+import { MERGE_KIND, mergePreview, type MergeState } from '../agent/module-branch.js';
 
 /** What the module stage keeps: the lead's own words on what was done and what to look at. The rest is live data. */
 export interface ModuleWork { summary: string }
@@ -87,6 +88,8 @@ export interface ModuleFacts {
    * build of the module: null when that build was not probed (an older task, or the application did not start).
    */
   contract: Array<{ key: string; method: string; path: string; result: string | null }>;
+  /** Merging the module's branch into the main line now: clean, conflicting files, or conflict markers left in its code. */
+  merge?: { state: MergeState; behind: boolean; conflicts: string[]; markers: string[] };
 }
 
 const finished = (status: string) => status === 'done' || status === 'done_with_note';
@@ -97,7 +100,7 @@ export async function moduleFacts(db: Pick<Tx, 'planTaskState' | 'planCaseResult
   const [states, results, agentRow] = await Promise.all([
     db.planTaskState.findMany({ where: { projectId: input.projectId } }),
     db.planCaseResult.findMany({ where: { projectId: input.projectId } }),
-    db.agentTask.findFirst({ where: { projectId: input.projectId, moduleKey: input.moduleKey }, orderBy: { createdAt: 'desc' }, select: { id: true, status: true, result: true } }),
+    db.agentTask.findFirst({ where: { projectId: input.projectId, moduleKey: input.moduleKey, kind: { not: MERGE_KIND } }, orderBy: { createdAt: 'desc' }, select: { id: true, status: true, result: true } }),
   ]);
   // The owner's remarks on scenarios are tasks of the module of the case's task.
   const extras = states.filter((row) => row.fromCaseKey && row.moduleKey === input.moduleKey);
@@ -117,8 +120,10 @@ export async function moduleFacts(db: Pick<Tx, 'planTaskState' | 'planCaseResult
   const probe = checks.find((check) => check.id === 'contract')?.operations ?? null;
   const contract = (input.contracts?.operations ?? []).filter((operation) => module?.contractModule && operation.module === module.contractModule)
     .map((operation) => ({ key: operation.key, method: operation.method, path: operation.path, result: probe ? probe[operation.key] ?? 'missing' : null }));
+  const preview = await mergePreview(db, { projectId: input.projectId, moduleKey: input.moduleKey, moduleName: module?.name ?? input.moduleKey });
   return {
     moduleKey: input.moduleKey, inPlan: Boolean(module), tasks, cases, contract,
+    merge: { state: preview.state, behind: preview.behind, conflicts: preview.conflicts.map((item) => item.path), markers: preview.markers },
     agent: agentRow ? { taskId: agentRow.id, status: agentRow.status, checksFailed: checks.filter((check) => check.id !== 'cases' && check.id !== 'contract' && check.id !== 'demo' && (check.status === 'failed' || check.status === 'timed_out')).length } : null,
   };
 }
@@ -144,6 +149,9 @@ export function moduleIssues(facts: ModuleFacts): ModuleIssue[] {
   const broken = facts.contract.filter((operation) => operation.result && operation.result !== 'passed');
   if (broken.length) out.push({ code: 'MODULE_CONTRACT_FAILED', severity: 'blocking', target: facts.moduleKey, message: tr('Операции не отвечают так, как обещано в контрактах: {0}.', [broken.slice(0, 5).map((operation) => `${operation.method} ${operation.path} — ${contractResultText(operation.result!)}`).join('; ')]), fix: tr('Поручите агенту исправить модуль: операция должна быть, без входа отвечать 401 и не падать.') });
   else if (facts.contract.length && facts.agent?.status === 'succeeded' && facts.contract.every((operation) => operation.result === null)) out.push({ code: 'MODULE_CONTRACT_UNCHECKED', severity: 'important', target: facts.moduleKey, message: tr('Последнюю сборку модуля не проверяли по контрактам.'), fix: tr('Поручите модуль агенту ещё раз: после работы платформа проверит его операции.') });
+  // The module enters the main line when accepted: code that cannot be merged cleanly is brought up to the main line first.
+  if (facts.merge?.state === 'conflict') out.push({ code: 'MODULE_MERGE_CONFLICT', severity: 'blocking', target: facts.moduleKey, message: tr('Пока модуль делали, в основную линию кода влили другие модули, и они меняли те же строки: {0}.', [facts.merge.conflicts.slice(0, 5).join(', ') + (facts.merge.conflicts.length > 5 ? ' …' : '')]), fix: tr('Нажмите «Согласовать с основной линией»: агент сведёт обе версии, платформа проверит результат.') });
+  if (facts.merge?.state === 'markers') out.push({ code: 'MODULE_MERGE_MARKERS', severity: 'blocking', target: facts.moduleKey, message: tr('В коде модуля остались пометки конфликта: {0}.', [facts.merge.markers.slice(0, 5).join(', ')]), fix: tr('Запустите согласование ещё раз или поручите агенту убрать пометки.') });
   const uncovered = facts.tasks.filter((task) => !task.fromCase && task.cases === 0);
   if (uncovered.length) out.push({ code: 'MODULE_TASK_WITHOUT_CASES', severity: 'minor', target: facts.moduleKey, message: tr('У задач нет кейсов проверки: {0}.', [uncovered.slice(0, 5).map((task) => task.title).join('; ')]), fix: tr('Добавьте кейсы в план проверки — без них готовность задачи не подтвердить.') });
   return out;

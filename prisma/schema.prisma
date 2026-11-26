@@ -1423,6 +1423,9 @@ model AgentTask {
   /// A change task (step 5) starts from the files of an earlier task; their digest is fixed when the task is queued.
   /// A module of the implementation plan this task builds (step 9a); null for the whole application or a free change.
   moduleKey         String?   @map("module_key") @db.VarChar(32)
+  /// Module branches: the main-line version (a line_merge task) this module's code started from or was last brought up
+  /// to; null when it started before the project had a main line. A line_merge task points at the main line it extends.
+  lineTaskId        String?   @map("line_task_id") @db.Uuid
   baseTaskId        String?   @map("base_task_id") @db.Uuid
   baseFilesDigest   String?   @map("base_files_digest") @db.VarChar(64)
   /// Where a change starts: «task» (an earlier task's files) or «repository» (the main branch, files kept in baseFiles).
@@ -1435,6 +1438,7 @@ model AgentTask {
 
   @@index([status, createdAt])
   @@index([projectId, createdAt])
+  @@index([projectId, kind, createdAt], map: "agent_tasks_project_kind_idx")
   @@map("agent_tasks")
 }
 
