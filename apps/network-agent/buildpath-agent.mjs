@@ -3,7 +3,8 @@
 //
 // Runs inside your network and only calls out to BuildPath over HTTPS: no inbound port, no VPN. It takes three kinds of
 // jobs and does them against targets you set here, with your own credentials that never leave this machine:
-//   check  — asks APP_URL/api/health and reports the answer (status, database kind, time);
+//   check  — asks APP_URL/api/health and reports the answer (status, database kind, time); after launch the agent also
+//            does this every 10 minutes on its own, so BuildPath can tell you when the application stops answering;
 //   push   — sends the code of an AI-agent task to GIT_REMOTE on its own branch buildpath/agent-…;
 //   deploy — runs your DEPLOY_COMMAND and reports its exit code (and its output only if SHARE_DEPLOY_OUTPUT=1).
 // BuildPath never sends a command, an address or a remote: a job only says which of these to do.
@@ -24,8 +25,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 const OUTPUT_CHARS = 4000;
+const MONITOR_MS = 10 * 60_000;
 
 const log = (...parts) => console.log(new Date().toISOString(), ...parts);
 
@@ -190,6 +192,13 @@ export async function main(env = process.env, file = process.argv[2]) {
   log(`BuildPath agent ${VERSION}: check ${capabilities.check ? 'on' : 'off'}, push ${capabilities.push ? 'on' : 'off'}, deploy ${capabilities.deploy ? 'on' : 'off'}`);
   let pause = 2000;
   let greeted = false;
+  // After launch: the application's health every 10 minutes, sent to BuildPath, which tells the owner when it goes down.
+  if (config.appUrl) {
+    const watch = async () => {
+      try { await call('POST', '/network-agent/monitor', await checkApp(config)); } catch (error) { if (STOP.has(error?.message)) process.exit(0); }
+    };
+    setTimeout(() => { void watch(); setInterval(() => void watch(), MONITOR_MS); }, 60_000);
+  }
   for (;;) {
     try {
       if (!greeted) { await call('POST', '/network-agent/hello', { version: VERSION, capabilities, appUrl: config.appUrl }); greeted = true; log('Connected to BuildPath, waiting for jobs.'); }

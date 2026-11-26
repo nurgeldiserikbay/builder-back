@@ -18,7 +18,7 @@ const prefixes: Array<[string, ActivityKind]> = [
   ['specialist_payment_', 'money'], ['specialist_paid_', 'money'], ['top_up_', 'money'], ['refund_', 'money'], ['time_', 'money'], ['dispute_', 'money'],
   ['agent_task_', 'ai'], ['stage_', 'stage'], ['suggestion_', 'stage'], ['rule_', 'stage'], ['playbook_', 'stage'], ['change_', 'changes'],
   ['team_', 'team'], ['specialist_', 'team'], ['ownership_', 'team'], ['master_', 'team'],
-  ['site_', 'site'], ['quick_edit_', 'site'], ['domain_', 'site'], ['hosting_', 'site'], ['lead_', 'site'], ['booking_', 'site'], ['order_', 'site'],
+  ['site_', 'site'], ['app_', 'site'], ['quick_edit_', 'site'], ['domain_', 'site'], ['hosting_', 'site'], ['lead_', 'site'], ['booking_', 'site'], ['order_', 'site'],
   ['repository_', 'site'], ['github_', 'site'], ['ssh_', 'site'],
 ];
 

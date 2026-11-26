@@ -56,6 +56,12 @@ export class NetworkAgentGatewayController {
     return this.agents.hello(authorization, ip, body);
   }
 
+  @Post('monitor')
+  @HttpCode(200)
+  monitor(@Headers('authorization') authorization: string | undefined, @Ip() ip: string, @Body() body: unknown) {
+    return this.agents.monitor(authorization, ip, body);
+  }
+
   @Post('jobs/next')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')

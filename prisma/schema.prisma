@@ -399,6 +399,7 @@ model Project {
   hostingConnection HostingConnection?
   networkAgents   NetworkAgent[]
   planSchedule    PlanSchedule?
+  appIncidents    AppIncident[]
 }
 
 model ProjectMember {
@@ -1368,6 +1369,14 @@ model AppDeployment {
   checkedByUserId String    @map("checked_by_user_id") @db.Uuid
   /// platform — BuildPath asked the address itself; network_agent — the owner's agent asked it from inside their network.
   checkedVia      String    @default("platform") @map("checked_via") @db.VarChar(20)
+  /// After launch (§4.13): /api/health every 10 minutes — by the platform, or by the agent inside a closed network.
+  monitorStatus     String    @default("unknown") @map("monitor_status") @db.VarChar(10)
+  monitorFailures   Int       @default(0) @map("monitor_failures")
+  monitorDownSince  DateTime? @map("monitor_down_since") @db.Timestamptz(3)
+  monitorAlertedAt  DateTime? @map("monitor_alerted_at") @db.Timestamptz(3)
+  monitorCheckedAt  DateTime? @map("monitor_checked_at") @db.Timestamptz(3)
+  monitorLastMs     Int?      @map("monitor_last_ms")
+  monitorLastError  String?   @map("monitor_last_error") @db.VarChar(40)
   project         Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@map("app_deployments")
@@ -2565,4 +2574,20 @@ model PlanSchedule {
   project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@map("plan_schedules")
+}
+
+/// A period when a launched application did not answer /api/health (two checks in a row or more).
+model AppIncident {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId String    @map("project_id") @db.Uuid
+  startedAt DateTime  @map("started_at") @db.Timestamptz(3)
+  endedAt   DateTime? @map("ended_at") @db.Timestamptz(3)
+  /// What the check saw: TIMEOUT, DNS, TLS, HTTP_502, NOT_HEALTH_ANSWER and so on.
+  cause     String    @db.VarChar(40)
+  /// platform or network_agent: who checked.
+  via       String    @db.VarChar(20)
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, startedAt(sort: Desc)], map: "app_incidents_project_started_idx")
+  @@map("app_incidents")
 }
