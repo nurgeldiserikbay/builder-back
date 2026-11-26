@@ -12,7 +12,7 @@ export const DEFAULT_TOKENS = { input: 4000, output: 1500 };
 export const expectedRequests = (key: StageKey): [min: number, max: number] => isModuleStageKey(key) ? [1, 3] : EXPECTED_REQUESTS[key];
 
 export const EXPECTED_REQUESTS: Record<CatalogStageKey, [min: number, max: number]> = {
-  story: [1, 4], goal: [2, 5], idea: [1, 4], process: [1, 4], suggestions: [1, 3], concept: [1, 3], offer: [1, 4], products: [0, 0], sitemap: [1, 3], schedule: [0, 0], features: [1, 4], screens: [1, 4], techplan: [0, 0], contracts: [0, 0], roadmap: [0, 0], testplan: [0, 0], content: [3, 10], design: [1, 3], build: [0, 0], handoff: [0, 0], launch: [0, 0],
+  story: [1, 4], goal: [2, 5], paths: [1, 4], idea: [1, 4], process: [1, 4], suggestions: [1, 3], concept: [1, 3], offer: [1, 4], products: [0, 0], sitemap: [1, 3], schedule: [0, 0], features: [1, 4], screens: [1, 4], techplan: [0, 0], contracts: [0, 0], roadmap: [0, 0], testplan: [0, 0], content: [3, 10], design: [1, 3], build: [0, 0], handoff: [0, 0], launch: [0, 0],
 };
 
 export function costOf(usage: Usage, pricing: Pricing | null): number | null {

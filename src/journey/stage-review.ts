@@ -1,6 +1,7 @@
 // Quality review of a stage result: deterministic rules for logic gaps and weak spots that a later stage would trip over.
 // Completeness (artifacts.ts) says what is missing; the review says what does not fit together or is risky.
 // A blocking finding stops acceptance until it is fixed or the owner explains in writing why the stage goes on anyway.
+import { actionAvailable, PATHS_LIMITS, type CustomerPaths } from './paths.js';
 import { designIssues, type ArchitectureDesign, type ArchitectureFix } from './architecture.js';
 import { templateDesignFor } from './webapp.js';
 import { dataNames, screenAccessIssues } from './screen-access.js';
@@ -83,6 +84,33 @@ function briefReview(brief: Brief, push: Push) {
     code: 'GOAL_AUDIENCE_VAGUE', severity: 'minor', category: 'clarity', target: 'audience', where: tr('Кто ваши клиенты'),
     message: tr('Клиенты описаны слишком общо — тексты получатся для всех и ни для кого.'),
     fix: tr('Уточните, кто они и с какой задачей приходят.'),
+  });
+}
+
+/** «Путь клиента»: short paths, an action the site can take, an answer for every doubt (PRODUCT_LIFECYCLE §4.13). */
+function pathsReview(value: CustomerPaths, push: Push, projectType: string | null | undefined) {
+  for (const path of value.paths) {
+    const where = tr('Путь «{0}»', [path.who || path.key]);
+    if (path.steps.length > PATHS_LIMITS.longPath) push({
+      code: 'PATH_TOO_LONG', severity: 'important', category: 'logic', target: path.key, where,
+      message: tr('До действия {0} шагов: на телефоне часть посетителей уйдёт раньше.', [path.steps.length]),
+      fix: tr('Сократите путь до четырёх шагов: поставьте кнопку раньше или объедините страницы.'),
+    });
+    if (path.action && !actionAvailable(path.action, projectType)) push({
+      code: 'PATH_ACTION_UNAVAILABLE', severity: 'important', category: 'logic', target: path.key, where,
+      message: path.action === 'booking' ? tr('Путь заканчивается записью, но на этом сайте нет онлайн-записи.') : tr('Путь заканчивается заказом, но на этом сайте нет корзины.'),
+      fix: tr('Выберите действие, которое умеет сайт: звонок, сообщение или заявку.'),
+    });
+    if (path.doubt && !path.answer) push({
+      code: 'PATH_DOUBT_NO_ANSWER', severity: 'important', category: 'logic', target: path.key, where,
+      message: tr('Сомнение «{0}» без ответа: посетитель может уйти именно здесь.', [path.doubt]),
+      fix: tr('Напишите, что на сайте отвечает на это сомнение: блок, цена, гарантия, отзывы.'),
+    });
+  }
+  if (value.paths.length && value.paths.every((path) => !path.doubt)) push({
+    code: 'PATH_NO_DOUBTS', severity: 'minor', category: 'logic', target: 'paths', where: tr('Путь клиента'),
+    message: tr('Ни у одного пути не записано, что может остановить посетителя.'),
+    fix: tr('Подумайте, о чём клиенты спрашивают перед покупкой: цена, сроки, доверие, расстояние.'),
   });
 }
 
@@ -705,6 +733,7 @@ export function reviewStage(type: string, content: unknown, context: { features?
   };
   if (content && typeof content === 'object') {
     if (type === 'story') storyReview(content as Story, push);
+    if (type === 'paths') pathsReview(content as CustomerPaths, push, context.projectType);
     if (type === 'brief') briefReview(content as Brief, push);
     if (type === 'idea') ideaReview(content as IdeaReview, push);
     if (type === 'suggestions') suggestionsReview(content as Suggestions, push);

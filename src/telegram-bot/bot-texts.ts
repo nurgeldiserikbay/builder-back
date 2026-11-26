@@ -76,6 +76,10 @@ const actionLabels = (): Record<string, string> => ({ call: tr("позвонит
 /** Short text summary of a stage artifact for a chat message. */
 export function artifactSummary(type: string, content: unknown): string {
   if (!content) return '';
+  if (type === 'paths') {
+    const value = content as { paths?: Array<{ who?: string; wants?: string }> };
+    return (value.paths ?? []).map((path) => `• ${path.who ?? ''}${path.wants ? ` — ${path.wants}` : ''}`).join('\n');
+  }
   if (type === 'story') {
     const story = content as { name?: string; essence?: string; audience?: string; problem?: string };
     return [story.name && tr("Название: {0}", [story.name]), story.essence && tr("Суть: {0}", [story.essence]), story.audience && tr("Для кого: {0}", [story.audience]), story.problem && tr("Задача: {0}", [story.problem.slice(0, 200)])].filter(Boolean).join('\n');

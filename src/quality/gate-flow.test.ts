@@ -66,6 +66,7 @@ describe('release gate (database)', async () => {
     await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
     await step('process', templateProcess('landing', brief));
     await step('features', templateFeatures(brief, templateProcess('landing', brief), 'site'));
+    await step('paths', { paths: [{ key: 'path-1', who: 'Новый клиент', from: 'search', wants: 'Узнать цену и записаться', steps: [{ where: 'Главная', sees: 'Кто вы и главная кнопка' }], action: 'message', doubt: '', answer: '' }] });
     await step('techplan', { ownerNotes: null });
     const content = templateContent(brief, null);
     await step('content', { ...content, sections: content.sections.filter((section) => section.type !== 'benefits') });
@@ -162,6 +163,7 @@ describe('release gate (database)', async () => {
       await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
       await step('process', templateProcess('landing', brief));
       await step('features', templateFeatures(brief, templateProcess('landing', brief), 'site'));
+      await step('paths', { paths: [{ key: 'path-1', who: 'Новый клиент', from: 'search', wants: 'Узнать цену и записаться', steps: [{ where: 'Главная', sees: 'Кто вы и главная кнопка' }], action: 'message', doubt: '', answer: '' }] });
       await step('techplan', { ownerNotes: null });
       const content = templateContent(brief, null);
       await step('content', { ...content, sections: content.sections.filter((section) => section.type !== 'benefits') });

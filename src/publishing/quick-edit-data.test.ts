@@ -91,6 +91,7 @@ describe('quick edit of prices and hours (database)', async () => {
     await step('features', templateFeatures(brief, templateProcess(projectType, brief), 'site'));
     if (projectType === 'store') await step('products', templateCatalog(offer));
     else { await step('offer', offer); await step('schedule', templateSchedule(offer)); }
+    await step('paths', { paths: [{ key: 'path-1', who: 'Новый клиент', from: 'search', wants: 'Узнать цену и записаться', steps: [{ where: 'Главная', sees: 'Кто вы и главная кнопка' }], action: 'message', doubt: '', answer: '' }] });
     await step('techplan', { ownerNotes: null });
     const content = templateContent(brief, null);
     await step('content', { ...content, sections: content.sections.filter((section) => section.type !== 'benefits') });

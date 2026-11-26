@@ -24,7 +24,7 @@ export const PHASES: PhaseDefinition[] = [
 export const STAGE_PHASE: Record<CatalogStageKey, PhaseKey> = {
   story: 'idea', goal: 'idea', idea: 'idea', process: 'idea', suggestions: 'idea', concept: 'idea',
   features: 'spec',
-  offer: 'experience', products: 'experience', schedule: 'experience', sitemap: 'experience', screens: 'experience',
+  offer: 'experience', products: 'experience', schedule: 'experience', sitemap: 'experience', paths: 'experience', screens: 'experience',
   techplan: 'tech', contracts: 'tech', roadmap: 'tech', testplan: 'tech',
   content: 'content', design: 'content',
   build: 'build', handoff: 'build',
@@ -48,6 +48,12 @@ export interface StageGuide {
 }
 
 export const STAGE_GUIDES: Record<CatalogStageKey, StageGuide> = {
+  paths: {
+    why: 'Посетитель уходит, если не находит нужного за пару шагов или его что-то смущает. Путь клиента заранее показывает, что он ищет, где может засомневаться и что ему ответить.',
+    next: 'Тексты выстраивают блоки в порядке пути, отвечают на сомнения и ведут к кнопке.',
+    example: '«Мама с ребёнком приходит из поиска, хочет понять цену чистки дивана. Главная → Цены → кнопка «Написать». Сомнение: «вдруг испортят ткань». Ответ: блок «Как мы работаем» с гарантией».',
+    terms: [{ term: 'Сомнение', meaning: 'То, из-за чего посетитель может уйти, не сделав главного действия: цена, доверие, расстояние, время.' }],
+  },
   story: {
     why: 'Начинать лучше с идеи, а не с сайта или кнопок: так сразу видно, для кого продукт и какую задачу он решает. Всё остальное подстраивается под это.',
     next: 'По паспорту идеи разбор идеи ищет дыры и риски, а следующие этапы берут название, суть и «для кого».',
@@ -289,6 +295,11 @@ const APP_GUIDES: Partial<Record<StageKey, StageGuide>> = {
 export interface StagePassport { steps: string[]; checks: string[]; doneWhen: string }
 
 export const STAGE_PASSPORTS: Record<CatalogStageKey, StagePassport> = {
+  paths: {
+    steps: ['Для каждой группы клиентов опишите, откуда они приходят и чего хотят.', 'Пройдите сайт их глазами: какие страницы и блоки они открывают.', 'Выберите, чем заканчивается путь: звонок, сообщение, заявка, запись или заказ.', 'Запишите, что может остановить посетителя и что на сайте на это отвечает.'],
+    checks: ['Каждый путь заканчивается действием, которое умеет этот сайт.', 'До действия не больше четырёх шагов.', 'У каждого сомнения есть ответ на сайте.'],
+    doneWhen: 'Для каждой группы клиентов понятно, как она доходит до главного действия и что её может остановить.',
+  },
   story: {
     steps: ['Расскажите идею своими словами — в разговоре, в поле рассказа или вставьте то, что уже написано.', 'ИИ разложит рассказ по полям паспорта — или заполните их сами.', 'Проверьте суть: одно предложение, понятное человеку, который вас не знает.', 'Подтвердите: «Да, это моя идея».'],
     checks: ['Суть — одно предложение без специальных слов.', 'Понятно, для кого это.', 'Понятно, какую задачу это решает.'],
