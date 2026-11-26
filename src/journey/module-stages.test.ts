@@ -34,7 +34,7 @@ describe('module stages', () => {
 
   it('accepts a module only by its cases and the platform\'s checks', () => {
     const base: ModuleFacts = {
-      moduleKey: 'accounts', inPlan: true, agent: null,
+      moduleKey: 'accounts', inPlan: true, agent: null, contract: [],
       tasks: [{ key: 'a1', title: 'Вход', status: 'in_progress', cases: 1, passed: 0, failed: 1, fromCase: null }, { key: 'a2', title: 'Выход', status: 'not_started', cases: 0, passed: 0, failed: 0, fromCase: null }],
       cases: [{ key: 'c1', title: 'Вход по паролю', task: 'a1', method: 'auto', status: 'failed', stale: false }],
     };
@@ -44,5 +44,11 @@ describe('module stages', () => {
     assert.deepEqual(codes(built), ['blocking:MODULE_CHECKS_FAILED']);
     assert.deepEqual(codes({ ...built, agent: { taskId: 't', status: 'succeeded', checksFailed: 0 } }), []);
     assert.ok(codes({ ...built, inPlan: false }).includes('blocking:MODULE_NOT_IN_PLAN'));
+    // The contract: the module's operations as the platform's probe found them in its last build.
+    const probed = (result: string | null) => ({ ...built, agent: { taskId: 't', status: 'succeeded', checksFailed: 0 }, contract: [{ key: 'login', method: 'POST', path: '/api/auth/login', result: 'passed' }, { key: 'view_request', method: 'GET', path: '/api/requests', result }] });
+    assert.deepEqual(codes(probed('passed')), []);
+    assert.deepEqual(codes(probed('open')), ['blocking:MODULE_CONTRACT_FAILED']);
+    assert.match(moduleIssues(probed('open'))[0]!.message, /GET \/api\/requests — отвечает без входа/);
+    assert.deepEqual(codes({ ...probed(null), contract: [{ key: 'view_request', method: 'GET', path: '/api/requests', result: null }] }), ['important:MODULE_CONTRACT_UNCHECKED']);
   });
 });

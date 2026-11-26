@@ -5008,6 +5008,10 @@ paths:
         After the run the platform runs `node --test --test-reporter=tap` itself (check «cases», informative), records each
         automatic case it finds (plan_case_results, source run), marks plan tasks whose cases all pass «готова» and moves a task
         that was «готова» back to «в работе» when one of its cases fails.
+        Right after the start check the platform probes every operation of the contracts in the task's inputs in the started
+        application (check «contract», informative, agent loop 1.2.0): without signing in, an operation with roles must answer
+        401, sign-up and sign-in must refuse an empty body with a 4xx; per operation the result is passed, missing (404/405),
+        crash (5xx), open (2xx without sign-in), accepts_empty, unexpected or no_answer (checks[].operations).
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -7186,7 +7190,7 @@ components:
       in: path
       name: stageKey
       required: true
-      description: 'A catalog stage, or a module stage m_<module key> of a web application. Module stages are created from the accepted plan (roadmap), stand after handoff, have artifact type module (content { summary ≤ 2000 }), inputs contracts, roadmap and testplan, and options.module on GET: key, name, summary, executor, critical, hours, removed, dependsOn[] and usedBy[] (key, name, stageKey, status), facts (tasks with status and case counts, cases with results, agent: taskId, status, checksFailed). Review findings: MODULE_TASKS_OPEN, MODULE_CASES_FAILED, MODULE_CHECKS_FAILED, MODULE_NOT_IN_PLAN (blocking), MODULE_NOT_BUILT (important), MODULE_TASK_WITHOUT_CASES (minor). A module removed from a new plan version is deleted if nobody worked on it, otherwise set aside (status blocked, reviewNote MODULE_REMOVED_FROM_PLAN).'
+      description: 'A catalog stage, or a module stage m_<module key> of a web application. Module stages are created from the accepted plan (roadmap), stand after handoff, have artifact type module (content { summary ≤ 2000 }), inputs contracts, roadmap and testplan, and options.module on GET: key, name, summary, executor, critical, hours, removed, dependsOn[] and usedBy[] (key, name, stageKey, status), facts (tasks with status and case counts, cases with results, agent: taskId, status, checksFailed, contract[]: the module''s contract operations with the probe result of its last build, null when not probed). Review findings: MODULE_TASKS_OPEN, MODULE_CASES_FAILED, MODULE_CHECKS_FAILED, MODULE_CONTRACT_FAILED, MODULE_NOT_IN_PLAN (blocking), MODULE_NOT_BUILT, MODULE_CONTRACT_UNCHECKED (important), MODULE_TASK_WITHOUT_CASES (minor). A module removed from a new plan version is deleted if nobody worked on it, otherwise set aside (status blocked, reviewNote MODULE_REMOVED_FROM_PLAN).'
       schema:
         oneOf:
           - { type: string, enum: [goal, idea, process, suggestions, concept, offer, products, schedule, sitemap, features, screens, techplan, contracts, roadmap, testplan, content, design, build, handoff, launch] }

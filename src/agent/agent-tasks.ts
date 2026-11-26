@@ -11,7 +11,7 @@ import { JourneyCore } from '../journey/journey-core.js';
 import { inputsSatisfied } from '../journey/stage-state.js';
 import { isModuleStageKey, moduleStageKey, type StageKey } from '../journey/catalog.js';
 import { configuredAgentModel, type AgentModel } from './agent-model.js';
-import { AGENT_LOOP_VERSION, DEMO_PATH, runAgent, type AgentCheck, type AgentFile, type AgentLimits, type AgentOutcome, type AgentStep } from './agent-loop.js';
+import { AGENT_LOOP_VERSION, DEMO_PATH, runAgent, type AgentCheck, type ContractProbe, type AgentFile, type AgentLimits, type AgentOutcome, type AgentStep } from './agent-loop.js';
 import { configuredWorkspace, WorkspaceError, type WorkspaceProvider } from './workspace.js';
 import { ChoicesService } from '../choices/choices.service.js';
 import { appOrigin, checkAppHealth } from './app-health.js';
@@ -88,6 +88,7 @@ export function buildAgentPrompt(input: { locale: string; projectName: string; i
     '- Scripts: npm run build (client), npm test (node --test: the built-in runner, real tests of the business rules and rights, both allowed and refused cases), npm start (serves API and client on PORT, default 3000), npm run migrate, npm run build:demo (preview, below).',
     '- Tests are JavaScript files named *.test.js using node:test and node:assert, so that `node --test` at the project root finds them. The package has a test plan: for every case with method "auto" write at least one test whose name starts with [case:<key>] (for example "[case:c12] client cannot open another client\'s request") that does what the case says and asserts its expected result and its mustNot. The platform runs `node --test --test-reporter=tap` itself and reads these names: a case without such a test counts as not checked. Never mark a case test as skip or todo, and never write a test that passes without checking the behaviour — say in notDone which cases you could not cover and why.',
     '- Follow the contracts in the package: the modules and which data each owns, the API operations with their paths, roles and error codes, the events and what to do when an outside service fails. A module works with another module\'s data only through that module\'s operations.',
+    '- The platform checks every contract operation in the started application (npm start, no database): without signing in an operation with roles must answer 401, sign-up and sign-in must answer 4xx to an empty body, and none may answer 404, 405 or 5xx. Check sign-in before looking up the record.',
     `- Preview for the owner: npm run build:demo writes ONE self-contained file ${DEMO_PATH} (all JS and CSS inline, for example with vite-plugin-singlefile) that runs the real client in the browser with no server and no network: API calls go to an in-browser implementation of the same routes, rights and rules over the in-memory data layer (keep route handlers framework-independent so the server and the preview share them). Seed believable demo data and one demo account per role, and show a small bar, in the app's language, saying this is a demo and which role the user is in, with a role switcher. No cookies, localStorage, external fonts, images by URL or analytics: the preview runs in a sandboxed frame where they do not work.`,
     '- Write .env.example with every variable and a README.md for the owner: what the app does, how to run it locally, the variables. Never write real secrets or .env files.',
     '- Mobile-first UI in the language of the project, clear labels, empty states and error messages, no lorem ipsum. Validate input on the server.',
@@ -210,7 +211,7 @@ const errorLabels: Record<string, string> = {
   AGENT_FAILED: 'Задача прервалась из-за внутренней ошибки.',
   AGENT_BASE_CHANGED: 'Код, от которого начиналось изменение, изменился. Запустите задачу снова.',
 };
-const checkLabels: Record<string, string> = { install: 'Пакеты устанавливаются', test: 'Тесты проходят', cases: 'Кейсы плана проверки проходят', build: 'Сборка интерфейса проходит', start: 'Приложение запускается и отвечает', deploy_files: 'Файлы для запуска на Render и своём сервере на месте', pwa: 'Приложение ставится на телефон (PWA)', demo: 'Предпросмотр собирается' };
+const checkLabels: Record<string, string> = { install: 'Пакеты устанавливаются', test: 'Тесты проходят', cases: 'Кейсы плана проверки проходят', build: 'Сборка интерфейса проходит', start: 'Приложение запускается и отвечает', contract: 'Операции отвечают по контрактам', deploy_files: 'Файлы для запуска на Render и своём сервере на месте', pwa: 'Приложение ставится на телефон (PWA)', demo: 'Предпросмотр собирается' };
 
 type TaskRow = Omit<NonNullable<Awaited<ReturnType<PrismaService['agentTask']['findFirst']>>>, 'demoHtml' | 'baseFiles'> | null;
 
@@ -280,6 +281,14 @@ export class AgentRunner {
     return true;
   }
 
+  /** The operations of the contracts version among a task's inputs; none when the project had no accepted contracts. */
+  private async contractProbes(inputVersionIds: string[]): Promise<ContractProbe[]> {
+    if (!inputVersionIds.length) return [];
+    const version = await this.prisma.stageArtifactVersion.findFirst({ where: { id: { in: inputVersionIds }, stage: { stageKey: 'contracts' } }, select: { content: true } });
+    const operations = (version?.content as Contracts | undefined)?.operations ?? [];
+    return operations.map((operation) => ({ key: operation.key, method: operation.method, path: operation.path, signedIn: operation.roles.length > 0 }));
+  }
+
   async process(id: string): Promise<void> {
     const task = await this.prisma.agentTask.findUnique({ where: { id } });
     if (!task || task.status !== 'running') return;
@@ -319,11 +328,13 @@ export class AgentRunner {
       }
     }
     await this.prisma.agentTask.update({ where: { id }, data: { model: model.model.slice(0, 80) } });
+    // The contracts the task was queued with (fixed in its inputs): the built application is probed against them.
+    const contract = await this.contractProbes(task.inputVersionIds);
     const steps: AgentStep[] = [];
     let outcome: AgentOutcome;
     try {
       outcome = await runWithLocale(contentLocale(task.locale), () => runAgent({
-        model, workspace, system: prompt.system, task: prompt.task, limits,
+        model, workspace, system: prompt.system, task: prompt.task, limits, contract,
         costOf: (usage) => costOf(usage, pricing) ?? 0,
         shouldStop: async () => (await this.prisma.agentTask.findUnique({ where: { id }, select: { stopRequested: true } }))?.stopRequested === true,
         onStep: async (step, totals) => {
@@ -340,7 +351,8 @@ export class AgentRunner {
     await workspace.close();
     // The preview is shown or not; it does not decide whether the application itself passed.
     // The preview and the per-case report inform; the application passes on its own checks.
-    const main = outcome.checks.filter((check) => check.id !== 'demo' && check.id !== 'cases');
+    // The contract check is per module (a module-by-module build lacks later modules' operations on purpose): it informs here.
+    const main = outcome.checks.filter((check) => check.id !== 'demo' && check.id !== 'cases' && check.id !== 'contract');
     const passed = main.some((check) => check.status === 'passed') && main.every((check) => check.status === 'passed' || (check.status === 'skipped' && (check.id === 'build' || check.id === 'pwa')));
     // start and deploy_files are part of main: an application that does not start, or cannot be launched, is not done.
     const status = outcome.stopReason === 'stopped' ? 'stopped' : passed && outcome.stopReason === 'finished' ? 'succeeded' : 'failed';

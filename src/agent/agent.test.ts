@@ -63,7 +63,19 @@ const PWA_BUILD = [
 
 const goodApp = [
   [{ name: 'write_file', args: { path: 'package.json', content: JSON.stringify({ name: 'app', version: '1.0.0', type: 'module', scripts: { test: 'node --test', start: 'node server.js', build: 'node build.js', 'build:demo': "mkdir -p dist-demo && printf '<html><head><title>d</title></head><body>demo</body></html>' > dist-demo/index.html" } }) } },
-    { name: 'write_file', args: { path: 'server.js', content: "import { createServer } from 'node:http';\ncreateServer((req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(req.url === '/api/health' ? { status: 'ok', database: 'memory' } : {})); }).listen(Number(process.env.PORT));\n" } },
+    { name: 'write_file', args: { path: 'server.js', content: [
+      "import { createServer } from 'node:http';",
+      "const answer = (res, status, body) => { res.statusCode = status; res.end(JSON.stringify(body)); };",
+      "createServer((req, res) => {",
+      "  res.setHeader('content-type', 'application/json');",
+      "  if (req.url === '/api/health') return answer(res, 200, { status: 'ok', database: 'memory' });",
+      "  if (req.url === '/api/auth/login') return answer(res, 400, { code: 'VALIDATION' });",
+      "  if (req.url.startsWith('/api/requests')) return answer(res, 401, { code: 'UNAUTHENTICATED' });",
+      "  if (req.url === '/api/notes') return answer(res, 200, []);",
+      "  if (req.url === '/api/reports') return answer(res, 500, {});",
+      "  answer(res, 404, {});",
+      "}).listen(Number(process.env.PORT));",
+    ].join('\n') + '\n' } },
     { name: 'write_file', args: { path: 'render.yaml', content: 'services:\n  - type: web\n    name: app\n    runtime: node\n    buildCommand: npm ci\n    startCommand: npm run migrate && npm start\n    healthCheckPath: /api/health\n    envVars:\n      - key: DATABASE_URL\n        sync: false\n      - key: SESSION_SECRET\n        generateValue: true\n' } },
     { name: 'write_file', args: { path: 'Dockerfile', content: 'FROM node:20-alpine\nCMD ["npm","start"]\n' } },
     { name: 'write_file', args: { path: 'build.js', content: PWA_BUILD } },
@@ -82,10 +94,25 @@ describe('AI agent: the loop', () => {
       const outcome = await runAgent({
         model: scripted(goodApp), workspace, system: 'sys', task: 'task', limits: { turns: 20, wallMs: 120_000, costTiyn: null },
         costOf: () => 5, shouldStop: async () => false, onStep: async (step) => { steps.push(step); },
+        // The accepted contracts: the platform asks each operation in the started application, without signing in.
+        contract: [
+          { key: 'login', method: 'POST', path: '/api/auth/login', signedIn: false },
+          { key: 'view_request', method: 'GET', path: '/api/requests', signedIn: true },
+          { key: 'edit_request', method: 'PATCH', path: '/api/requests/{id}', signedIn: true },
+          { key: 'view_note', method: 'GET', path: '/api/notes', signedIn: true },
+          { key: 'view_report', method: 'GET', path: '/api/reports', signedIn: true },
+          { key: 'delete_invoice', method: 'DELETE', path: '/api/invoices/{id}', signedIn: true },
+        ],
       });
       assert.equal(outcome.stopReason, 'finished');
       assert.deepEqual(outcome.report, { summary: 'Удалять может только администратор.', done: ['Права на удаление'], notDone: ['Оплата — нужна интеграция'] });
-      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['test', 'passed'], ['cases', 'skipped'], ['build', 'passed'], ['start', 'passed'], ['deploy_files', 'passed'], ['pwa', 'passed'], ['demo', 'passed']]);
+      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['test', 'passed'], ['cases', 'skipped'], ['build', 'passed'], ['start', 'passed'], ['contract', 'failed'], ['deploy_files', 'passed'], ['pwa', 'passed'], ['demo', 'passed']]);
+      const contract = outcome.checks.find((check) => check.id === 'contract')!;
+      assert.deepEqual(contract.operations, { login: 'passed', view_request: 'passed', edit_request: 'passed', view_note: 'open', view_report: 'crash', delete_invoice: 'missing' });
+      assert.match(contract.output, /^3\/6 contract operations answer as promised/);
+      assert.match(contract.output, /GET \/api\/notes: open \(200\)/);
+      // The platform's probe file is not left in the project.
+      assert.ok(!outcome.files.some((file) => file.path.startsWith('.buildpath')));
       assert.match(outcome.demoHtml!, /<body>demo<\/body>/);
       assert.deepEqual(outcome.files.map((file) => file.path).sort(), ['.env.example', 'Dockerfile', 'build.js', 'docker-compose.yml', 'package-lock.json', 'package.json', 'render.yaml', 'server.js', 'src/rules.js', 'test/rules.test.js']);
       assert.equal(outcome.turns, 5);

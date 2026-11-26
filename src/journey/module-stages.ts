@@ -8,6 +8,7 @@ import { isModuleStageKey, moduleStageKey, routeInputs, type StageKey } from './
 import type { Roadmap } from './roadmap.js';
 import { isSatisfied, type StageStatus, type StatusMap } from './stage-state.js';
 import type { TestPlan } from './testplan.js';
+import type { Contracts } from './contracts.js';
 
 /** What the module stage keeps: the lead's own words on what was done and what to look at. The rest is live data. */
 export interface ModuleWork { summary: string }
@@ -81,12 +82,17 @@ export interface ModuleFacts {
   cases: Array<{ key: string; title: string; task: string; method: string; status: 'passed' | 'failed' | null; stale: boolean }>;
   /** The latest agent task of this module: whether it finished and its platform checks passed. */
   agent: { taskId: string; status: string; checksFailed: number } | null;
+  /**
+   * The module's operations of the accepted contracts and what the platform's probe found for each in the agent's last
+   * build of the module: null when that build was not probed (an older task, or the application did not start).
+   */
+  contract: Array<{ key: string; method: string; path: string; result: string | null }>;
 }
 
 const finished = (status: string) => status === 'done' || status === 'done_with_note';
 
 /** What is known about a module now: its tasks and their states, its cases and their results, and the agent's last task. */
-export async function moduleFacts(db: Pick<Tx, 'planTaskState' | 'planCaseResult' | 'agentTask'>, input: { projectId: string; moduleKey: string; roadmap: Roadmap | null; testplan: { plan: TestPlan; versionNumber: number } | null }): Promise<ModuleFacts> {
+export async function moduleFacts(db: Pick<Tx, 'planTaskState' | 'planCaseResult' | 'agentTask'>, input: { projectId: string; moduleKey: string; roadmap: Roadmap | null; testplan: { plan: TestPlan; versionNumber: number } | null; contracts?: Contracts | null }): Promise<ModuleFacts> {
   const module = input.roadmap?.modules.find((item) => item.key === input.moduleKey) ?? null;
   const [states, results, agentRow] = await Promise.all([
     db.planTaskState.findMany({ where: { projectId: input.projectId } }),
@@ -105,13 +111,22 @@ export async function moduleFacts(db: Pick<Tx, 'planTaskState' | 'planCaseResult
     const own = cases.filter((item) => item.task === task.key);
     return { ...task, status: states.find((row) => row.taskKey === task.key)?.status ?? 'not_started', cases: own.length, passed: own.filter((item) => item.status === 'passed' && !item.stale).length, failed: own.filter((item) => item.status === 'failed').length };
   });
-  // «cases» is informative (cases are counted above); the build, tests and start decide whether the code works.
-  const checks = ((agentRow?.result as { checks?: Array<{ id?: string; status?: string }> } | null)?.checks ?? []);
+  // «cases» is informative (cases are counted above) and «contract» is read per operation below; the build, tests and start
+  // decide whether the code works.
+  const checks = ((agentRow?.result as { checks?: Array<{ id?: string; status?: string; operations?: Record<string, string> }> } | null)?.checks ?? []);
+  const probe = checks.find((check) => check.id === 'contract')?.operations ?? null;
+  const contract = (input.contracts?.operations ?? []).filter((operation) => module?.contractModule && operation.module === module.contractModule)
+    .map((operation) => ({ key: operation.key, method: operation.method, path: operation.path, result: probe ? probe[operation.key] ?? 'missing' : null }));
   return {
-    moduleKey: input.moduleKey, inPlan: Boolean(module), tasks, cases,
-    agent: agentRow ? { taskId: agentRow.id, status: agentRow.status, checksFailed: checks.filter((check) => check.id !== 'cases' && (check.status === 'failed' || check.status === 'timed_out')).length } : null,
+    moduleKey: input.moduleKey, inPlan: Boolean(module), tasks, cases, contract,
+    agent: agentRow ? { taskId: agentRow.id, status: agentRow.status, checksFailed: checks.filter((check) => check.id !== 'cases' && check.id !== 'contract' && check.id !== 'demo' && (check.status === 'failed' || check.status === 'timed_out')).length } : null,
   };
 }
+
+const contractResultText = (result: string) => ({
+  missing: tr('нет такой операции'), crash: tr('падает с ошибкой сервера'), open: tr('отвечает без входа'), accepts_empty: tr('принимает пустые данные'),
+  unexpected: tr('без входа отвечает не 401'), no_answer: tr('не отвечает'),
+} as Record<string, string>)[result] ?? result;
 
 export interface ModuleIssue { code: string; severity: 'blocking' | 'important' | 'minor'; target: string; message: string; fix: string }
 
@@ -125,6 +140,10 @@ export function moduleIssues(facts: ModuleFacts): ModuleIssue[] {
   if (failed.length) out.push({ code: 'MODULE_CASES_FAILED', severity: 'blocking', target: facts.moduleKey, message: tr('Не проходят кейсы: {0}.', [failed.slice(0, 5).map((item) => item.title).join('; ')]), fix: tr('Исправьте модуль и запустите проверку снова.') });
   if (!facts.agent || facts.agent.status !== 'succeeded') out.push({ code: 'MODULE_NOT_BUILT', severity: 'important', target: facts.moduleKey, message: tr('Платформа ещё не собирала и не проверяла код этого модуля.'), fix: tr('Поручите модуль ИИ-агенту: после работы платформа соберёт код и запустит тесты.') });
   else if (facts.agent.checksFailed) out.push({ code: 'MODULE_CHECKS_FAILED', severity: 'blocking', target: facts.moduleKey, message: tr('Проверки платформы последней сборки модуля не прошли: {0}.', [facts.agent.checksFailed]), fix: tr('Поручите агенту исправить, что показали проверки.') });
+  // The contract: what the module promised its neighbours. Checked by the platform's probe of the module's last build.
+  const broken = facts.contract.filter((operation) => operation.result && operation.result !== 'passed');
+  if (broken.length) out.push({ code: 'MODULE_CONTRACT_FAILED', severity: 'blocking', target: facts.moduleKey, message: tr('Операции не отвечают так, как обещано в контрактах: {0}.', [broken.slice(0, 5).map((operation) => `${operation.method} ${operation.path} — ${contractResultText(operation.result!)}`).join('; ')]), fix: tr('Поручите агенту исправить модуль: операция должна быть, без входа отвечать 401 и не падать.') });
+  else if (facts.contract.length && facts.agent?.status === 'succeeded' && facts.contract.every((operation) => operation.result === null)) out.push({ code: 'MODULE_CONTRACT_UNCHECKED', severity: 'important', target: facts.moduleKey, message: tr('Последнюю сборку модуля не проверяли по контрактам.'), fix: tr('Поручите модуль агенту ещё раз: после работы платформа проверит его операции.') });
   const uncovered = facts.tasks.filter((task) => !task.fromCase && task.cases === 0);
   if (uncovered.length) out.push({ code: 'MODULE_TASK_WITHOUT_CASES', severity: 'minor', target: facts.moduleKey, message: tr('У задач нет кейсов проверки: {0}.', [uncovered.slice(0, 5).map((task) => task.title).join('; ')]), fix: tr('Добавьте кейсы в план проверки — без них готовность задачи не подтвердить.') });
   return out;

@@ -6,7 +6,7 @@ import type { AgentMessage, AgentModel, AgentTool } from './agent-model.js';
 import type { Workspace } from './workspace.js';
 import { parse as parseYaml } from 'yaml';
 
-export const AGENT_LOOP_VERSION = '1.1.0';
+export const AGENT_LOOP_VERSION = '1.2.0';
 const FILES_PER_CALL = 30;
 const OUTPUT_TO_MODEL = 8_000;
 const READ_LIMIT = 60_000;
@@ -21,10 +21,15 @@ const DEMO_LIMIT = 6_000_000;
 export interface AgentLimits { turns: number; wallMs: number; costTiyn: number | null }
 export interface AgentStep { at: string; kind: 'note' | 'tool'; tool?: string; summary: string; status?: 'ok' | 'failed'; output?: string }
 export interface AgentCheck {
-  id: 'install' | 'test' | 'cases' | 'build' | 'start' | 'deploy_files' | 'pwa' | 'demo'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number;
+  id: 'install' | 'test' | 'cases' | 'build' | 'start' | 'contract' | 'deploy_files' | 'pwa' | 'demo'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number;
   /** For «cases»: the result of each test-plan case found in the test names, as the platform's own run saw it. */
   cases?: Record<string, 'passed' | 'failed'>;
+  /** For «contract»: each contract operation as the platform's probe found it — passed, or why not. */
+  operations?: Record<string, ContractProbeResult>;
 }
+/** An operation of the accepted contracts, as the platform probes it in the built application. */
+export interface ContractProbe { key: string; method: string; path: string; signedIn: boolean }
+export type ContractProbeResult = 'passed' | 'missing' | 'crash' | 'open' | 'accepts_empty' | 'unexpected' | 'no_answer';
 export interface AgentFile { path: string; content: string }
 export interface AgentOutcome {
   stopReason: 'finished' | 'turns' | 'time' | 'budget' | 'stopped' | 'model_error';
@@ -75,6 +80,8 @@ export interface AgentRunInput {
   costOf: (usage: { inputTokens: number | null; outputTokens: number | null }) => number;
   shouldStop: () => Promise<boolean>;
   onStep: (step: AgentStep, totals: { turns: number; costTiyn: number }) => Promise<void>;
+  /** The accepted contracts' operations; the platform checks the built application against them. */
+  contract?: ContractProbe[];
   now?: () => number;
 }
 
@@ -177,7 +184,7 @@ export async function runAgent(input: AgentRunInput): Promise<AgentOutcome> {
     }
   }
 
-  const checks = await platformChecks(input.workspace);
+  const checks = await platformChecks(input.workspace, input.contract ?? []);
   const { files, truncated } = await collectFiles(input.workspace);
   const demoHtml = checks.find((check) => check.id === 'demo')?.status === 'passed' ? await readDemo(input.workspace) : null;
   if (!demoHtml) { const demo = checks.find((check) => check.id === 'demo'); if (demo?.status === 'passed') { demo.status = 'failed'; demo.output = `${DEMO_PATH} is missing, not one file, or larger than ${DEMO_LIMIT} bytes`; } }
@@ -190,7 +197,7 @@ function listCommand(): string {
 }
 
 /** The platform's own checks, whatever the agent reported: install, tests, build. A missing script is «skipped», not passed. */
-export async function platformChecks(workspace: Workspace): Promise<AgentCheck[]> {
+export async function platformChecks(workspace: Workspace, contract: ContractProbe[] = []): Promise<AgentCheck[]> {
   const pkgText = await workspace.read('package.json');
   let scripts: Record<string, unknown> = {};
   try { scripts = (JSON.parse(pkgText ?? '{}') as { scripts?: Record<string, unknown> }).scripts ?? {}; } catch { scripts = {}; }
@@ -212,9 +219,11 @@ export async function platformChecks(workspace: Workspace): Promise<AgentCheck[]
     const status = result.timedOut ? 'timed_out' : result.exitCode === 0 ? 'passed' : 'failed';
     results.push({ id: item.id, command: item.command, status, exitCode: result.exitCode, output: cut(`${result.stdout}\n${result.stderr}`.trim(), 3000), durationMs: result.durationMs });
     if (status !== 'passed' && item.id !== 'demo') failed = true;
-    // The launch files are read, not run: right after the start check, in the order people read the report.
+    // The contract is probed in the started application, then the launch files are read — in the order people read the report.
+    if (item.id === 'start') results.push(status === 'passed' ? await contractCheck(workspace, contract) : skippedContract());
     if (item.id === 'start') results.push(await deployFilesCheck(workspace));
   }
+  if (!results.some((check) => check.id === 'contract')) results.splice(results.length - 1, 0, skippedContract());
   if (!results.some((check) => check.id === 'deploy_files')) results.splice(results.length - 1, 0, await deployFilesCheck(workspace));
   // A client that builds but ships its styles unprocessed (Tailwind directives with no Tailwind in the build) looks like bare
   // HTML: the build and the preview do not pass then. Seen on prod: the classes were there, the CSS was not.
@@ -271,6 +280,83 @@ export const START_CHECK = [
   'ok=1; for i in $(seq 1 60); do if node -e "fetch(\'http://127.0.0.1:4123/api/health\').then(r=>r.json().then(b=>process.exit(r.ok&&b&&b.status===\'ok\'?0:1))).catch(()=>process.exit(1))"; then ok=0; break; fi; sleep 1; done',
   'kill -- -$pid 2>/dev/null; kill $pid 2>/dev/null; tail -40 .buildpath-start.log; rm -f .buildpath-start.log; exit $ok',
 ].join('; ');
+
+export const CONTRACT_COMMAND = 'node .buildpath-contract.mjs';
+const CONTRACT_SCRIPT = '.buildpath-contract.mjs';
+const skippedContract = (): AgentCheck => ({ id: 'contract', command: CONTRACT_COMMAND, status: 'skipped', exitCode: null, output: '', durationMs: 0 });
+
+/**
+ * The probe the platform writes into the workspace (over anything the agent wrote there). It asks every operation of the
+ * accepted contracts without signing in, with an empty body and a made-up id:
+ * - an operation that needs a role must answer 401 — 2xx is «open» (served to anyone), 404/405 «missing», 5xx «crash»;
+ * - sign-up and sign-in must refuse empty data with a 4xx — 2xx is «accepts_empty».
+ * Data shapes and rules behind sign-in are the cases' job; this checks that each promised operation exists, is protected
+ * as promised and does not crash.
+ */
+export function contractProbeScript(operations: ContractProbe[], port: number): string {
+  return `const ops = ${JSON.stringify(operations.map(({ key, method, path, signedIn }) => ({ key, method, path, signedIn })))};
+const base = 'http://127.0.0.1:${port}';
+const id = '00000000-0000-4000-8000-000000000000';
+const out = {};
+for (const op of ops) {
+  const url = base + op.path.replace(/\{[^}]+\}/g, id).replace(/:[A-Za-z_][A-Za-z0-9_]*/g, id);
+  const withBody = ['POST', 'PUT', 'PATCH'].includes(op.method);
+  let status = null;
+  try {
+    const response = await fetch(url, { method: op.method, redirect: 'manual', headers: { accept: 'application/json', ...(withBody ? { 'content-type': 'application/json' } : {}) }, body: withBody ? '{}' : undefined, signal: AbortSignal.timeout(10000) });
+    status = response.status;
+    await response.arrayBuffer().catch(() => null);
+  } catch { status = null; }
+  out[op.key] = status === null ? 'no_answer' : status >= 500 ? 'crash' : status === 404 || status === 405 ? 'missing'
+    : op.signedIn ? (status === 401 ? 'passed' : status < 300 ? 'open' : 'unexpected')
+    : (status >= 400 ? 'passed' : 'accepts_empty');
+  out[op.key + '@'] = status;
+}
+console.log('BUILDPATH_CONTRACT ' + JSON.stringify(out));
+`;
+}
+
+/** Reads the probe's line; anything else in the output is ignored. */
+export function parseContractProbe(stdout: string, operations: ContractProbe[]): { operations: Record<string, ContractProbeResult>; statuses: Record<string, number | null> } {
+  const line = stdout.split('\n').reverse().find((item) => item.startsWith('BUILDPATH_CONTRACT '));
+  let raw: Record<string, unknown> = {};
+  try { raw = line ? JSON.parse(line.slice('BUILDPATH_CONTRACT '.length)) as Record<string, unknown> : {}; } catch { raw = {}; }
+  const allowed = new Set<ContractProbeResult>(['passed', 'missing', 'crash', 'open', 'accepts_empty', 'unexpected', 'no_answer']);
+  const result: Record<string, ContractProbeResult> = {};
+  const statuses: Record<string, number | null> = {};
+  for (const operation of operations) {
+    const value = raw[operation.key];
+    result[operation.key] = allowed.has(value as ContractProbeResult) ? value as ContractProbeResult : 'no_answer';
+    const status = raw[`${operation.key}@`];
+    statuses[operation.key] = typeof status === 'number' && Number.isInteger(status) ? status : null;
+  }
+  return { operations: result, statuses };
+}
+
+/**
+ * «contract»: informative for the whole task — an application built module by module has operations of later modules
+ * missing on purpose. Each module stage reads the result for its own operations and is not accepted while they fail.
+ */
+async function contractCheck(workspace: Workspace, operations: ContractProbe[]): Promise<AgentCheck> {
+  if (!operations.length) return skippedContract();
+  const port = 4124;
+  await workspace.write(CONTRACT_SCRIPT, contractProbeScript(operations, port));
+  const command = [
+    `PORT=${port} SESSION_SECRET=buildpath-contract-check NODE_ENV=production setsid npm start > .buildpath-contract.log 2>&1 & pid=$!`,
+    `up=1; for i in $(seq 1 60); do if node -e "fetch('http://127.0.0.1:${port}/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then up=0; break; fi; sleep 1; done`,
+    `if [ $up -eq 0 ]; then ${CONTRACT_COMMAND}; fi`,
+    `kill -- -$pid 2>/dev/null; kill $pid 2>/dev/null; rm -f .buildpath-contract.log ${CONTRACT_SCRIPT}; exit $up`,
+  ].join('; ');
+  const result = await workspace.exec(command, 180_000);
+  if (result.timedOut) return { id: 'contract', command: CONTRACT_COMMAND, status: 'timed_out', exitCode: null, output: '', durationMs: result.durationMs };
+  if (result.exitCode !== 0) return { id: 'contract', command: CONTRACT_COMMAND, status: 'skipped', exitCode: result.exitCode, output: 'The application did not start for the contract check.', durationMs: result.durationMs };
+  const parsed = parseContractProbe(result.stdout, operations);
+  const failed = operations.filter((operation) => parsed.operations[operation.key] !== 'passed');
+  return {
+    id: 'contract', command: CONTRACT_COMMAND, status: failed.length ? 'failed' : 'passed', exitCode: result.exitCode, durationMs: result.durationMs, operations: parsed.operations,
+    output: cut([`${operations.length - failed.length}/${operations.length} contract operations answer as promised`, ...failed.map((operation) => `${operation.method} ${operation.path}: ${parsed.operations[operation.key]}${parsed.statuses[operation.key] !== null ? ` (${parsed.statuses[operation.key]})` : ''}`)].join('\n'), 3000),
+  };
+}
 
 const BLUEPRINT_SECRETS = ['DATABASE_URL', 'SESSION_SECRET', 'ADMIN_PASSWORD'];
 
