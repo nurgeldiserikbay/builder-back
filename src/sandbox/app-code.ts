@@ -2,7 +2,7 @@ import { BadGatewayException, BadRequestException, ConflictException, ForbiddenE
 import { costOf } from '../budget/budget.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { contentLocale, runWithLocale, tr } from '../i18n/i18n.js';
-import type { Brief } from '../journey/artifacts.js';
+import { briefOf } from '../journey/artifacts.js';
 import { JourneyCore } from '../journey/journey-core.js';
 import type { BusinessProcess } from '../journey/process.js';
 import { StageAiError } from '../journey/stage-ai.js';
@@ -131,7 +131,7 @@ export class AppCodeService {
     const inputs = await this.core.acceptedInputs(ctx, 'handoff');
     const features = inputs.features!.content as AppFeatures;
     const businessProcess = (inputs.process?.content as BusinessProcess | undefined) ?? null;
-    const starter = buildStarterCode({ brief: (inputs.goal?.content as Brief | undefined) ?? null, features, plan: inputs.techplan!.content as TechPlan, locale: ctx.project.locale });
+    const starter = buildStarterCode({ brief: briefOf(inputs), features, plan: inputs.techplan!.content as TechPlan, locale: ctx.project.locale });
     const prompt = buildAppCodePrompt({ starter, features, process: businessProcess, instruction, locale: ctx.project.locale });
     const pricing = await this.prisma.aiPricing.findUnique({ where: { id: 1 } });
     const started = Date.now();

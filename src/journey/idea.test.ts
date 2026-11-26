@@ -29,10 +29,12 @@ const idea = () => normalizeIdea({
   constraints: { deadline: 'к марту', budget: '', legal: '', dataLocation: 'Казахстан' },
 });
 
-test('a new project of every type starts with the goal, then the idea review, then the process built on both', () => {
+test('a new project of every type starts with the idea in own words, then the idea review, then the process built on both', () => {
   for (const type of Object.values(projectTypes)) {
-    assert.deepEqual(type.stages.slice(0, 3), ['goal', 'idea', 'process'], type.key);
-    assert.deepEqual(routeInputs(type.stages, 'process'), ['goal', 'idea']);
+    // Sites keep «Цель сайта» right after the idea: buttons, contacts and tone; an application has no such stage.
+    const start = type.key === 'web_app' ? ['story', 'idea', 'process'] : ['story', 'goal', 'idea', 'process'];
+    assert.deepEqual(type.stages.slice(0, start.length), start, type.key);
+    assert.deepEqual(routeInputs(type.stages, 'process'), type.key === 'web_app' ? ['story', 'idea'] : ['goal', 'idea'], type.key);
   }
   // A project made before the stage existed has no idea review: its process still depends on the goal alone.
   assert.deepEqual(routeInputs(['goal', 'process', 'features'], 'process'), ['goal']);
@@ -137,9 +139,8 @@ describe('idea review (database)', async () => {
     await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
     const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Чистка', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
     const row = async (key: string) => prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } });
-    const brief = { businessName: 'Чистка', whatYouDo: 'Химчистка мебели на дому', audience: 'Семьи с детьми', city: 'Алматы', mainAction: 'message', phone: null, messenger: '@clean', email: null, address: null, tone: 'friendly' };
-    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
-    await journey.accept(owner.id, projectId, 'goal', (await row('goal')).currentVersionId!);
+    await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Чистка', essence: 'Химчистка мебели на дому по заявке с телефона', audience: 'Семьи с детьми', problem: 'Мастера на химчистку ищут через знакомых и долго ждут', story: null, materials: null }, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'story', (await row('story')).currentVersionId!);
 
     // A required stage cannot be skipped, and a short reason is refused.
     await assert.rejects(journey.skip(owner.id, projectId, 'process', 'Не нужно, всё и так понятно'), /STAGE_NOT_OPTIONAL/);
@@ -154,12 +155,13 @@ describe('idea review (database)', async () => {
     assert.ok(await prisma!.projectEvent.findFirst({ where: { projectId, type: 'stage_skipped' } }));
     await assert.rejects(journey.skip(owner.id, projectId, 'idea', 'Ещё раз пропускаю этап'), /STAGE_/);
 
-    // Coming back: the stage opens again with a template draft that copies who the customers are.
+    // Coming back: the stage opens again with a template draft that copies who it is for and the problem from the idea passport.
     await journey.reopen(owner.id, projectId, 'idea');
     assert.equal((await row('idea')).status, 'ready');
     const drafted = await journey.generate(owner.id, projectId, 'idea', { instruction: null, saveAs: 'one_off', targetKey: null });
     assert.equal(drafted.data.provider, 'template');
-    const draft = (await journey.stage(owner.id, projectId, 'idea')).data.current!.content as { segments: Array<{ name: string }> };
+    const draft = (await journey.stage(owner.id, projectId, 'idea')).data.current!.content as { segments: Array<{ name: string }>; problem: string };
     assert.equal(draft.segments[0]?.name, 'Семьи с детьми');
+    assert.equal(draft.problem, 'Мастера на химчистку ищут через знакомых и долго ждут');
   });
 });

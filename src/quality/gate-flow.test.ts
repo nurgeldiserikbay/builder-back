@@ -59,6 +59,7 @@ describe('release gate (database)', async () => {
       await journey.saveDraft(owner.id, projectId, key, { content, baseVersionId: null });
       await journey.accept(owner.id, projectId, key, await stageVersion(key));
     };
+    await step('story', { name: 'Тестовый проект', essence: 'Клиенты записываются онлайн, а мастер видит записи на день', audience: 'Клиенты салона и мастера', problem: 'Записи в мессенджере теряются', story: null, materials: null });
     await step('goal', brief);
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
@@ -154,6 +155,7 @@ describe('release gate (database)', async () => {
       const brief: Brief = { businessName: 'Кофейня Зерно', whatYouDo: 'Варим кофе и печём круассаны каждое утро', audience: 'Соседи и студенты', city: 'Алматы', mainAction: 'message', phone: null, messenger: '@zerno', email: null, address: null, tone: 'friendly' };
       const stageVersion = async (stageKey: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey } })).currentVersionId!;
       const step = async (stageKey: string, content: unknown) => { await journey.saveDraft(owner.id, projectId, stageKey, { content, baseVersionId: null }); await journey.accept(owner.id, projectId, stageKey, await stageVersion(stageKey)); };
+      await step('story', { name: 'Тестовый проект', essence: 'Клиенты записываются онлайн, а мастер видит записи на день', audience: 'Клиенты салона и мастера', problem: 'Записи в мессенджере теряются', story: null, materials: null });
       await step('goal', brief);
       await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
       await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');

@@ -44,6 +44,12 @@ const sectionSchema = {
 
 export function outputSchema(type: ArtifactType, targeted: boolean): Record<string, unknown> {
   switch (type) {
+    case 'story':
+      return {
+        type: 'object', additionalProperties: false,
+        required: ['name', 'essence', 'audience', 'problem', 'story', 'materials'],
+        properties: { name: { type: 'string' }, essence: { type: 'string' }, audience: { type: 'string' }, problem: { type: 'string' }, story: nullableString, materials: nullableString },
+      };
     case 'brief':
       return {
         type: 'object', additionalProperties: false,

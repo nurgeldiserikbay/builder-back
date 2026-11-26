@@ -15,7 +15,7 @@ import { FIRST_VERSION_EXTRAS, type Suggestions } from './suggestions.js';
 import { measurable, type IdeaReview } from './idea.js';
 import { tr } from '../i18n/i18n.js';
 import { keywords } from '../analysis/requirements-match.js';
-import { sectionTypeLabels, type Brief, type ContentArtifact, type Offer } from './artifacts.js';
+import { sectionTypeLabels, type Brief, type Story, type ContentArtifact, type Offer } from './artifacts.js';
 import type { Catalog } from './products.js';
 import type { Schedule } from './schedule.js';
 import type { Sitemap } from './sitemap.js';
@@ -83,6 +83,46 @@ function briefReview(brief: Brief, push: Push) {
     code: 'GOAL_AUDIENCE_VAGUE', severity: 'minor', category: 'clarity', target: 'audience', where: tr('Кто ваши клиенты'),
     message: tr('Клиенты описаны слишком общо — тексты получатся для всех и ни для кого.'),
     fix: tr('Уточните, кто они и с какой задачей приходят.'),
+  });
+}
+
+/** Words a stranger may not know; the essence of an idea is read by people outside the project. */
+export const STORY_JARGON = ['mvp', 'api', 'saas', 'crm', 'erp', 'b2b', 'b2c', 'ux', 'ui', 'kpi', 'backend', 'frontend', 'бэкенд', 'бекенд', 'фронтенд', 'лендинг', 'юзер', 'юзеры', 'юзеров', 'дашборд', 'фича', 'фичи', 'стартап'];
+
+/** Sentences of a short text: an end mark followed by a space and a capital letter or a digit starts a new one. */
+export function sentenceCount(text: string): number {
+  const clean = text.trim();
+  if (!clean) return 0;
+  return clean.split(/(?<=[.!?…])\s+(?=[\p{Lu}\d«"])/u).filter((part) => part.trim().length > 1).length;
+}
+
+export function jargonIn(text: string): string[] {
+  const words = text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return [...new Set(words.filter((word) => STORY_JARGON.includes(word)))];
+}
+
+/** «Идея своими словами»: the essence is one plain sentence a stranger understands (PRODUCT_LIFECYCLE §4.1). */
+function storyReview(story: Story, push: Push) {
+  if (story.essence && sentenceCount(story.essence) > 1) push({
+    code: 'STORY_ESSENCE_SENTENCES', severity: 'important', category: 'clarity', target: 'essence', where: tr('Суть в одном предложении'),
+    message: tr('Суть описана в нескольких предложениях: человек, который вас не знает, может не понять, что главное.'),
+    fix: tr('Оставьте одно предложение: что происходит и для кого. Подробности перенесите в рассказ.'),
+  });
+  if (story.essence && story.essence.trim().length < 25) push({
+    code: 'STORY_ESSENCE_SHORT', severity: 'important', category: 'clarity', target: 'essence', where: tr('Суть в одном предложении'),
+    message: tr('Суть слишком короткая: по ней не понять, что происходит и для кого.'),
+    fix: tr('Допишите, кто что делает и что получает: «жильцы оставляют заявку, а управляющая назначает мастера».'),
+  });
+  const jargon = jargonIn(`${story.essence} ${story.problem}`);
+  if (jargon.length) push({
+    code: 'STORY_JARGON', severity: 'minor', category: 'clarity', target: 'essence', where: tr('Суть и задача'),
+    message: tr('Есть специальные слова, которые не все поймут: {0}.', [jargon.join(', ')]),
+    fix: tr('Замените их простыми словами — так, как объяснили бы знакомому.'),
+  });
+  if (story.problem && story.essence && story.problem.trim().toLowerCase() === story.essence.trim().toLowerCase()) push({
+    code: 'STORY_PROBLEM_SAME', severity: 'minor', category: 'clarity', target: 'problem', where: tr('Какую задачу это решает'),
+    message: tr('Задача повторяет суть. Разбору идеи нужна сама задача: что сейчас неудобно, дорого или теряется.'),
+    fix: tr('Опишите, что происходит сейчас без вашего продукта.'),
   });
 }
 
@@ -664,6 +704,7 @@ export function reviewStage(type: string, content: unknown, context: { features?
     if (found.length < REVIEW_LIMITS.findings) found.push({ id: n === 1 ? base : `${base}:${n}`, ...finding });
   };
   if (content && typeof content === 'object') {
+    if (type === 'story') storyReview(content as Story, push);
     if (type === 'brief') briefReview(content as Brief, push);
     if (type === 'idea') ideaReview(content as IdeaReview, push);
     if (type === 'suggestions') suggestionsReview(content as Suggestions, push);

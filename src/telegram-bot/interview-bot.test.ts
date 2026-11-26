@@ -62,6 +62,9 @@ describe('«Разговор» in the bot (database)', async () => {
       const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
       await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
       const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Усы', startMode: 'build', locale: 'ru', projectType: 'landing' } as never)).data.id;
+      // The idea passport comes first on new routes; accepting it opens «Цель сайта».
+      await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Усы', essence: 'Мужчины записываются на стрижку онлайн, а мастер видит записи на день', audience: 'Мужчины 20–45 лет', problem: 'Записи в мессенджере теряются', story: null, materials: null }, baseVersionId: null });
+      await journey.accept(owner.id, projectId, 'story', (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: 'story' } })).currentVersionId!);
       const settle = () => new Promise((resolve) => setTimeout(resolve, 100));
       const chat = `chat-${randomUUID().slice(0, 8)}`;
       await bot.onCallback(owner.id, chat, 'q1', `P:${projectId}`);

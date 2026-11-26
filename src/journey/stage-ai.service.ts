@@ -8,7 +8,7 @@ import { templateIdea, type IdeaReview } from './idea.js';
 import { templateSuggestions, type Suggestions } from './suggestions.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { stageFor, type StageKey, definitionOf } from './catalog.js';
-import { ArtifactValidationError, changedKeys, completenessIssues, defaultDesign, emptyBrief, lockableKeys, mergeProposal, normalizeArtifact, normalizeContent, templateContent, type Brief, type ContentArtifact, type Offer, aiLocksFor } from './artifacts.js';
+import { ArtifactValidationError, changedKeys, completenessIssues, defaultDesign, emptyBrief, emptyStory, briefFromStory, briefOf, lockableKeys, mergeProposal, normalizeArtifact, normalizeContent, templateContent, type Brief, type Story, type ContentArtifact, type Offer, aiLocksFor } from './artifacts.js';
 import { templateSitemap, type Sitemap } from './sitemap.js';
 import type { BusinessProcess } from './process.js';
 import { templateFeatures, templateScreens, type AppFeatures } from './webapp.js';
@@ -56,11 +56,13 @@ export class StageAiService {
     const appPlan = definition.artifactType === 'techplan' && ctx.type.key === 'web_app';
     const planFrom = async (notes: string | null, design: ArchitectureDesign | null) => this.core.techPlanFor(ctx, stageKey, notes, design);
     if (input.targetKey && (!base || !lockableKeys(definition.artifactType, base.content).includes(input.targetKey))) throw new NotFoundException('TARGET_NOT_FOUND');
-    if (stageKey === 'goal' && !base && !input.instruction) throw new BadRequestException('DESCRIPTION_REQUIRED');
     // The AI a specialist directs sees what the specialist sees: hidden parts replaced, extra results the owner opened added.
     const inputs = await this.core.viewInputs(ctx, stageKey);
     const extras = await this.core.extraReads(ctx, stageKey);
     const provider = this.core.ai();
+    // The AI's first draft needs words to start from: the owner's description, or (for «Цель сайта») the accepted idea
+    // passport. Without AI the template starts from the project name and the wizard story.
+    if (((stageKey === 'goal' && !inputs.story) || (stageKey === 'story' && provider)) && !base && !input.instruction) throw new BadRequestException('DESCRIPTION_REQUIRED');
     const started = Date.now();
     // A draft by template is not the AI: it is open in every mode. Requests to the AI follow the owner's choice.
     if (provider) this.core.assertEditWay(ctx, key, 'ai');
@@ -70,16 +72,18 @@ export class StageAiService {
       // Without AI the platform still offers a deterministic draft for stages that have one; instructions need AI.
       if (input.instruction || input.targetKey) throw new ServiceUnavailableException('AI_NOT_CONFIGURED');
       let draft: unknown;
-      if (stageKey === 'content') draft = inProject(ctx, () => templateContent(inputs.goal?.content as Brief ?? emptyBrief(), (inputs.offer?.content as Offer | undefined) ?? null, (inputs.sitemap?.content as Sitemap | undefined) ?? null));
-      else if (stageKey === 'sitemap') draft = inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null));
+      if (stageKey === 'story') draft = { ...emptyStory(), name: ctx.project.name.slice(0, 80), story: (await this.prisma.project.findUnique({ where: { id: projectId }, select: { summary: true } }))?.summary?.slice(0, 3000) ?? null };
+      else if (stageKey === 'goal' && inputs.story) draft = briefFromStory(inputs.story.content as Story);
+      else if (stageKey === 'content') draft = inProject(ctx, () => templateContent(inputs.goal?.content as Brief ?? emptyBrief(), (inputs.offer?.content as Offer | undefined) ?? null, (inputs.sitemap?.content as Sitemap | undefined) ?? null));
+      else if (stageKey === 'sitemap') draft = inProject(ctx, () => templateSitemap(briefOf(inputs), (inputs.offer?.content as Offer | undefined) ?? null));
       else if (stageKey === 'design') draft = defaultDesign;
-      else if (stageKey === 'idea') draft = templateIdea((inputs.goal?.content as Brief | undefined) ?? null);
-      else if (stageKey === 'process') draft = inProject(ctx, () => templateProcess(ctx.type.key, (inputs.goal?.content as Brief | undefined) ?? null));
-      else if (stageKey === 'features') draft = inProject(ctx, () => templateFeatures((inputs.goal?.content as Brief | undefined) ?? null, (inputs.process?.content as BusinessProcess | undefined) ?? null, ctx.type.key === 'web_app' ? 'app' : 'site', (inputs.suggestions?.content as Suggestions | undefined) ?? null));
+      else if (stageKey === 'idea') draft = templateIdea(briefOf(inputs), (inputs.story?.content as Story | undefined) ?? null);
+      else if (stageKey === 'process') draft = inProject(ctx, () => templateProcess(ctx.type.key, briefOf(inputs)));
+      else if (stageKey === 'features') draft = inProject(ctx, () => templateFeatures(briefOf(inputs), (inputs.process?.content as BusinessProcess | undefined) ?? null, ctx.type.key === 'web_app' ? 'app' : 'site', (inputs.suggestions?.content as Suggestions | undefined) ?? null));
       else if (stageKey === 'concept') {
         // From what this viewer sees: a specialist's draft must not carry parts hidden from them.
         const seen = <T>(stage: string) => (inputs[stage]?.content as T | undefined) ?? null;
-        const conceptInputs = { brief: seen<Brief>('goal'), idea: seen<IdeaReview>('idea'), process: seen<BusinessProcess>('process'), suggestions: seen<Suggestions>('suggestions'), skipped: ctx.stages.filter((row) => row.status === 'skipped').map((row) => row.stageKey) };
+        const conceptInputs = { brief: briefOf(inputs), idea: seen<IdeaReview>('idea'), process: seen<BusinessProcess>('process'), suggestions: seen<Suggestions>('suggestions'), skipped: ctx.stages.filter((row) => row.status === 'skipped').map((row) => row.stageKey) };
         draft = inProject(ctx, () => templateConcept(conceptInputs, ctx.project.name));
       }
       else if (stageKey === 'suggestions') draft = inProject(ctx, () => templateSuggestions(ctx.type.key, (inputs.idea?.content as IdeaReview | undefined) ?? null, (inputs.process?.content as BusinessProcess | undefined) ?? null));

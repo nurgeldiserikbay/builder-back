@@ -5,7 +5,7 @@ import type { SiteArtifact } from '../journey/artifacts.js';
 import { emailConfig } from '../notifications/email.js';
 import { sendTestLead, type ChannelStatus } from '../notifications/lead-notifier.js';
 import { launchReadiness } from './readiness.js';
-import { projectTypes, type StageKey, definitionOf, isStageKey } from '../journey/catalog.js';
+import { projectTypes, knownStagesOf, type StageKey, definitionOf, isStageKey } from '../journey/catalog.js';
 import type { Brief, Offer } from '../journey/artifacts.js';
 import type { BusinessProcess } from '../journey/process.js';
 import type { AppFeatures } from '../journey/webapp.js';
@@ -165,7 +165,7 @@ export class PublishingService {
     const telegram = telegramConfig();
     const lastTest = await this.prisma.projectEvent.findFirst({ where: { projectId, type: 'test_lead_sent' }, orderBy: { createdAt: 'desc' }, select: { details: true, createdAt: true } });
     const type = full.projectType ?? '';
-    const route = type in projectTypes ? projectTypes[type as keyof typeof projectTypes].stages.filter((key) => full.stages.some((stage) => stage.stageKey === key)) : full.stages.map((stage) => stage.stageKey);
+    const route = type in projectTypes ? knownStagesOf(projectTypes[type as keyof typeof projectTypes]).filter((key) => full.stages.some((stage) => stage.stageKey === key)) : full.stages.map((stage) => stage.stageKey);
     const result = launchReadiness({
       projectType: type, route,
       build: { accepted: Boolean(build), qualityPassed: build?.quality?.status === 'passed' },

@@ -4,7 +4,7 @@ import { BadGatewayException, BadRequestException, ConflictException, HttpExcept
 import { PrismaService } from '../database/prisma.service.js';
 import { costOf } from '../budget/budget.js';
 import { tr } from '../i18n/i18n.js';
-import { emptyBrief, mergeProposal, normalizeArtifact } from './artifacts.js';
+import { emptyBrief, emptyStory, mergeProposal, normalizeArtifact } from './artifacts.js';
 import { stageFor, type StageKey } from './catalog.js';
 import { JourneyCore, inProject, notEditableCode } from './journey-core.js';
 import { StageAiError } from './stage-ai.js';
@@ -131,7 +131,7 @@ export class InterviewService {
 
     if (!row) {
       // The conversation opens with a greeting (and, without AI, the first question); the story from the project wizard is offered.
-      const story = stageKey === 'goal' ? (await this.prisma.project.findUnique({ where: { id: projectId }, select: { summary: true } }))?.summary ?? null : null;
+      const story = stageKey === 'story' || (stageKey === 'goal' && !ctx.route.includes('story')) ? (await this.prisma.project.findUnique({ where: { id: projectId }, select: { summary: true } }))?.summary ?? null : null;
       const messages: InterviewMessage[] = [{ role: 'assistant', text: inProject(ctx, () => greeting(definition, mode === 'ai', story)), at: now() }];
       let pendingField: string | null = null; let asked: string[] = [];
       if (mode === 'template') {
@@ -222,7 +222,7 @@ export class InterviewService {
       return { data: { versionId: result.data.versionId, versionNumber: result.data.versionNumber } };
     }
     const base = await this.core.versionContent(stage.currentVersionId);
-    const empty = stageKey === 'goal' ? emptyBrief() : { services: [], hours: null };
+    const empty = stageKey === 'story' ? emptyStory() : stageKey === 'goal' ? emptyBrief() : { services: [], hours: null };
     const proposal = applyExtracted((base?.content ?? empty) as Record<string, unknown>, extracted);
     // A field a person filled in and locked stays; an empty field counts as not written, so the conversation may fill it.
     const baseValues = (base?.content ?? {}) as Record<string, unknown>;

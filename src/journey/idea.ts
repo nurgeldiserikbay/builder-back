@@ -104,10 +104,11 @@ export function ideaIssues(idea: IdeaReview): Array<{ key: string; message: stri
 export const measurable = (value: string) => /\d/.test(value);
 
 /** Draft without the AI: what the brief already says, the rest left for the owner — nothing invented. */
-export function templateIdea(brief: Brief | null): IdeaReview {
+/** The draft without AI: what the owner already said — the clients from the goal, the task from the idea passport. */
+export function templateIdea(brief: Brief | null, story: { problem?: string } | null = null): IdeaReview {
   const audience = brief?.audience?.trim() ?? '';
   return {
-    problem: '',
+    problem: (story?.problem ?? '').trim().slice(0, 600),
     segments: audience ? [{ key: 'seg1', name: audience.slice(0, 80), need: '' }] : [],
     value: '',
     alternatives: [],

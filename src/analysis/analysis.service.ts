@@ -14,12 +14,12 @@ import { stageDefinitions, type StageKey, definitionOf } from '../journey/catalo
 export const ANALYSABLE_KINDS = ['zip', 'pdf', 'docx', 'text'] as const;
 /** Where a finding usually belongs, first stage of the route that matches. */
 const sectionStages: Record<string, string[]> = {
-  goal: ['goal'], audience: ['goal'], features: ['features', 'process', 'goal'], pages: ['sitemap', 'screens', 'content'], content: ['content'], design: ['design'],
-  integrations: ['process', 'techplan'], deadline: ['goal'], budget: ['goal'], acceptance: ['features', 'goal'],
+  goal: ['goal', 'story'], audience: ['goal', 'story'], features: ['features', 'process', 'goal', 'story'], pages: ['sitemap', 'screens', 'content'], content: ['content'], design: ['design'],
+  integrations: ['process', 'techplan'], deadline: ['idea', 'goal', 'story'], budget: ['idea', 'goal', 'story'], acceptance: ['features', 'goal', 'story'],
 };
 export function suggestStage(finding: { code: string; params?: Record<string, string | number> }, route: string[]): string | null {
-  const wanted = finding.code === 'DOC_SECTION_MISSING' ? sectionStages[String(finding.params?.section)] ?? ['goal']
-    : finding.code.startsWith('DOC_') ? ['goal']
+  const wanted = finding.code === 'DOC_SECTION_MISSING' ? sectionStages[String(finding.params?.section)] ?? ['goal', 'story']
+    : finding.code.startsWith('DOC_') ? ['goal', 'story']
       : ['build', 'handoff', 'techplan'];
   return wanted.find((key) => route.includes(key)) ?? route[0] ?? null;
 }

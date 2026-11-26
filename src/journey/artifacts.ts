@@ -27,6 +27,8 @@ export interface Brief {
   businessName: string; whatYouDo: string; audience: string; city: string | null;
   mainAction: MainAction | null; phone: string | null; messenger: string | null; email: string | null; address: string | null; tone: Tone | null;
 }
+/** «Идея своими словами»: the idea passport. story keeps the owner's own words; materials — what they already have. */
+export interface Story { name: string; essence: string; audience: string; problem: string; story: string | null; materials: string | null }
 export interface OfferService { name: string; description: string | null; price: string | null }
 export interface Offer { services: OfferService[]; hours: string | null }
 export const sectionTypes = ['hero', 'about', 'services', 'benefits', 'steps', 'faq', 'contacts', 'cta'] as const;
@@ -120,6 +122,51 @@ export function normalizeBrief(raw: unknown): Brief {
   };
 }
 
+export function normalizeStory(raw: unknown): Story {
+  if (!isRecord(raw)) throw new ArtifactValidationError('ARTIFACT_INVALID');
+  return {
+    name: str(raw.name, 'name', 80, false) ?? '',
+    essence: str(raw.essence, 'essence', 200, false) ?? '',
+    audience: str(raw.audience, 'audience', 300, false) ?? '',
+    problem: str(raw.problem, 'problem', 400, false) ?? '',
+    story: str(raw.story, 'story', 3000, false),
+    materials: str(raw.materials, 'materials', 1000, false),
+  };
+}
+
+export function emptyStory(): Story {
+  return { name: '', essence: '', audience: '', problem: '', story: null, materials: null };
+}
+
+/**
+ * What the stages built on «Цель» know of a project that has only «Идея своими словами» (an application since route
+ * 1.18.0): its name, what it does and for whom. Nothing about buttons, contacts or tone is made up.
+ */
+export function briefFromStory(story: Story | null | undefined): Brief | null {
+  if (!story) return null;
+  return { ...emptyBrief(), businessName: story.name, whatYouDo: (story.essence || story.problem).slice(0, 400), audience: story.audience };
+}
+
+/** The brief a stage builds on: the accepted «Цель», or the idea passport where the route has no «Цель». */
+export function briefOf(inputs: Record<string, { content: unknown } | undefined>): Brief | null {
+  return (inputs.goal?.content as Brief | undefined) ?? briefFromStory(inputs.story?.content as Story | undefined);
+}
+
+/** The idea passport as Markdown lines (project.md, concept). */
+export function storyMarkdown(story: Story): string[] {
+  const lines = [tr('- Название: {0}', [story.name]), tr('- Суть: {0}', [story.essence]), tr('- Для кого: {0}', [story.audience]), tr('- Задача: {0}', [story.problem])];
+  if (story.materials) lines.push(tr('- Что уже есть: {0}', [story.materials]));
+  if (story.story) lines.push('', tr('Рассказ своими словами:'), '', ...story.story.split(/\r?\n/).map((line) => `> ${line}`));
+  return lines;
+}
+
+/** Import of an idea already written somewhere: the text is kept as the story; the fields are filled by the owner or the AI. */
+export function importStoryText(text: string): Story {
+  const clean = text.replace(/\u0000/g, '').trim();
+  if (!clean) throw new ArtifactValidationError('IMPORT_EMPTY');
+  return { ...emptyStory(), story: clean.slice(0, 3000) };
+}
+
 export function normalizeOffer(raw: unknown): Offer {
   if (!isRecord(raw) || !Array.isArray(raw.services)) throw new ArtifactValidationError('ARTIFACT_INVALID');
   if (raw.services.length > 12) throw new ArtifactValidationError('FIELD_TOO_MANY:services');
@@ -211,6 +258,7 @@ export function normalizeDesign(raw: unknown): DesignArtifact {
 /** projectType: some artifacts say what the platform builds for this kind of project (suggestions); pass it where known. */
 export function normalizeArtifact(type: ArtifactType, raw: unknown, projectType?: ProjectTypeKey): unknown {
   switch (type) {
+    case 'story': return normalizeStory(raw);
     case 'brief': return normalizeBrief(raw);
     case 'offer': return normalizeOffer(raw);
     case 'content': return normalizeContent(raw);
@@ -245,6 +293,7 @@ export const aiLocksFor = (type: ArtifactType, locked: string[]): string[] => (R
 /** Keys that can be locked against AI rewrites: brief/offer/design fields or content section keys. */
 export function lockableKeys(type: ArtifactType, content: unknown): string[] {
   if (type === 'content') return (content as ContentArtifact).sections.map((section) => section.key).concat('seo', ...((content as ContentArtifact).pageSeo ? ['pageSeo'] : []));
+  if (type === 'story') return ['name', 'essence', 'audience', 'problem', 'story', 'materials'];
   if (type === 'brief') return ['businessName', 'whatYouDo', 'audience', 'city', 'mainAction', 'phone', 'messenger', 'email', 'address', 'tone'];
   if (type === 'offer') return ['services', 'hours'];
   if (type === 'design') return ['palette', 'font', 'corners', 'heroLayout'];
@@ -338,6 +387,13 @@ export function completenessIssues(type: ArtifactType, content: unknown, context
   const issues: CompletenessIssue[] = [];
   if (type === 'features') issues.push(...featuresIssues(content as AppFeatures));
   if (type === 'screens') issues.push(...screensIssues(content as AppScreens, context.features ?? null));
+  if (type === 'story') {
+    const story = content as Story;
+    if (!story.name) issues.push({ key: 'name', message: 'Укажите, как называется идея или проект.' });
+    if (!story.essence) issues.push({ key: 'essence', message: 'Опишите суть одним предложением.' });
+    if (!story.audience) issues.push({ key: 'audience', message: 'Напишите, для кого это.' });
+    if (!story.problem) issues.push({ key: 'problem', message: 'Напишите, какую задачу это решает.' });
+  }
   if (type === 'brief') {
     const brief = content as Brief;
     if (!brief.businessName) issues.push({ key: 'businessName', message: 'Укажите название.' });

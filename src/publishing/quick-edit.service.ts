@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { JourneyService } from '../journey/journey.service.js';
-import { projectTypeOf, type StageKey, definitionOf } from '../journey/catalog.js';
+import { projectTypeOf, knownStagesOf, type StageKey, definitionOf } from '../journey/catalog.js';
 import { describeChanges } from '../journey/change-summary.js';
 import { PublishingService } from './publishing.service.js';
 import { QUICK_EDIT_STAGES, checkContacts, checkHoursEdits, checkProductEdits, checkRequest, contactChanges, instructionFor, targetFor, type Contacts } from './quick-edit.js';
@@ -32,7 +32,9 @@ export class QuickEditService {
         stages: { select: { id: true, stageKey: true, status: true, currentVersionId: true, approvedVersionId: true, lockedKeys: true } },
       },
     });
-    const route = (projectTypeOf(project.projectType)?.stages ?? []) as StageKey[];
+    const type = projectTypeOf(project.projectType);
+    // The project's own route: the stages it has (older projects keep the route they were created with).
+    const route = (type ? knownStagesOf(type) : []).filter((key) => project.stages.some((item) => item.stageKey === key)) as StageKey[];
     const stage = (key: StageKey) => project.stages.find((item) => item.stageKey === key);
     return { member, project, route, stage, canChange: member.role === 'owner' || member.role === 'manager' };
   }

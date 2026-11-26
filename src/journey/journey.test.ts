@@ -24,11 +24,13 @@ describe('routes', () => {
   });
   it('computes dependents and ancestors transitively', () => {
     assert.deepEqual(routeDependents(projectTypes.landing.stages, 'goal'), ['idea', 'process', 'suggestions', 'concept', 'features', 'techplan', 'content', 'design', 'build']);
-    assert.deepEqual(routeAncestors(projectTypes.company_site.stages, 'build'), ['goal', 'idea', 'process', 'suggestions', 'features', 'offer', 'techplan', 'content', 'design']);
+    assert.deepEqual(routeDependents(projectTypes.landing.stages, 'story'), ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'techplan', 'content', 'design', 'build']);
+    assert.deepEqual(routeAncestors(projectTypes.company_site.stages, 'build'), ['story', 'goal', 'idea', 'process', 'suggestions', 'features', 'offer', 'techplan', 'content', 'design']);
   });
-  it('the idea review comes right after the goal, then the business process and the ТЗ, and the architecture builds on them', () => {
+  it('the idea in own words and (on sites) the goal come first, then the idea review, the business process and the ТЗ, and the architecture builds on them', () => {
     for (const type of Object.values(projectTypes)) {
-      assert.deepEqual(type.stages.slice(0, 6), ['goal', 'idea', 'process', 'suggestions', 'concept', 'features'], type.key);
+      const start = type.key === 'web_app' ? ['story'] : ['story', 'goal'];
+      assert.deepEqual(type.stages.slice(0, start.length + 5), [...start, 'idea', 'process', 'suggestions', 'concept', 'features'], type.key);
       assert.ok(routeInputs(type.stages, 'techplan').includes('features'), type.key);
       assert.ok(routeInputs(type.stages, 'techplan').includes('process'), type.key);
       assert.ok(routeInputs(type.stages, 'build').includes('techplan'), type.key);
