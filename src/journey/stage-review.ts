@@ -654,7 +654,7 @@ function situationsReview(process: BusinessProcess, projectType: string | null |
 }
 
 /** Review of one stage result. Types without rules yet get an empty review with the full score. */
-export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null; process?: BusinessProcess | null; projectType?: string | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null; launch?: LaunchFacts; module?: ModuleFacts } = {}): StageReview {
+export function reviewStage(type: string, content: unknown, context: { features?: AppFeatures | null; process?: BusinessProcess | null; projectType?: string | null; concept?: ConceptInputs; design?: ArchitectureDesign | null; contracts?: Contracts | null; launch?: LaunchFacts; module?: ModuleFacts; stack?: string | null } = {}): StageReview {
   const found: ReviewFinding[] = [];
   const counts = new Map<string, number>();
   const push: Push = (finding) => {
@@ -685,7 +685,7 @@ export function reviewStage(type: string, content: unknown, context: { features?
     if (type === 'testplan') for (const issue of testPlanIssues(content as TestPlan, context.features ?? null, context.design ?? null)) push({
       code: issue.code, severity: issue.severity, category: issue.code === 'TESTPLAN_THREAT_UNCOVERED' || issue.code === 'TESTPLAN_SENSITIVE_UNCOVERED' ? 'security' : 'logic', target: issue.target, where: tr('План проверки'), message: issue.message, fix: issue.fix,
     });
-    if (type === 'roadmap') for (const issue of roadmapIssues(content as Roadmap, context.features ?? null, context.contracts ?? null)) push({
+    if (type === 'roadmap') for (const issue of roadmapIssues(content as Roadmap, context.features ?? null, context.contracts ?? null, context.stack ?? null)) push({
       code: issue.code, severity: issue.severity, category: 'logic', target: issue.target, where: tr('План реализации'), message: issue.message, fix: issue.fix,
     });
     if (type === 'contracts') for (const issue of contractIssues(content as Contracts, context.features ?? null, context.design ?? null)) push({

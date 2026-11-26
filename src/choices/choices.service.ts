@@ -10,7 +10,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { JourneyService } from '../journey/journey.service.js';
 import { ReviewTargetPolicyError, resolveAndValidateReviewTarget } from '../reviews/url-target-policy.js';
-import { choiceCards, codeHostingCard, recommend, technologiesCard, type CardKey, githubOauthSteps } from './cards.js';
+import { choiceCards, codeHostingCard, recommend, type CardKey, githubOauthSteps, cardFor, HOSTING_SUBDOMAIN } from './cards.js';
 import { domainTarget } from '../publishing/domain.js';
 import { sitesConfig } from '../publishing/slug.js';
 import { checkSite } from './site-check.js';
@@ -80,16 +80,18 @@ export class ChoicesService {
    */
   async summary(userId: string, projectId: string) {
     const access = await this.access(userId, projectId, false);
-    const cards: CardKey[] = access.projectType === 'web_app' ? ['code_hosting'] : ['technologies', 'deployment', 'domain', 'code_hosting'];
+    // An application has its own technologies, hosting and address cards (it is not published on BuildPath): cardFor.
+    const cards: CardKey[] = ['technologies', 'deployment', 'domain', 'code_hosting'];
     const [choices, repo, publication, hosting] = await Promise.all([
       this.prisma.projectChoice.findMany({ where: { projectId }, select: { cardKey: true, optionKey: true, chosenAt: true } }),
       this.prisma.codeRepository.findUnique({ where: { projectId }, select: { provider: true, repoPath: true, webUrl: true } }),
       this.prisma.sitePublication.findUnique({ where: { projectId }, select: { status: true, slug: true, customDomain: true, domainStatus: true } }),
       this.prisma.hostingConnection.findUnique({ where: { projectId }, select: { provider: true, siteUrl: true } }),
     ]);
+    const appDeployment = access.projectType === 'web_app' ? await this.prisma.appDeployment.findUnique({ where: { projectId }, select: { url: true, ok: true } }) : null;
     const live = publication?.status === 'live';
     const items = cards.map((key) => {
-      const card = key === 'technologies' ? technologiesCard(access.projectType) : key === 'code_hosting' ? codeHostingCard(access.projectType) : choiceCards[key];
+      const card = cardFor(key, access.projectType);
       const choice = choices.find((item) => item.cardKey === key);
       const recommendation = recommend(key, access);
       const optionKey = choice?.optionKey ?? recommendation.optionKey;
@@ -98,12 +100,28 @@ export class ChoicesService {
         cardKey: key, title: card.title, optionKey: option.key, optionTitle: option.title,
         decidedBy: choice ? 'owner' as const : 'default' as const,
         // What the decision means for this project right now, in one sentence.
-        now: this.decisionNow(key, option.key, { live, slug: publication?.slug ?? null, domain: publication?.customDomain && publication.domainStatus === 'active' ? publication.customDomain : null, repo, hosting }),
+        now: access.projectType === 'web_app' ? this.appDecisionNow(key, option.key, { repo, deployment: appDeployment }) : this.decisionNow(key, option.key, { live, slug: publication?.slug ?? null, domain: publication?.customDomain && publication.domainStatus === 'active' ? publication.customDomain : null, repo, hosting }),
         why: choice ? null : recommendation.reason,
         others: card.options.filter((item) => item.key !== option.key).map((item) => ({ key: item.key, title: item.title, summary: item.summary })),
       };
     });
     return { data: { items, canDecide: access.canDecide } };
+  }
+
+  /** An application: what each decision means for it now, from the checked address and the repository. */
+  private appDecisionNow(card: CardKey, option: string, state: { repo: { provider: string; repoPath: string; webUrl: string } | null; deployment: { url: string; ok: boolean } | null }): string {
+    if (card === 'technologies') return option === 'buildpath' ? tr('Код пишет ИИ-агент на Node.js, React и PostgreSQL; платформа проверяет каждую задачу.') : tr('Код пишет разработчик на своём стеке; задачи ИИ-агента для проекта отключены.');
+    if (card === 'deployment') {
+      if (state.deployment) return state.deployment.ok ? tr('Приложение работает по адресу {0}.', [state.deployment.url]) : tr('Адрес {0} при последней проверке не ответил.', [state.deployment.url]);
+      return option === 'render' ? tr('Приложение ещё не запущено: сервис и база создаются на Render по render.yaml — шаги в «Изменить».') : tr('Приложение ещё не запущено на вашем сервере — шаги в «Изменить».');
+    }
+    if (card === 'domain') {
+      const host = state.deployment ? new URL(state.deployment.url).hostname : null;
+      if (option === 'own_domain') return host && !HOSTING_SUBDOMAIN.test(host) ? tr('Приложение открывается по вашему адресу {0}.', [host]) : tr('Свой домен ещё не подключён — шаги в «Изменить».');
+      return host ? tr('Адрес приложения: {0}.', [host]) : tr('Адрес появится у хостинга после первого запуска.');
+    }
+    if (state.repo) return tr('Код в репозитории {0}: {1}.', [gitProviderName[state.repo.provider as GitProviderKey] ?? state.repo.provider, state.repo.webUrl]);
+    return tr('Репозиторий ещё не подключён — шаги в «Изменить».');
   }
 
   private decisionNow(card: CardKey, option: string, state: { live: boolean; slug: string | null; domain: string | null; repo: { provider: string; repoPath: string; webUrl: string } | null; hosting: { provider: string; siteUrl: string | null } | null }): string {
@@ -130,12 +148,12 @@ export class ChoicesService {
       this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey } } }),
       cardKey === 'code_hosting' ? this.prisma.codeRepository.findUnique({ where: { projectId } }) : null,
     ]);
-    const met = await this.requirementsMet(projectId, cardKey);
+    const met = await this.requirementsMet(projectId, cardKey, access.projectType);
     return {
       data: {
         card: cardKey === 'code_hosting' && githubOauthConfig() && this.key()
           ? { ...codeHostingCard(access.projectType), options: codeHostingCard(access.projectType).options.map((option) => (option.key === 'github' ? { ...option, steps: githubOauthSteps } : option)) }
-          : cardKey === 'technologies' ? technologiesCard(access.projectType) : cardKey === 'code_hosting' ? codeHostingCard(access.projectType) : choiceCards[cardKey],
+          : cardFor(cardKey, access.projectType),
         recommendation: recommend(cardKey, access),
         choice: choice ? { optionKey: choice.optionKey, reason: choice.reason, stepsDone: choice.stepsDone, chosenAt: choice.chosenAt, cardVersion: choice.cardVersion, verification: choice.verification ?? null } : null,
         available: met,
@@ -150,9 +168,9 @@ export class ChoicesService {
   async choose(userId: string, projectId: string, cardKey: string, optionKey: string, reason: string | null) {
     if (!isCard(cardKey)) throw new NotFoundException('CHOICE_CARD_NOT_FOUND');
     const access = await this.access(userId, projectId, true);
-    const card = cardKey === 'code_hosting' ? codeHostingCard(access.projectType) : choiceCards[cardKey];
+    const card = cardFor(cardKey, access.projectType);
     if (!card.options.some((option) => option.key === optionKey)) throw new BadRequestException('CHOICE_OPTION_INVALID');
-    if ((await this.requirementsMet(projectId, cardKey))[optionKey] === false) throw new ConflictException('CHOICE_REQUIREMENT_NOT_MET');
+    if ((await this.requirementsMet(projectId, cardKey, access.projectType))[optionKey] === false) throw new ConflictException('CHOICE_REQUIREMENT_NOT_MET');
     const previous = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey } }, select: { optionKey: true } });
     await this.prisma.$transaction([
       this.prisma.projectChoice.upsert({
@@ -170,7 +188,7 @@ export class ChoicesService {
     const access = await this.access(userId, projectId, true);
     const choice = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey } } });
     if (!choice) throw new ConflictException('CHOICE_NOT_MADE');
-    const card = cardKey === 'code_hosting' ? codeHostingCard(access.projectType) : choiceCards[cardKey];
+    const card = cardFor(cardKey, access.projectType);
     const step = card.options.find((option) => option.key === choice.optionKey)?.steps.find((item) => item.key === stepKey);
     // Steps that BuildPath checks itself cannot be ticked off by hand.
     if (!step || step.kind === 'connect' || step.kind === 'verify' || step.kind === 'domain' || step.kind === 'hosting_connect' || step.kind === 'hosting_deploy' || step.kind === 'network_agent') throw new BadRequestException('CHOICE_STEP_INVALID');
@@ -635,9 +653,9 @@ export class ChoicesService {
   }
 
   /** Options that depend on another decision: available only when that decision is made (and, for GitHub, connected). */
-  private async requirementsMet(projectId: string, cardKey: CardKey): Promise<Record<string, boolean>> {
+  private async requirementsMet(projectId: string, cardKey: CardKey, projectType: string | null | undefined): Promise<Record<string, boolean>> {
     const result: Record<string, boolean> = {};
-    for (const option of choiceCards[cardKey].options) {
+    for (const option of cardFor(cardKey, projectType).options) {
       if (!option.requires) continue;
       const other = await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: option.requires.card } }, select: { optionKey: true } });
       const repo = option.requires.card === 'code_hosting' ? await this.prisma.codeRepository.findUnique({ where: { projectId }, select: { provider: true } }) : null;

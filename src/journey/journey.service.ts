@@ -8,6 +8,7 @@ import { markdownToDocx } from './docx.js';
 import { ideaMarkdown, importIdeaText, type IdeaReview } from './idea.js';
 import { importSuggestionsText, suggestionsMarkdown, type Suggestions } from './suggestions.js';
 import { tr } from '../i18n/i18n.js';
+import { cardFor } from '../choices/cards.js';
 import { assertBrowserGate } from '../quality/browser-gate.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { WorktimeService } from './worktime.service.js';
@@ -581,7 +582,15 @@ export class JourneyService {
     if (!canEdit(stage.status)) throw new ConflictException(notEditableCode(stage.status));
     if (!inputsSatisfied(ctx.route, ctx.dep, 'handoff')) throw new ConflictException('STAGE_INPUTS_NOT_ACCEPTED');
     const inputs = await this.core.acceptedInputs(ctx, 'handoff');
-    const artifact = buildHandoffPackage({
+    // Decisions the owner made (choice cards); a card not decided yet is not written as if it were.
+    const chosen = await this.prisma.projectChoice.findMany({ where: { projectId }, select: { cardKey: true, optionKey: true, reason: true } });
+    const decisions = (['technologies', 'deployment', 'domain', 'code_hosting'] as const).flatMap((key) => {
+      const choice = chosen.find((item) => item.cardKey === key);
+      const card = cardFor(key, ctx.type.key);
+      const option = choice ? card.options.find((item) => item.key === choice.optionKey) : undefined;
+      return option ? [{ question: tr(card.question), answer: tr(option.title), summary: tr(option.summary), reason: choice!.reason }] : [];
+    });
+    const artifact = buildHandoffPackage({ decisions,
       brief: (inputs.goal?.content as Brief | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
       features: inputs.features!.content as AppFeatures, screens: inputs.screens!.content as AppScreens, plan: inputs.techplan!.content as TechPlan,
       contracts: (inputs.contracts?.content as Contracts | undefined) ?? null, roadmap: (inputs.roadmap?.content as Roadmap | undefined) ?? null, testplan: (inputs.testplan?.content as TestPlan | undefined) ?? null, locale: ctx.project.locale, sourceVersionIds: Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.versionId])),
@@ -965,11 +974,14 @@ export class JourneyService {
     const contracts = (inputs.contracts?.content as Contracts | undefined) ?? null;
     const design = techPlanDesignOf(inputs.techplan?.content);
     const idea = (inputs.idea?.content as IdeaReview | undefined) ?? null;
-    const template = features && contracts ? inProject(ctx, () => templateRoadmap({ contracts, features, design, idea })) : null;
+    // On the developer's own stack («Технологии») every module is a specialist's: the AI agent does not write that code.
+    const stack = (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId: ctx.project.id, cardKey: 'technologies' } }, select: { optionKey: true } }))?.optionKey ?? null;
+    const drafted = features && contracts ? inProject(ctx, () => templateRoadmap({ contracts, features, design, idea })) : null;
+    const template = drafted && stack === 'developer' ? { ...drafted, modules: drafted.modules.map((module) => ({ ...module, executor: 'specialist' as const })) } : drafted;
     let current: Roadmap | null = null;
     try { current = content ? normalizeRoadmap(content) : null; } catch { current = null; }
     return {
-      template, limits: ROADMAP_LIMITS, executors: EXECUTORS, missing: satisfied ? null : 'inputs',
+      template, limits: ROADMAP_LIMITS, executors: EXECUTORS, missing: satisfied ? null : 'inputs', stack,
       markdown: current ? inProject(ctx, () => roadmapMarkdown(current!, features)) : null,
       features: features?.features.map((feature) => ({ key: feature.key, title: feature.title, priority: feature.priority })) ?? [],
       contractModules: contracts?.modules.map((module) => ({ key: module.key, name: module.name })) ?? [],

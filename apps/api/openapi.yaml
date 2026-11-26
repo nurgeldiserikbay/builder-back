@@ -1582,7 +1582,7 @@ paths:
       tags: [Choices]
       operationId: getDecisionsSummary
       summary: «Уже решено за вас» — every decision of the project, chosen or by default
-      description: 'items[] (cardKey, title, optionKey, optionTitle, decidedBy owner | default, now — what it means for the project right now, why — the reason of the default (null once the owner chose), others[] (key, title, summary)), canDecide. Until the owner chooses, the decision is the platform recommendation. A web application has only code_hosting.'
+      description: 'items[] (cardKey, title, optionKey, optionTitle, decidedBy owner | default, now — what it means for the project right now, why — the reason of the default (null once the owner chose), others[] (key, title, summary)), canDecide. Until the owner chooses, the decision is the platform recommendation. A web application has its own cards (catalog of choice cards for apps, 2026-11-26): technologies (buildpath — the agent''s profile Node.js 20, React, PostgreSQL | developer — own stack; agent tasks then answer 409 AGENT_STACK_NOT_SUPPORTED and canStart is false, ownStack true; plan modules given to the AI are finding ROADMAP_AI_OTHER_STACK and the plan template gives every module to a specialist), deployment (render | own_server), domain (host_address | own_domain — the launch item domain becomes required and LAUNCH_DOMAIN_NOT_CHECKED (important) says when the checked address is still the hosting''s), code_hosting. The development package gets decisions.md with the decisions made (not the defaults).'
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       parameters:
@@ -5020,7 +5020,7 @@ paths:
         STAGE_INPUTS_NOT_ACCEPTED), one task at a time (409 AGENT_TASK_RUNNING). Plan, spend limit and balance are checked as for any
         AI request; the task then spends within its own cap. The agent works in a throwaway E2B sandbox with internet for packages
         and no platform keys; the platform runs install, test and build itself afterwards. Counted as one AI request. Nothing is
-        pushed, published or deployed. 503 AGENT_NOT_CONFIGURED.
+        pushed, published or deployed. 503 AGENT_NOT_CONFIGURED. 409 AGENT_STACK_NOT_SUPPORTED when the «Технологии» decision is the developer's own stack.
         module (step 9a): one module of the accepted implementation plan; no instruction — the platform writes it from the plan,
         the contracts and the test plan (409 ROADMAP_NOT_APPROVED, 404 MODULE_NOT_FOUND). With build_app it starts from an empty
         folder, with change_app from baseTaskId. Its unfinished, unblocked tasks become «в работе».

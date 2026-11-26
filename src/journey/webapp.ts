@@ -534,7 +534,9 @@ export function handoffChecks(input: { features: AppFeatures | null; screens: Ap
   return checks;
 }
 
-export function buildHandoff(input: { brief: Brief | null; process: BusinessProcess | null; features: AppFeatures; screens: AppScreens; plan: TechPlan; contracts?: Contracts | null; roadmap?: Roadmap | null; testplan?: TestPlan | null; locale: string; sourceVersionIds: Record<string, string> }): HandoffArtifact {
+export function buildHandoff(input: { brief: Brief | null; process: BusinessProcess | null; features: AppFeatures; screens: AppScreens; plan: TechPlan; contracts?: Contracts | null; roadmap?: Roadmap | null; testplan?: TestPlan | null; locale: string; sourceVersionIds: Record<string, string>;
+  /** The owner's decisions (choice cards): technologies, where it runs, the address, where the code lives. */
+  decisions?: Array<{ question: string; answer: string; summary: string; reason: string | null }> }): HandoffArtifact {
   return runWithLocale(contentLocale(input.locale), () => {
     const name = input.brief?.businessName || tr('Приложение');
     const roleName = (key: string) => input.features.roles.find((role) => role.key === key)?.name ?? key;
@@ -592,7 +594,10 @@ export function buildHandoff(input: { brief: Brief | null; process: BusinessProc
         : [`- api.yaml — ${tr('черновик контракта API (OpenAPI 3.1)')}`]),
       ...(input.roadmap ? [`- plan.md — ${tr('план реализации: модули, порядок, оценки, риски')}`] : []),
       ...(input.testplan ? [`- test-plan.md — ${tr('план проверки: кейсы по классам — по ним пишутся автотесты')}`] : []),
+      ...(input.decisions?.length ? [`- decisions.md — ${tr('решения владельца: технологии, где работает приложение, адрес, где хранится код')}`] : []),
       `- prototype/ — ${tr('кликабельный прототип экранов')}`, ''].join('\n');
+    const decisions = input.decisions?.length ? [`# ${tr('Решения владельца')}`, '',
+      ...input.decisions.flatMap((item) => [`## ${item.question}`, '', `**${item.answer}.** ${item.summary}`, ...(item.reason ? ['', `${tr('Почему')}: ${item.reason}`] : []), '']), ''].join('\n') : null;
     return {
       packageVersion: WEBAPP_VERSION,
       files: [
@@ -604,6 +609,7 @@ export function buildHandoff(input: { brief: Brief | null; process: BusinessProc
         ...(contractFiles.length ? contractFiles : [{ name: 'api.yaml', mimeType: 'application/yaml', content: input.plan.api }]),
         ...(input.testplan ? [{ name: 'test-plan.md', mimeType: 'text/markdown', content: testPlanMarkdown(input.testplan, input.features) }] : []),
         ...(input.roadmap ? [{ name: 'plan.md', mimeType: 'text/markdown', content: roadmapMarkdown(input.roadmap, input.features) }] : []),
+        ...(decisions ? [{ name: 'decisions.md', mimeType: 'text/markdown', content: decisions }] : []),
         ...prototype,
       ],
       checks: handoffChecks({ features: input.features, screens: input.screens, plan: input.plan }),
