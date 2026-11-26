@@ -5,6 +5,7 @@ import { acceptRoles, editableProject, JourneyCore } from '../journey/journey-co
 import { filesDigestOf } from '../agent/agent-tasks.js';
 import type { AgentFile } from '../agent/agent-loop.js';
 import { RateLimiter } from '../security/rate-limit.js';
+import { recordAppCheck } from '../monitoring/app-monitor.js';
 import {
   agentState, bearerKey, hashAgentKey, newAgentKey, NETWORK_AGENT_KINDS, NETWORK_AGENT_LIMITS, readHello, readResult, safeRepoPath,
   type NetworkAgentKind,
@@ -14,7 +15,7 @@ const limits = new RateLimiter();
 const AGENT_ACTIVE = ['queued', 'running'];
 /** The program the owner runs; one file, Node.js 22 and git, no other dependencies. */
 const PROGRAM_PATH = new URL('../../apps/network-agent/buildpath-agent.mjs', import.meta.url);
-export const AGENT_PROGRAM_VERSION = '1.0.0';
+export const AGENT_PROGRAM_VERSION = '1.1.0';
 
 type AgentRow = NonNullable<Awaited<ReturnType<PrismaService['networkAgent']['findFirst']>>>;
 type JobRow = NonNullable<Awaited<ReturnType<PrismaService['networkAgentJob']['findFirst']>>>;
@@ -242,6 +243,22 @@ export class NetworkAgentService {
       await this.core.event(tx, job.projectId, job.requestedById, 'network_agent_job_done', 'handoff', { jobId: job.id, kind: job.kind, ok: result.ok, error: result.error });
     });
     return { ok: true };
+  }
+
+  /**
+   * After launch the agent checks the application itself every 10 minutes and sends the result here (program 1.1.0+): the
+   * platform cannot reach an application inside a closed network. Counted like the platform's own checks of other apps.
+   */
+  async monitor(authorization: string | undefined, ip: string | undefined, body: unknown) {
+    const agent = await this.agentFor(authorization, ip);
+    await this.prisma.networkAgent.update({ where: { id: agent.id }, data: { lastSeenAt: new Date() } });
+    const app = await this.prisma.appDeployment.findUnique({ where: { projectId: agent.projectId }, select: { monitorCheckedAt: true } });
+    // One result per few minutes is enough; more does not change the state, only the load.
+    if (app?.monitorCheckedAt && Date.now() - app.monitorCheckedAt.getTime() < 4 * 60_000) return { ok: true, recorded: false };
+    const result = readResult('check', body);
+    if (result.kind !== 'check') return { ok: true, recorded: false };
+    const alert = await recordAppCheck(this.prisma, { projectId: agent.projectId, probe: { ok: result.ok, status: result.status, ms: result.ms ?? 0, error: result.error }, via: 'network_agent' });
+    return { ok: true, recorded: true, alert };
   }
 
   /** The agent program, for the owner to download and run. */

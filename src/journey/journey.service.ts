@@ -23,6 +23,7 @@ import { PrismaService } from '../database/prisma.service.js';
 import { stageFor, stageTitle, ROUTE_CATALOG_VERSION, projectTypes, routeInputs, statusExplanations, type StageKey, definitionOf, moduleStageDefinition, isModuleStageKey, moduleKeyOf } from './catalog.js';
 import { syncModuleStages, MODULE_REMOVED_NOTE } from './module-stages.js';
 import { setPlanBaseline } from './plan-schedule.service.js';
+import { appMonitoringView } from '../monitoring/app-monitor.js';
 import { changedKeys, completenessIssues, importBriefText, importContentText, importOfferText, lockableKeys, stableStringify, normalizeArtifact, sectionTypeLabels, importCatalogText, type Brief, type ContentArtifact, type Offer, type SiteArtifact } from './artifacts.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderPages, renderSite, siteMeta } from './site-renderer.js';
 import { RESERVED_PATHS, SITEMAP_LIMITS, templateSitemap, type Sitemap } from './sitemap.js';
@@ -244,9 +245,11 @@ export class JourneyService {
     const concept = definition.artifactType === 'concept' ? await this.conceptView(ctx, stageKey, current?.content ?? null) : null;
     const contracts = definition.artifactType === 'contracts' ? await this.contractsView(ctx, stageKey, current?.content ?? null) : null;
     const roadmap = definition.artifactType === 'roadmap' ? await this.roadmapView(ctx, stageKey, current?.content ?? null) : null;
-    const launch = definition.artifactType === 'launch' ? await this.core.launchFacts(ctx, stageKey).then((facts) => inProject(ctx, () => ({
-      facts, items: launchItems(facts), markdown: current ? launchMarkdown(normalizeLaunch(current.content), facts) : null,
-    }))) : null;
+    const launch = definition.artifactType === 'launch' ? await this.core.launchFacts(ctx, stageKey).then(async (facts) => {
+      // After launch: how the platform (or the owner's agent) watches the application.
+      const monitoring = await inProject(ctx, () => appMonitoringView(this.prisma, ctx.project.id));
+      return inProject(ctx, () => ({ facts, items: launchItems(facts), markdown: current ? launchMarkdown(normalizeLaunch(current.content), facts) : null, monitoring }));
+    }) : null;
     const testplan = definition.artifactType === 'testplan' ? await this.testPlanView(ctx, stageKey, current?.content ?? null) : null;
     const moduleStage = definition.artifactType === 'module' ? await this.moduleView(ctx, stageKey) : null;
     const techPlanOutdated = Boolean(techPlanPreview && current && !sameTechPlan(techPlanPreview, current.content as unknown as TechPlan));

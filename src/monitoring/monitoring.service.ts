@@ -8,6 +8,8 @@ import { change } from '../insights/insights-rules.js';
 import { CHECK_INTERVAL_MS, duration, nextState, weeklyReportDue, type MonitorStatus, type Probe } from './monitor-rules.js';
 import { probeSite } from './site-probe.js';
 import { liveCheck, regressions, type LiveCheck } from './live-check.js';
+import { recordAppCheck } from './app-monitor.js';
+import { checkAppHealth, type HealthAnswer } from '../agent/app-health.js';
 
 /** Only one API instance checks sites at a time. */
 const LOCK_KEY = 7_316_005;
@@ -33,6 +35,7 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
   /** Replaced in tests. */
   probe: (url: string, trusted: boolean) => Promise<Probe> = probeSite;
   inspect: (url: string, trusted: boolean) => Promise<LiveCheck> = liveCheck;
+  health: (origin: string) => Promise<HealthAnswer> = (origin) => checkAppHealth(origin, false);
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -53,6 +56,7 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
     if (!locked[0]?.locked) return { checked: 0, alerts: 0, reports: 0 };
     try {
       const result = await this.checkAll(now);
+      result.alerts += (await this.checkApps(now)).alerts;
       const reports = await this.sendWeeklyReports(now);
       await this.dailyLiveChecks(now);
       if (result.alerts || reports) this.logger.log(`checked ${result.checked}, alerts ${result.alerts}, reports ${reports}`);
@@ -79,6 +83,27 @@ export class MonitoringService implements OnApplicationBootstrap, OnApplicationS
       alerts += counts.reduce((sum, value) => sum + value, 0);
     }
     return { checked: sites.length, alerts };
+  }
+
+  /**
+   * Launched applications on the internet: /api/health, the same way the owner's «Проверить адрес» asks it. Applications
+   * in a closed network are checked by the owner's agent, which sends its results itself (network-agent).
+   */
+  async checkApps(now = new Date()) {
+    const apps = await this.prisma.appDeployment.findMany({
+      where: { checkedVia: 'platform', project: { projectType: 'web_app', status: { in: ['active', 'live'] }, stages: { some: { stageKey: 'launch', status: 'approved' } } } },
+      select: { projectId: true, url: true },
+    });
+    let alerts = 0;
+    for (let index = 0; index < apps.length; index += CONCURRENCY) {
+      const batch = apps.slice(index, index + CONCURRENCY);
+      const results = await Promise.all(batch.map(async (app) => {
+        const health = await this.health(app.url);
+        return recordAppCheck(this.prisma, { projectId: app.projectId, probe: { ok: health.ok, status: health.status, ms: health.ms, error: health.error }, via: 'platform', now });
+      }));
+      alerts += results.filter(Boolean).length;
+    }
+    return { checked: apps.length, alerts };
   }
 
   private async checkOne(site: Live, now: Date): Promise<number> {

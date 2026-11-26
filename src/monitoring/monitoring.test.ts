@@ -144,3 +144,94 @@ describe('site monitoring (database)', async () => {
     }
   });
 });
+
+/** After launch: an application is watched by the platform, or by the owner's agent inside a closed network. */
+describe('application monitoring (database)', async () => {
+  let prisma: PrismaService | null = null;
+  try { prisma = new PrismaService(); await prisma.$queryRaw`SELECT monitor_status FROM app_deployments LIMIT 1`; } catch { prisma = null; }
+  const skip = prisma ? false : 'database not available';
+  const users: string[] = [];
+  after(async () => {
+    if (!prisma) return;
+    await prisma.project.deleteMany({ where: { ownerUserId: { in: users } } });
+    await prisma.workspace.deleteMany({ where: { ownerUserId: { in: users } } });
+    await prisma.user.deleteMany({ where: { id: { in: users } } });
+    await prisma.$disconnect();
+  });
+
+  const launched = async (name: string, via: 'platform' | 'network_agent', launch: 'approved' | 'in_progress' = 'approved') => {
+    const email = `app-mon-${randomUUID()}@test.local`;
+    const owner = await prisma!.user.create({ data: { email, emailNormalized: email, passwordHash: 'x', emailVerifiedAt: new Date(), locale: 'ru' } });
+    users.push(owner.id);
+    const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
+    const project = await prisma!.project.create({ data: { workspaceId: workspace.id, ownerUserId: owner.id, name, startMode: 'build', status: 'active', projectType: 'web_app' } });
+    await prisma!.projectStage.create({ data: { projectId: project.id, stageKey: 'launch', position: 12, status: launch, definitionVersion: '1.0.0' } });
+    await prisma!.appDeployment.create({ data: { projectId: project.id, url: `https://${name}.example.com`, ok: true, status: 200, checkedAt: new Date(), checkedByUserId: owner.id, checkedVia: via } });
+    return project;
+  };
+
+  it('watches a launched application: down after two failed checks, one incident, back when it answers', { skip }, async () => {
+    const project = await launched('crm', 'platform');
+    const notLaunched = await launched('draft', 'platform', 'in_progress');
+    const monitoring = new MonitoringService(prisma!);
+    let answer = { ok: true, status: 200 as number | null, database: 'postgres' as string | null, error: null as string | null, ms: 40 };
+    const asked: string[] = [];
+    monitoring.health = async (origin) => { asked.push(origin); return answer; };
+    const state = () => prisma!.appDeployment.findUniqueOrThrow({ where: { projectId: project.id } });
+    const t0 = new Date('2026-11-26T10:00:00Z');
+    const at = (minutes: number) => new Date(t0.getTime() + minutes * 60_000);
+
+    await monitoring.checkApps(t0);
+    assert.ok(asked.includes('https://crm.example.com'));
+    assert.ok(!asked.includes('https://draft.example.com'), 'an application not launched yet is not watched');
+    assert.equal((await state()).monitorStatus, 'up');
+
+    answer = { ok: false, status: 502, database: null, error: 'HTTP_502', ms: 30 };
+    await monitoring.checkApps(at(10));
+    assert.equal((await state()).monitorStatus, 'up'); // one failure is not enough
+    await monitoring.checkApps(at(20));
+    const down = await state();
+    assert.equal(down.monitorStatus, 'down');
+    assert.equal(down.monitorLastError, 'HTTP_502');
+    await monitoring.checkApps(at(30));
+    const incidents = await prisma!.appIncident.findMany({ where: { projectId: project.id } });
+    assert.equal(incidents.length, 1);
+    assert.equal(incidents[0]!.startedAt.toISOString(), at(10).toISOString());
+    assert.equal(await prisma!.projectEvent.count({ where: { projectId: project.id, type: 'app_down' } }), 1);
+
+    answer = { ok: true, status: 200, database: 'postgres', error: null, ms: 40 };
+    await monitoring.checkApps(at(40));
+    assert.equal((await state()).monitorStatus, 'up');
+    assert.ok((await prisma!.appIncident.findFirstOrThrow({ where: { projectId: project.id } })).endedAt);
+    assert.equal(await prisma!.projectEvent.count({ where: { projectId: project.id, type: 'app_recovered' } }), 1);
+    void notLaunched;
+  });
+
+  it('takes the results the agent sends from inside a closed network, not the platform\'s', { skip }, async () => {
+    const { NetworkAgentService } = await import('../network-agent/network-agent.service.js');
+    const { JourneyCore } = await import('../journey/journey-core.js');
+    const { BillingService } = await import('../billing/billing.service.js');
+    const { newAgentKey } = await import('../network-agent/network-agent.js');
+    const project = await launched('inner', 'network_agent');
+    const key = newAgentKey();
+    const owner = (await prisma!.project.findUniqueOrThrow({ where: { id: project.id } })).ownerUserId;
+    await prisma!.networkAgent.create({ data: { projectId: project.id, name: 'A', tokenHash: key.hash, tokenHint: key.hint, expiresAt: new Date(Date.now() + 86_400_000), createdById: owner, version: '1.1.0' } });
+    const agents = new NetworkAgentService(prisma!, new JourneyCore(prisma!, new BillingService(prisma!)));
+    const monitoring = new MonitoringService(prisma!);
+    const asked: string[] = [];
+    monitoring.health = async (origin) => { asked.push(origin); return { ok: false, status: null, database: null, error: 'NOT_PUBLIC', ms: 1 }; };
+    await monitoring.checkApps(new Date());
+    assert.ok(!asked.includes('https://inner.example.com'), 'the platform does not ask an address inside a closed network');
+
+    const send = (body: unknown) => agents.monitor(`Bearer ${key.token}`, '127.0.0.1', body);
+    assert.equal((await send({ ok: false, status: null, ms: 60000, error: 'APP_TIMEOUT' })).recorded, true);
+    // Within a few minutes another result changes nothing.
+    assert.equal((await send({ ok: false, status: null, ms: 60000, error: 'APP_TIMEOUT' })).recorded, false);
+    await prisma!.appDeployment.update({ where: { projectId: project.id }, data: { monitorCheckedAt: new Date(Date.now() - 10 * 60_000) } });
+    assert.equal((await send({ ok: false, status: null, ms: 60000, error: 'APP_TIMEOUT' })).alert, 'down');
+    const view = await (await import('./app-monitor.js')).appMonitoringView(prisma!, project.id);
+    assert.equal(view.watched && view.status, 'down');
+    assert.equal(view.watched && view.via, 'network_agent');
+    assert.equal(view.watched && view.agent?.reports, true);
+  });
+});
