@@ -22,6 +22,7 @@ import { expandedSchema, type ArchitectureDesign } from './architecture.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { stageFor, stageTitle, ROUTE_CATALOG_VERSION, projectTypes, routeInputs, statusExplanations, type StageKey, definitionOf, moduleStageDefinition, isModuleStageKey, moduleKeyOf } from './catalog.js';
 import { syncModuleStages, MODULE_REMOVED_NOTE } from './module-stages.js';
+import { dataNames } from './screen-access.js';
 import { mergeIntoMainLine, mergePreview } from '../agent/module-branch.js';
 import { setPlanBaseline } from './plan-schedule.service.js';
 import { appMonitoringView } from '../monitoring/app-monitor.js';
@@ -356,6 +357,8 @@ export class JourneyService {
           ...(stageKey === 'content' && ctx.route.includes('sitemap') ? { pages: (await this.core.checkContext(ctx, stageKey)).sitemap?.pages ?? null } : {}),
           // The ТЗ as a document to download, from the version on screen, in the project's language.
           ...(definition.artifactType === 'features' ? { backlogNext: await this.prisma.backlogItem.findMany({ where: { projectId, status: 'next' }, orderBy: { createdAt: 'asc' }, select: { id: true, title: true, details: true, version: true, source: true } }) } : {}),
+          // Screens: the names of the records, so the editor shows what each screen's role may do with them (the matrix).
+          ...(definition.artifactType === 'screens' ? { screens: { dataNames: dataNames(((await this.core.acceptedInputs(ctx, 'features')).process?.content as BusinessProcess | undefined) ?? null) } } : {}),
           ...(definition.artifactType === 'features' ? { features: { kind: ctx.type.key === 'web_app' ? 'app' : 'site', firstVersionSoftLimit: FIRST_VERSION_SOFT_LIMIT[ctx.type.key === 'web_app' ? 'app' : 'site'], markdown: current ? await this.specDocument(ctx, stageKey, current.content) : null } } : {}),
           // The owner's story from «Расскажите о своём деле» starts the passport until the first version exists.
           ...(definition.artifactType === 'brief' && !stage.currentVersionId ? { brief: { intro: (await this.prisma.project.findUnique({ where: { id: projectId }, select: { summary: true } }))?.summary ?? null } } : {}),

@@ -3,6 +3,7 @@
 // A blocking finding stops acceptance until it is fixed or the owner explains in writing why the stage goes on anyway.
 import { designIssues, type ArchitectureDesign, type ArchitectureFix } from './architecture.js';
 import { templateDesignFor } from './webapp.js';
+import { dataNames, screenAccessIssues } from './screen-access.js';
 import { contractIssues, type Contracts } from './contracts.js';
 import { roadmapIssues, type Roadmap } from './roadmap.js';
 import { testPlanIssues, type TestPlan } from './testplan.js';
@@ -694,7 +695,13 @@ export function reviewStage(type: string, content: unknown, context: { features?
     if (type === 'process') { processReview(content as BusinessProcess, push); situationsReview(content as BusinessProcess, context.projectType, push); }
     if (type === 'features') featuresReview(content as AppFeatures, context.process ?? null, push, context.projectType && context.projectType !== 'web_app' ? 'site' : 'app');
     if (type === 'features') specExtrasReview(content as AppFeatures, context.process ?? null, push);
-    if (type === 'screens') screensReview(content as AppScreens, context.features ?? null, push);
+    if (type === 'screens') {
+      screensReview(content as AppScreens, context.features ?? null, push);
+      // The screens against the ТЗ's access matrix: what each role's screens offer must be what the role may do.
+      for (const issue of screenAccessIssues(content as AppScreens, context.features ?? null, dataNames(context.process ?? null))) push({
+        code: issue.code, severity: issue.severity, category: issue.category, target: issue.target, where: issue.screen ? tr('Экран «{0}»', [issue.screen]) : tr('Экраны'), message: issue.message, fix: issue.fix,
+      });
+    }
     if (type === 'offer') offerReview(content as Offer, push);
     if (type === 'sitemap') sitemapReview(content as Sitemap, push);
     if (type === 'content') contentReview(content as ContentArtifact, push);

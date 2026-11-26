@@ -2,6 +2,7 @@
 // (TECHNICAL_SPECIFICATION.md §6 capability manifest): it takes the project to a complete, checked package for a developer —
 // roles and functions with acceptance criteria, screens with a clickable prototype, architecture with a data model and an
 // API contract — all derived deterministically from accepted stages, so the package always matches what was agreed.
+import type { AccessAction } from './spec-extras.js';
 import { roadmapMarkdown, type Roadmap } from './roadmap.js';
 import { testPlanMarkdown, type TestPlan } from './testplan.js';
 import { contractsMarkdown, contractsMigration, contractsOpenApi, type Contracts } from './contracts.js';
@@ -319,11 +320,20 @@ export function templateScreens(features: AppFeatures | null): AppScreens {
   for (const role of value.roles) {
     const own = value.features.filter((feature) => feature.roles.includes(role.key) && feature.key !== 'signin' && feature.key !== 'privacy');
     const home = `home_${role.key}`.slice(0, 24);
-    const children = own.slice(0, 4).map((feature) => ({
-      key: `${role.key}_${feature.key}`.slice(0, 24), title: feature.title.slice(0, 60), role: role.key, purpose: feature.description.slice(0, 300), features: [feature.key],
-      blocks: [{ kind: 'list' as const, title: feature.title.slice(0, 80), fields: [tr('Название'), tr('Дата'), tr('Статус')] }, { kind: 'form' as const, title: tr('Новая запись'), fields: [tr('Название'), tr('Описание')] }],
-      links: [home],
-    }));
+    // The access matrix of the ТЗ decides the blocks: a list where the role may look, a form where it may create or change.
+    const matrix = (value.access ?? []).length > 0;
+    const rules = (feature: AppFeature) => (feature.data ?? []).map((entity) => (value.access ?? []).find((row) => row.role === role.key && row.data === entity)).filter((row) => row !== undefined);
+    const may = (feature: AppFeature, actions: AccessAction[]) => !matrix || rules(feature).some((row) => row.actions.some((action) => actions.includes(action)));
+    const children = own.slice(0, 4).map((feature) => {
+      const ownOnly = matrix && rules(feature).length > 0 && rules(feature).every((row) => row.scope === 'own');
+      const list = { kind: 'list' as const, title: (ownOnly ? tr('Мои: {0}', [feature.title]) : feature.title).slice(0, 80), fields: [tr('Название'), tr('Дата'), tr('Статус')] };
+      const form = { kind: 'form' as const, title: may(feature, ['create']) ? tr('Новая запись') : tr('Изменить запись'), fields: [tr('Название'), tr('Описание')] };
+      const blocks = [...(may(feature, ['view']) ? [list] : []), ...(may(feature, ['create', 'edit']) ? [form] : [])];
+      return {
+        key: `${role.key}_${feature.key}`.slice(0, 24), title: feature.title.slice(0, 60), role: role.key, purpose: feature.description.slice(0, 300), features: [feature.key],
+        blocks: blocks.length ? blocks : [list], links: [home],
+      };
+    });
     screens.push({
       key: home, title: tr('Главная — {0}', [role.name]).slice(0, 60), role: role.key, purpose: role.description.slice(0, 300), features: value.features.some((feature) => feature.key === 'privacy') ? ['signin', 'privacy'] : ['signin'],
       blocks: [{ kind: 'stats', title: tr('Коротко'), fields: own.slice(0, 3).map((feature) => feature.title.slice(0, 60)) }, { kind: 'actions', title: tr('Что можно сделать'), fields: own.slice(0, 4).map((feature) => feature.title.slice(0, 60)) }],

@@ -267,7 +267,12 @@ export class JourneyCore {
     // Features are checked against the accepted process: the data they name must exist there.
     if (key === 'features') return { sitemap: null, process: ((await this.acceptedInputs(ctx, key)).process?.content as BusinessProcess | undefined) ?? null };
     // Screens are checked against the accepted functions: every role has screens, every must function is shown.
-    if (key === 'screens') return { sitemap: null, features: ((await this.acceptedInputs(ctx, key)).features?.content as AppFeatures | undefined) ?? null };
+    if (key === 'screens') {
+      // The process names the records the access matrix speaks of; it is an input of the ТЗ, accepted before the screens.
+      const features = ((await this.acceptedInputs(ctx, key)).features?.content as AppFeatures | undefined) ?? null;
+      const process = ((await this.acceptedInputs(ctx, 'features')).process?.content as BusinessProcess | undefined) ?? null;
+      return { sitemap: null, features, process };
+    }
     if (key !== 'content' || !ctx.route.includes('sitemap')) return { sitemap: null };
     return { sitemap: ((await this.acceptedInputs(ctx, key)).sitemap?.content as Sitemap | undefined) ?? null };
   }
