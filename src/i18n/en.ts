@@ -4140,4 +4140,7 @@ export const en: Record<string, string> = {
   "Укажите исполнителем специалиста или выберите в решении «Технологии» профиль BuildPath.": "Set a specialist as the executor or choose the BuildPath profile in the «Technologies» decision.",
   "решения владельца: технологии, где работает приложение, адрес, где хранится код": "the owner's decisions: technologies, where the application runs, the address, where the code lives",
   "Решения владельца": "The owner's decisions",
+  "Идея": "Idea",
+  "Страница: {0}": "Page: {0}",
+  "Как связаться: {0}": "How to reach: {0}",
 };
