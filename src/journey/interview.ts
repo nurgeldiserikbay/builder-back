@@ -8,11 +8,11 @@ import type { StageAiRequest } from './stage-ai.js';
 
 export const INTERVIEW_VERSION = '1.0.0';
 /**
- * Stages a conversation works on. On «goal» and «offer» the answers fill the form directly; on «process» and «features»
+ * Stages a conversation works on. On «story», «goal» and «offer» the answers fill the form directly; on «process» and «features»
  * (the ТЗ) the result is a structure, so the conversation gathers the owner's answers by topic and the AI composes the
  * stage from them (that needs AI).
  */
-export const INTERVIEW_STAGES = ['goal', 'idea', 'offer', 'process', 'features'] as const;
+export const INTERVIEW_STAGES = ['story', 'goal', 'idea', 'offer', 'process', 'features'] as const;
 export const COMPOSED_STAGES: readonly string[] = ['idea', 'process', 'features'];
 
 const topic = (key: string, label: string, required: boolean, why: string, example: string): FieldDefinition => ({ key, label, kind: 'textarea', required, maxLength: 1200, why, example });
@@ -227,6 +227,10 @@ export function readAiTurn(fields: FieldDefinition[], raw: unknown): { reply: st
 
 /** The first words of the conversation: the same with and without AI, so starting costs nothing. */
 export function greeting(stage: StageDefinition, ai: boolean, story: string | null): string {
+  if (stage.key === 'story') {
+    if (!ai) return tr('Перечислю вопросы паспорта идеи по одному. Отвечайте своими словами — потом всё можно поправить.');
+    return story ? tr('Вы уже рассказали об идее в начале — отправьте этот рассказ или расскажите заново: что вы хотите сделать, для кого и какую задачу это решает. Если что-то уже написано — ТЗ, заметки, переписка, — вставьте текст. Я спрошу только о том, чего не хватает.') : tr('Расскажите своими словами, что вы хотите сделать: для кого это и какую задачу решает. Если что-то уже написано — ТЗ, заметки, переписка, — вставьте текст. Я спрошу только о том, чего не хватает, и объясню, зачем спрашиваю.');
+  }
   if (stage.key === 'idea') return tr('Разберём идею. Расскажите, какую проблему вы решаете и для кого, как люди справляются с ней сейчас и почему выберут вас. Я задам уточняющие вопросы — в том числе неудобные, про риски, — а потом разложу всё по полям.');
   if (stage.key === 'process') return tr('Расскажите, как у вас всё происходит сейчас: кто участвует и как клиент проходит путь от первого обращения до результата. Можно своими словами, как рассказали бы новому сотруднику. Я задам уточняющие вопросы, а потом составлю бизнес-процесс со схемой.');
   if (stage.key === 'features') return tr('Обсудим, что должен уметь продукт. Расскажите, кто им будет пользоваться и без чего первая версия не имеет смысла. Я задам уточняющие вопросы, а потом составлю ТЗ — его можно будет поправить.');

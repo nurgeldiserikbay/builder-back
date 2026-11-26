@@ -28,8 +28,10 @@ const brief: Brief = { businessName: 'Сервис Клин', whatYouDo: 'Убо
 
 describe('web application route', () => {
   it('the route goes from functions to screens, architecture and the package', () => {
-    assert.deepEqual(projectTypes.web_app.stages, ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan', 'handoff', 'launch']);
-    assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'techplan'), ['goal', 'process', 'features', 'screens']);
+    assert.deepEqual(projectTypes.web_app.stages, ['story', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan', 'handoff', 'launch']);
+    assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'techplan'), ['story', 'process', 'features', 'screens']);
+    // An application made before route 1.18.0 keeps «Цель приложения»: its stages still build on it.
+    assert.deepEqual(routeInputs(projectTypes.web_app.knownStages!.filter((key) => key !== 'story'), 'techplan'), ['goal', 'process', 'features', 'screens']);
     assert.deepEqual(routeInputs(projectTypes.web_app.stages, 'screens'), ['features']);
   });
 
@@ -167,8 +169,8 @@ describe('web application route (database)', async () => {
     const versionOf = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId!;
     const accept = async (key: string) => journey.accept(owner.id, projectId, key, await versionOf(key));
 
-    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
-    await accept('goal');
+    await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Сервис Клин', essence: 'Уборка квартир по заявкам', audience: 'Жители города', problem: 'Заявки на уборку теряются в мессенджере', story: null, materials: null }, baseVersionId: null });
+    await accept('story');
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
     await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
@@ -363,8 +365,8 @@ describe('web application route (database)', async () => {
     await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
     const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Ревью', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
     const versionOf = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId!;
-    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
-    await journey.accept(owner.id, projectId, 'goal', await versionOf('goal'));
+    await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Сервис Клин', essence: 'Уборка квартир по заявкам', audience: 'Жители города', problem: 'Заявки на уборку теряются в мессенджере', story: null, materials: null }, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'story', await versionOf('story'));
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
     await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
@@ -417,8 +419,8 @@ describe('web application route (database)', async () => {
     await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
     const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'ИИ-ревью', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
     const versionOf = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId!;
-    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
-    await journey.accept(owner.id, projectId, 'goal', await versionOf('goal'));
+    await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Сервис Клин', essence: 'Уборка квартир по заявкам', audience: 'Жители города', problem: 'Заявки на уборку теряются в мессенджере', story: null, materials: null }, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'story', await versionOf('story'));
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
     await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
@@ -471,8 +473,8 @@ describe('web application route (database)', async () => {
     await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
     const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Предложение', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
     const versionOf = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId;
-    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
-    await journey.accept(owner.id, projectId, 'goal', (await versionOf('goal'))!);
+    await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Сервис Клин', essence: 'Уборка квартир по заявкам', audience: 'Жители города', problem: 'Заявки на уборку теряются в мессенджере', story: null, materials: null }, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'story', (await versionOf('story'))!);
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
     await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');
@@ -527,8 +529,8 @@ describe('web application route (database)', async () => {
     const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Инженерия', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
     const versionOf = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId!;
     const accept = async (key: string) => journey.accept(owner.id, projectId, key, await versionOf(key));
-    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
-    await accept('goal');
+    await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Сервис Клин', essence: 'Уборка квартир по заявкам', audience: 'Жители города', problem: 'Заявки на уборку теряются в мессенджере', story: null, materials: null }, baseVersionId: null });
+    await accept('story');
     for (const key of ['idea', 'suggestions', 'concept']) await journey.skip(owner.id, projectId, key, 'Не нужно для этого проекта');
     for (const key of ['process', 'features', 'screens']) { await journey.generate(owner.id, projectId, key, { instruction: null, saveAs: 'one_off', targetKey: null }); await accept(key); }
     const preview = (await journey.stage(owner.id, projectId, 'techplan')).data.options.techplan!.preview as unknown as { design: unknown };
@@ -597,8 +599,8 @@ describe('web application route (database)', async () => {
     await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
     const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Архитектура', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
     const versionOf = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId!;
-    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
-    await journey.accept(owner.id, projectId, 'goal', await versionOf('goal'));
+    await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Сервис Клин', essence: 'Уборка квартир по заявкам', audience: 'Жители города', problem: 'Заявки на уборку теряются в мессенджере', story: null, materials: null }, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'story', await versionOf('story'));
     for (const key of ['idea', 'suggestions', 'concept']) await journey.skip(owner.id, projectId, key, 'Не нужно для этого проекта');
     for (const key of ['process', 'features', 'screens']) {
       await journey.generate(owner.id, projectId, key, { instruction: null, saveAs: 'one_off', targetKey: null });

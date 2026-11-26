@@ -1,9 +1,9 @@
 // Versioned, deterministic catalog of project types and stage contracts.
 // Every user-visible explanation lives here so the web, Telegram and exports show the same wording.
 
-export const ROUTE_CATALOG_VERSION = '1.17.0';
+export const ROUTE_CATALOG_VERSION = '1.18.0';
 
-export type CatalogStageKey = 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'build' | 'handoff' | 'launch';
+export type CatalogStageKey = 'story' | 'goal' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'products' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'build' | 'handoff' | 'launch';
 /**
  * A module of an application's accepted plan becomes its own stage (PRODUCT_LIFECYCLE §4.9): `m_<module key>`. These stages
  * are not in a project type's list; they are created from the accepted plan, stand after the developer package on the map
@@ -15,7 +15,7 @@ export const MODULE_STAGE_PREFIX = 'm_';
 export const isModuleStageKey = (key: string): key is ModuleStageKey => key.startsWith(MODULE_STAGE_PREFIX) && /^m_[a-z][a-z0-9_]{0,31}$/.test(key);
 export const moduleStageKey = (moduleKey: string): ModuleStageKey => `${MODULE_STAGE_PREFIX}${moduleKey}` as ModuleStageKey;
 export const moduleKeyOf = (key: string): string | null => isModuleStageKey(key) ? key.slice(MODULE_STAGE_PREFIX.length) : null;
-export type ArtifactType = 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'site' | 'handoff' | 'launch' | 'module';
+export type ArtifactType = 'story' | 'brief' | 'idea' | 'process' | 'suggestions' | 'concept' | 'offer' | 'catalog' | 'schedule' | 'sitemap' | 'features' | 'screens' | 'techplan' | 'contracts' | 'roadmap' | 'testplan' | 'content' | 'design' | 'site' | 'handoff' | 'launch' | 'module';
 export type AiLevel = 'ai_full' | 'ai_draft' | 'ai_assist' | 'none';
 export type ProjectTypeKey = 'landing' | 'company_site' | 'multipage' | 'store' | 'booking' | 'web_app';
 
@@ -67,9 +67,18 @@ export interface ProjectTypeDefinition {
   description: string;
   goodFor: string;
   examples: string[];
+  /** The route of a new project of this type. */
   stages: CatalogStageKey[];
+  /**
+   * Every stage a project of this type may have, in map order, when older projects keep a stage new ones no longer get
+   * (an application's «Цель» before «Идея своими словами»). A project's route is the stages of this list it has.
+   */
+  knownStages?: CatalogStageKey[];
   resultExplanation: string;
 }
+
+/** Stages in map order that a project of this type may have: its route is the ones it has rows for. */
+export const knownStagesOf = (type: ProjectTypeDefinition): CatalogStageKey[] => type.knownStages ?? type.stages;
 
 const mainActionOptions: FieldOption[] = [
   { value: 'call', label: 'Позвонить', hint: 'На сайте будет кнопка звонка по вашему номеру.' },
@@ -86,6 +95,43 @@ const toneOptions: FieldOption[] = [
 ];
 
 export const stageDefinitions: Record<CatalogStageKey, StageDefinition> = {
+  story: {
+    key: 'story',
+    version: '1.0.0',
+    title: 'Идея своими словами',
+    purpose: 'Расскажите, что вы хотите сделать, своими словами — ничего заранее знать не нужно. Из рассказа получится паспорт идеи: как она называется, в чём суть, для кого и какую задачу решает. С него начинаются все следующие этапы.',
+    outcome: 'Паспорт идеи: название, суть в одном предложении, для кого, какую задачу решает и что у вас уже есть.',
+    artifactType: 'story',
+    inputs: [],
+    ai: {
+      level: 'ai_full',
+      whatItDoes: 'Расскажите идею или вставьте то, что уже написано, — ИИ разложит рассказ по полям паспорта и не будет додумывать того, чего вы не сказали. Потом проверьте и поправьте.',
+      instructionExamples: ['Хочу сервис, где мастера по ремонту берут заявки от жильцов дома', 'Сделай суть короче и проще', 'У нас уже есть таблица заявок в Google Sheets и группа в WhatsApp'],
+      describeHint: 'Например: «Хочу, чтобы жильцы нашего дома оставляли заявки на ремонт, а управляющая видела их и назначала мастера. Сейчас всё в WhatsApp и теряется»',
+    },
+    acceptance: ['Суть понятна человеку, который вас не знает', 'Понятно, для кого это', 'Понятно, какую задачу это решает'],
+    acceptExplanation: 'Принимая этап, вы подтверждаете: «Да, это моя идея». Дальше по паспорту идёт разбор идеи. Паспорт можно изменить позже — тогда следующие этапы попросят проверить себя ещё раз.',
+    importHint: 'Если идея уже где-то описана — заметка, ТЗ, презентация, переписка, — вставьте текст: он сохранится как рассказ, а ИИ разложит его по полям.',
+    fields: [
+      { key: 'name', label: 'Как называется идея или проект', kind: 'text', required: true, maxLength: 80, why: 'По названию проект узнают в списке, в документах и в приложении. Рабочее название тоже подходит.', example: 'Заявки дома' },
+      { key: 'essence', label: 'Суть в одном предложении', kind: 'textarea', required: true, maxLength: 200, why: 'Одно предложение без специальных слов: его поймёт любой человек. С него начинаются концепция и тексты.', example: 'Жильцы оставляют заявку на ремонт с телефона, а управляющая назначает мастера и видит, что сделано' },
+      { key: 'audience', label: 'Для кого это', kind: 'textarea', required: true, maxLength: 300, why: 'Все следующие решения принимаются ради этих людей: что им показать, о чём спросить, что упростить.', example: 'Жильцы многоквартирного дома, управляющая и два мастера' },
+      { key: 'problem', label: 'Какую задачу это решает', kind: 'textarea', required: true, maxLength: 400, why: 'Задача важнее функций: по ней разбор идеи проверит, что продукт действительно нужен.', example: 'Заявки в общем чате теряются, никто не знает, кто взял заявку и когда придёт мастер' },
+      { key: 'story', label: 'Расскажите своими словами', kind: 'textarea', required: false, maxLength: 3000, why: 'Ваш рассказ целиком: из него ИИ берёт поля выше, а разбор идеи и процесс — подробности. Пишите как удобно.', example: 'Мы управляем домом на 120 квартир. Сейчас жильцы пишут в WhatsApp…' },
+      { key: 'materials', label: 'Что у вас уже есть', kind: 'textarea', required: false, maxLength: 1000, why: 'Готовые материалы экономят время: таблицы, ТЗ, схемы, ссылки на похожие продукты. Файлы можно приложить к этапу ниже.', example: 'Таблица заявок в Google Sheets, похоже на приложение «Домовой»' },
+    ],
+    contract: { explanation: 'Паспорт идеи — договорённость для всех следующих этапов. Если позже поменять его, каждый этап, построенный на нём, получит уведомление и решит, что делать.' },
+    playbook: {
+      version: '1.0.0',
+      instructions: [
+        'Fill only what the user said; leave a field empty rather than inventing it. Never add numbers, competitors or features the user did not name.',
+        'essence is one plain sentence (at most 200 characters) that a stranger understands: what happens and for whom, without jargon (no MVP, API, SaaS, CRM, backend, frontend).',
+        'Keep the user\'s own story text in story unchanged when it is given; put existing materials, tables, links and documents the user mentions into materials.',
+        'Write in the project language.',
+        'When reviewing: read the passport as a stranger who does not know the author and say what they would not understand or could retell wrongly.',
+      ],
+    },
+  },
   goal: {
     key: 'goal',
     version: '1.0.0',
@@ -93,7 +139,8 @@ export const stageDefinitions: Record<CatalogStageKey, StageDefinition> = {
     purpose: 'Поймём, кому нужен сайт и что посетитель должен сделать. От этого зависят все следующие этапы: тексты, кнопки и внешний вид.',
     outcome: 'Короткий паспорт проекта: кто вы, для кого сайт и какое главное действие.',
     artifactType: 'brief',
-    inputs: [],
+    // On new routes «Цель сайта» comes after «Идея своими словами» and takes the name, what you do and the clients from it.
+    inputs: ['story'],
     ai: {
       level: 'ai_full',
       whatItDoes: 'Опишите бизнес своими словами — ИИ заполнит поля. Потом проверьте и поправьте.',
@@ -132,7 +179,7 @@ export const stageDefinitions: Record<CatalogStageKey, StageDefinition> = {
     purpose: 'Доведём идею до ясности и найдём дыры раньше, чем на них потрачены деньги: какую проблему решаем и для кого, почему выберут вас, как люди справляются сейчас, как продукт зарабатывает, какие риски вы принимаете сознательно и как поймём, что всё работает.',
     outcome: 'Проблема и группы пользователей, ценность, альтернативы, как продукт зарабатывает, риски с решениями, измеримые цели успеха и ограничения.',
     artifactType: 'idea',
-    inputs: ['goal'],
+    inputs: ['goal', 'story'],
     ai: {
       level: 'ai_full',
       whatItDoes: 'ИИ разложит идею по полям и честно пометит, чего вы не сказали. Альтернативы, которые предложит ИИ, попадут в документы, только когда вы их подтвердите.',
@@ -629,7 +676,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Одна страница, которая рассказывает о вас и ведёт к одному действию: позвонить, написать или прийти.',
     goodFor: 'Мастерам, небольшим услугам, мероприятиям, запуску продукта.',
     examples: ['Мастер маникюра', 'Торты на заказ', 'Репетитор', 'Мероприятие'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'techplan', 'content', 'design', 'build'],
+    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница сайта в виде файла и все тексты проекта.',
   },
   company_site: {
@@ -638,7 +685,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Подробная страница компании: услуги и цены, о вас, как работаете, контакты и часы работы.',
     goodFor: 'Небольшим компаниям, салонам, студиям, сервисам.',
     examples: ['Автосервис', 'Стоматология', 'Юридическая консультация', 'Студия йоги'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'techplan', 'content', 'design', 'build'],
+    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Готовая страница компании в виде файла, список услуг и все тексты проекта.',
   },
   multipage: {
@@ -647,7 +694,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Несколько страниц с меню: главная, услуги, о вас, вопросы, контакты — у каждой свой адрес и своё описание для поисковиков.',
     goodFor: 'Компаниям с несколькими направлениями услуг, клиникам, школам, сервисам, которым тесно на одной странице.',
     examples: ['Стоматология', 'Языковая школа', 'Ремонт квартир', 'Юридическая фирма'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
+    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'sitemap', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт из нескольких страниц с меню, файлы всех страниц, карта сайта и все тексты проекта.',
   },
   store: {
@@ -656,7 +703,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Витрина с товарами, корзина и заказ без регистрации: клиент выбирает товары и способ получения, а вы получаете заказ в Telegram и видите все заказы в проекте.',
     goodFor: 'Небольшим магазинам и мастерским: до 60 товаров, самовывоз или доставка, оплата при получении или переводом.',
     examples: ['Кондитерская', 'Цветы', 'Мыло ручной работы', 'Кофе в зёрнах'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'products', 'techplan', 'content', 'design', 'build'],
+    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'products', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный магазин с витриной, корзиной и формой заказа, каталог и все тексты проекта. Заказы принимаются, когда сайт опубликован на BuildPath. Онлайн-оплаты пока нет.',
   },
   booking: {
@@ -665,7 +712,7 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Сайт с записью: клиент выбирает услугу, мастера и свободное время, а вы получаете запись в Telegram и видите все записи в проекте.',
     goodFor: 'Салонам красоты, барбершопам, массажу, тренерам, репетиторам — всем, кто работает по времени.',
     examples: ['Барбершоп', 'Маникюр', 'Массаж', 'Автомойка'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
+    stages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'offer', 'schedule', 'techplan', 'content', 'design', 'build'],
     resultExplanation: 'Опубликованный сайт с онлайн-записью, список услуг, расписание и все тексты проекта. Запись работает, когда сайт опубликован на BuildPath.',
   },
   web_app: {
@@ -674,7 +721,9 @@ export const projectTypes: Record<ProjectTypeKey, ProjectTypeDefinition> = {
     description: 'Приложение со входом, ролями и своей логикой: кабинет клиента, учёт заявок, внутренняя система. BuildPath доведёт его до полного пакета — функции, экраны с прототипом, архитектуру и контракт API, — а ИИ-агент напишет по нему код приложения.',
     goodFor: 'Тем, кому нужен личный кабинет, учёт или внутренний сервис.',
     examples: ['Кабинет клиента сервиса', 'Учёт заявок и выездов', 'Запись на курсы с кабинетом ученика', 'Внутренняя система для сотрудников'],
-    stages: ['goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan', 'handoff', 'launch'],
+    stages: ['story', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan', 'handoff', 'launch'],
+    // Applications created before route 1.18.0 started with «Цель приложения»; they keep it.
+    knownStages: ['story', 'goal', 'idea', 'process', 'suggestions', 'concept', 'features', 'screens', 'techplan', 'contracts', 'roadmap', 'testplan', 'handoff', 'launch'],
     resultExplanation: 'Пакет для разработки — техническое задание, права по ролям, схема данных, контракт API и кликабельный прототип — и код всего приложения, который пишет ИИ-агент и проверяет платформа. Запускаете вы: на своём Render или сервере.',
   },
 };
@@ -807,7 +856,9 @@ export function projectTypeOf
 
 /** Inputs of a stage limited to stages present in the given route. */
 export function routeInputs(route: StageKey[], key: StageKey): StageKey[] {
-  const own = definitionOf(key).inputs.filter((input) => route.includes(input));
+  // A route without «Цель» (an application since 1.18.0) builds on «Идея своими словами» where a stage needs the goal.
+  const named = definitionOf(key).inputs.map((input) => (input === 'goal' && !route.includes('goal') && key !== 'story' ? 'story' : input));
+  const own = [...new Set(named)].filter((input) => input !== key && route.includes(input));
   // Content of a company site also depends on the offer stage.
   if (key === 'content' && route.includes('offer')) own.push('offer');
   // Texts of a multi-page site are written page by page from the map.

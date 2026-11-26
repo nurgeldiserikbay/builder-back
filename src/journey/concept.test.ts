@@ -140,6 +140,8 @@ describe('product concept (database)', async () => {
     await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
     const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Студия', startMode: 'build', locale: 'ru', projectType: 'booking' } as never)).data.id;
     const row = async (key: string) => prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } });
+    await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Тестовый проект', essence: 'Клиенты записываются онлайн, а мастер видит записи на день', audience: 'Клиенты салона и мастера', problem: 'Записи в мессенджере теряются', story: null, materials: null }, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'story', (await row('story')).currentVersionId!);
     await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
     await journey.accept(owner.id, projectId, 'goal', (await row('goal')).currentVersionId!);
     await journey.skip(owner.id, projectId, 'idea', 'Студия работает три года');

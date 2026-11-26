@@ -15,11 +15,11 @@ import { type BookingConfig, type Schedule } from './schedule.js';
 import { type BusinessProcess } from './process.js';
 import { TECHPLAN_VERSION, buildTechPlan, techPlanDesign, type TechPlan } from './techplan.js';
 import { PrismaService } from '../database/prisma.service.js';
-import { projectTypeOf, stageTitle, routeAncestors, routeInputs, type ArtifactType, type ProjectTypeKey, type StageKey, isStageKey, isModuleStageKey, moduleKeyOf } from './catalog.js';
+import { projectTypeOf, knownStagesOf, stageTitle, routeAncestors, routeInputs, type ArtifactType, type ProjectTypeKey, type StageKey, isStageKey, isModuleStageKey, moduleKeyOf } from './catalog.js';
 import { moduleFacts, type ModuleFacts } from './module-stages.js';
 import type { Roadmap } from './roadmap.js';
 import type { TestPlan } from './testplan.js';
-import { ArtifactValidationError, defaultDesign, normalizeArtifact, contentImageIds, type Brief, type ContentArtifact, type DesignArtifact, type Offer } from './artifacts.js';
+import { ArtifactValidationError, defaultDesign, normalizeArtifact, briefOf, contentImageIds, type Brief, type ContentArtifact, type DesignArtifact, type Offer } from './artifacts.js';
 import { inlineImages } from '../images/image-processing.js';
 import { type ImageInfo } from './site-renderer.js';
 import { type Sitemap } from './sitemap.js';
@@ -132,7 +132,7 @@ export class JourneyCore {
     const viewer: Viewer = member ? { kind: 'member', role: member.role, stageKeys: member.role === 'contributor' ? member.stageKeys : [] } : { kind: 'specialist', assignments };
     if (viewer.kind === 'specialist' && assignments.length === 0) throw new NotFoundException('PROJECT_NOT_FOUND');
     const role = member?.role ?? 'specialist';
-    const route = projectRoute(type.stages, stages);
+    const route = projectRoute(knownStagesOf(type), stages);
     const statuses: StatusMap = Object.fromEntries(stages.map((stage) => [stage.stageKey, stage.status]));
     // What dependent stages see: a stage being changed again still provides its last accepted version.
     const dep = effectiveStatuses(statuses, (key) => Boolean(stages.find((stage) => stage.stageKey === key)?.approvedVersionId));
@@ -229,7 +229,7 @@ export class JourneyCore {
     const inputs = await this.acceptedInputs(ctx, key);
     const content = <T>(stage: string) => (inputs[stage]?.content as T | undefined) ?? null;
     return {
-      brief: content<Brief>('goal'), idea: content<IdeaReview>('idea'), process: content<BusinessProcess>('process'), suggestions: content<Suggestions>('suggestions'),
+      brief: briefOf(inputs), idea: content<IdeaReview>('idea'), process: content<BusinessProcess>('process'), suggestions: content<Suggestions>('suggestions'),
       skipped: ctx.stages.filter((stage) => stage.status === 'skipped').map((stage) => stage.stageKey),
     };
   }
@@ -401,12 +401,12 @@ export class JourneyCore {
     // Built in the project's language, so every viewer gets the same plan whatever their interface language.
     if (ctx.type.key === 'web_app') {
       return inProject(ctx, () => buildAppPlan({
-        brief: (inputs.goal?.content as Brief | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
+        brief: briefOf(inputs), process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
         features: (inputs.features?.content as AppFeatures | undefined) ?? null, screens: (inputs.screens?.content as AppScreens | undefined) ?? null,
       }, notes, design));
     }
     return inProject(ctx, () => buildTechPlan({
-      projectType: ctx.type.key, brief: (inputs.goal?.content as Brief | undefined) ?? null, schedule: schedule ?? null,
+      projectType: ctx.type.key, brief: briefOf(inputs), schedule: schedule ?? null,
       process: (inputs.process?.content as BusinessProcess | undefined) ?? null, sitemap: (inputs.sitemap?.content as Sitemap | undefined) ?? null,
       store: (inputs.products?.content as Catalog | undefined) ?? null, spec: (inputs.features?.content as AppFeatures | undefined) ?? null,
     }, notes));

@@ -166,8 +166,8 @@ describe('starter code check (database)', async () => {
     await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
     const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Клин', startMode: 'build', locale: 'ru', projectType: 'web_app' } as never)).data.id;
     const accept = async (key: string) => journey.accept(owner.id, projectId, key, (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId!);
-    await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
-    await accept('goal');
+    await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Сервис Клин', essence: 'Уборка квартир по заявкам', audience: 'Жители города', problem: 'Заявки на уборку теряются в мессенджере', story: null, materials: null }, baseVersionId: null });
+    await accept('story');
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');
     await journey.skip(owner.id, projectId, 'suggestions', 'Знаем, что войдёт в первую версию');
     await journey.skip(owner.id, projectId, 'concept', 'Документ для других пока не нужен');

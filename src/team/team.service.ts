@@ -6,7 +6,7 @@ import { emailConfig, sendEmail } from '../notifications/email.js';
 import { notifyUser } from '../notifications/user-notifier.js';
 import { escapeHtml } from '../journey/site-renderer.js';
 import { tr } from '../i18n/i18n.js';
-import { projectTypeOf, type StageKey, definitionOf } from '../journey/catalog.js';
+import { projectTypeOf, knownStagesOf, type StageKey, definitionOf } from '../journey/catalog.js';
 import { canManage, INVITABLE_ROLES, INVITE_DAYS, readPolicy, roleInfo, TEAM_LIMIT, type InvitableRole, type ProjectRole } from './team-rules.js';
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -35,7 +35,8 @@ export class TeamService {
 
   /** Stage keys of the project route, for limiting a contributor to some stages. */
   private routeStages(projectType: string | null) {
-    return (projectTypeOf(projectType)?.stages ?? []).map((key) => ({ key, title: definitionOf(key).title }));
+    const type = projectTypeOf(projectType);
+    return (type ? knownStagesOf(type) : []).map((key) => ({ key, title: definitionOf(key).title }));
   }
 
   /** Checks stage keys against the route; only contributors are limited to stages. */

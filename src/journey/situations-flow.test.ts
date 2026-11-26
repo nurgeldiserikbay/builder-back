@@ -43,6 +43,8 @@ describe('«Вы это учли?» in a project (database)', async () => {
     const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Барбершоп', startMode: 'build', locale: 'ru', projectType: 'booking' } as never)).data.id;
     const brief: Brief = { businessName: 'Барбершоп Усы', whatYouDo: 'Мужские стрижки и бритьё в центре города', audience: 'Мужчины, которые следят за собой', city: 'Алматы', mainAction: 'message', phone: null, messenger: '@usy', email: null, address: null, tone: 'friendly' };
     const current = async (key: string) => (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: key } })).currentVersionId;
+    await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Тестовый проект', essence: 'Клиенты записываются онлайн, а мастер видит записи на день', audience: 'Клиенты салона и мастера', problem: 'Записи в мессенджере теряются', story: null, materials: null }, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'story', (await current('story'))!);
     await journey.saveDraft(owner.id, projectId, 'goal', { content: brief, baseVersionId: null });
     await journey.accept(owner.id, projectId, 'goal', (await current('goal'))!);
     await journey.skip(owner.id, projectId, 'idea', 'Идея уже проверена — бизнес работает');

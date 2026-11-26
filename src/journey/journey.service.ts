@@ -21,13 +21,13 @@ import { bookingApiContract, sameTechPlan, techPlanDesign, techPlanMarkdown, tec
 import { expandedSchema, type ArchitectureDesign } from './architecture.js';
 
 import { PrismaService } from '../database/prisma.service.js';
-import { stageFor, stageTitle, ROUTE_CATALOG_VERSION, projectTypes, routeInputs, statusExplanations, type StageKey, definitionOf, moduleStageDefinition, isModuleStageKey, moduleKeyOf } from './catalog.js';
+import { stageFor, stageTitle, knownStagesOf, ROUTE_CATALOG_VERSION, projectTypes, routeInputs, statusExplanations, type StageKey, definitionOf, moduleStageDefinition, isModuleStageKey, moduleKeyOf } from './catalog.js';
 import { syncModuleStages, MODULE_REMOVED_NOTE } from './module-stages.js';
 import { dataNames } from './screen-access.js';
 import { mergeIntoMainLine, mergePreview } from '../agent/module-branch.js';
 import { setPlanBaseline } from './plan-schedule.service.js';
 import { appMonitoringView } from '../monitoring/app-monitor.js';
-import { changedKeys, completenessIssues, importBriefText, importContentText, importOfferText, lockableKeys, stableStringify, normalizeArtifact, sectionTypeLabels, importCatalogText, type Brief, type ContentArtifact, type Offer, type SiteArtifact, aiLocksFor } from './artifacts.js';
+import { changedKeys, completenessIssues, importBriefText, importStoryText, storyMarkdown, briefFromStory, briefOf, importContentText, importOfferText, lockableKeys, stableStringify, normalizeArtifact, sectionTypeLabels, importCatalogText, type Brief, type Story, type ContentArtifact, type Offer, type SiteArtifact, aiLocksFor } from './artifacts.js';
 import { checkSite, corners, fonts, heroLayouts, palettes, renderPages, renderSite, siteMeta } from './site-renderer.js';
 import { RESERVED_PATHS, SITEMAP_LIMITS, templateSitemap, type Sitemap } from './sitemap.js';
 import { CATALOG_LIMITS, templateCatalog, tenge, type Catalog } from './products.js';
@@ -354,7 +354,7 @@ export class JourneyService {
           ...(moduleStage ? { module: moduleStage } : {}),
           ...(definition.artifactType === 'process' ? { process: { capabilities: capabilitiesFor(ctx.type.key), actorKinds: { client: 'Клиент', business: 'Бизнес', staff: 'Сотрудник', system: 'Сайт или система', external: 'Внешний сервис' }, limits: PROCESS_LIMITS, situations: { version: SITUATIONS_VERSION, items: situationsFor(ctx.type.key) } } } : {}),
           ...(definition.artifactType === 'catalog' ? { catalog: { limits: CATALOG_LIMITS, template: await this.core.acceptedInputs(ctx, stageKey).then(() => inProject(ctx, () => templateCatalog(null))) } } : {}),
-          ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap((inputs.goal?.content as Brief | undefined) ?? null, (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
+          ...(definition.artifactType === 'sitemap' ? { sitemap: { limits: SITEMAP_LIMITS, reservedPaths: RESERVED_PATHS, template: await this.core.acceptedInputs(ctx, stageKey).then((inputs) => inProject(ctx, () => templateSitemap(briefOf(inputs), (inputs.offer?.content as Offer | undefined) ?? null))) } } : {}),
           ...(stageKey === 'content' && ctx.route.includes('sitemap') ? { pages: (await this.core.checkContext(ctx, stageKey)).sitemap?.pages ?? null } : {}),
           // The ТЗ as a document to download, from the version on screen, in the project's language.
           ...(definition.artifactType === 'features' ? { backlogNext: await this.prisma.backlogItem.findMany({ where: { projectId, status: 'next' }, orderBy: { createdAt: 'asc' }, select: { id: true, title: true, details: true, version: true, source: true } }) } : {}),
@@ -362,7 +362,10 @@ export class JourneyService {
           ...(definition.artifactType === 'screens' ? { screens: { dataNames: dataNames(((await this.core.acceptedInputs(ctx, 'features')).process?.content as BusinessProcess | undefined) ?? null) } } : {}),
           ...(definition.artifactType === 'features' ? { features: { kind: ctx.type.key === 'web_app' ? 'app' : 'site', firstVersionSoftLimit: FIRST_VERSION_SOFT_LIMIT[ctx.type.key === 'web_app' ? 'app' : 'site'], markdown: current ? await this.specDocument(ctx, stageKey, current.content) : null } } : {}),
           // The owner's story from «Расскажите о своём деле» starts the passport until the first version exists.
-          ...(definition.artifactType === 'brief' && !stage.currentVersionId ? { brief: { intro: (await this.prisma.project.findUnique({ where: { id: projectId }, select: { summary: true } }))?.summary ?? null } } : {}),
+          // The story from the project wizard starts the conversation and the first draft (on «Цель» only where the route has no idea passport).
+          // The idea passport names the project and its type: the type was chosen in the wizard and is shown with the idea.
+          ...(definition.artifactType === 'story' ? { story: { name: ctx.project.name, typeTitle: ctx.type.title } } : {}),
+          ...((definition.artifactType === 'story' || (definition.artifactType === 'brief' && !ctx.route.includes('story'))) && !stage.currentVersionId ? { brief: { intro: (await this.prisma.project.findUnique({ where: { id: projectId }, select: { summary: true } }))?.summary ?? null } } : {}),
           ...(definition.artifactType === 'schedule' ? { schedule: { template: scheduleTemplate, timezones: TIMEZONES, weekdays: WEEKDAYS, slotSteps: SLOT_STEPS } } : {}),
           ...(stageKey === 'build' ? { technology: (await this.prisma.projectChoice.findUnique({ where: { projectId_cardKey: { projectId, cardKey: 'technologies' } }, select: { optionKey: true } }))?.optionKey ?? null } : {}),
         },
@@ -485,7 +488,7 @@ export class JourneyService {
         if (definition.artifactType === 'idea') return importIdeaText(text);
         if (definition.artifactType === 'concept') return importConceptText(text);
         if (definition.artifactType === 'suggestions') return normalizeFor(ctx, 'suggestions', importSuggestionsText(text));
-        return definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : definition.artifactType === 'catalog' ? importCatalogText(text) : importContentText(text, sitemap);
+        return definition.artifactType === 'story' ? importStoryText(text) : definition.artifactType === 'brief' ? importBriefText(text) : definition.artifactType === 'offer' ? importOfferText(text) : definition.artifactType === 'catalog' ? importCatalogText(text) : importContentText(text, sitemap);
       });
     } catch (error) { validationError(error); }
     const issues = completenessIssues(definition.artifactType, content, await this.core.checkContext(ctx, stageKey));
@@ -567,8 +570,10 @@ export class JourneyService {
     const current = await this.core.versionContent(stage.currentVersionId);
     if (!current) throw new NotFoundException('PREVIEW_NOT_AVAILABLE');
     const inputs = await this.core.acceptedInputs(ctx, 'screens');
-    const goal = this.core.stageOf(ctx, 'goal');
-    const brief = (await this.core.versionContent(goal.approvedVersionId ?? goal.currentVersionId))?.content as Brief | undefined;
+    // The name and what it does: from «Цель» on older applications, from «Идея своими словами» on newer ones.
+    const first = ctx.route.includes('goal') ? this.core.stageOf(ctx, 'goal') : ctx.route.includes('story') ? this.core.stageOf(ctx, 'story') : null;
+    const firstContent = first ? (await this.core.versionContent(first.approvedVersionId ?? first.currentVersionId))?.content : undefined;
+    const brief = first?.stageKey === 'story' ? briefFromStory(firstContent as Story | undefined) : firstContent as Brief | undefined;
     const pages = renderPrototype({ brief: brief ?? null, features: (inputs.features?.content as AppFeatures | undefined) ?? null, screens: current.content as AppScreens, locale: ctx.project.locale });
     const page = pages.find((item) => item.path === `${screenKey}.html`) ?? pages[0];
     return { data: { html: page?.html ?? '', screen: page ? page.path.replace(/\.html$/, '') : null, versionNumber: current.versionNumber, screens: pages.map((item) => ({ key: item.path.replace(/\.html$/, ''), title: item.title })) } };
@@ -591,7 +596,7 @@ export class JourneyService {
       return option ? [{ question: tr(card.question), answer: tr(option.title), summary: tr(option.summary), reason: choice!.reason }] : [];
     });
     const artifact = buildHandoffPackage({ decisions,
-      brief: (inputs.goal?.content as Brief | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
+      brief: briefOf(inputs), process: (inputs.process?.content as BusinessProcess | undefined) ?? null,
       features: inputs.features!.content as AppFeatures, screens: inputs.screens!.content as AppScreens, plan: inputs.techplan!.content as TechPlan,
       contracts: (inputs.contracts?.content as Contracts | undefined) ?? null, roadmap: (inputs.roadmap?.content as Roadmap | undefined) ?? null, testplan: (inputs.testplan?.content as TestPlan | undefined) ?? null, locale: ctx.project.locale, sourceVersionIds: Object.fromEntries(Object.entries(inputs).map(([key, value]) => [key, value.versionId])),
     });
@@ -736,7 +741,7 @@ export class JourneyService {
     if (stageKey === 'roadmap' && ctx.type.key === 'web_app') {
       // The plan's promise: its finish from today. People are told when the work moves it later (plan-schedule.service).
       await setPlanBaseline(tx, { projectId: ctx.project.id, plan: version.content as Roadmap, planVersion: version.versionNumber });
-      const synced = await syncModuleStages(tx, { projectId: ctx.project.id, userId, roadmap: version.content as Roadmap, typeStages: ctx.type.stages, stages: ctx.stages, statuses: { ...ctx.dep, roadmap: 'approved' }, definitionVersion: moduleStageDefinition.version });
+      const synced = await syncModuleStages(tx, { projectId: ctx.project.id, userId, roadmap: version.content as Roadmap, typeStages: knownStagesOf(ctx.type), stages: ctx.stages, statuses: { ...ctx.dep, roadmap: 'approved' }, definitionVersion: moduleStageDefinition.version });
       const gone = new Set([...synced.removed, ...synced.setAside].map((moduleKey) => `m_${moduleKey}`));
       return notices.filter((notice: { targetKey: StageKey }) => !gone.has(notice.targetKey));
     }
@@ -753,7 +758,7 @@ export class JourneyService {
       // Two first openings at the same moment: the second finds the stages already made (the sync takes the same lock).
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`module-stages:${ctx.project.id}`}))`;
       if (await tx.projectStage.count({ where: { projectId: ctx.project.id, stageKey: { startsWith: 'm_' } } })) return true;
-      const result = await syncModuleStages(tx, { projectId: ctx.project.id, userId, roadmap: content, typeStages: ctx.type.stages, stages: ctx.stages, statuses: ctx.dep, definitionVersion: moduleStageDefinition.version });
+      const result = await syncModuleStages(tx, { projectId: ctx.project.id, userId, roadmap: content, typeStages: knownStagesOf(ctx.type), stages: ctx.stages, statuses: ctx.dep, definitionVersion: moduleStageDefinition.version });
       return result.created.length > 0;
     });
   }
@@ -1016,7 +1021,7 @@ export class JourneyService {
     const inputs = await this.core.viewInputs(ctx, key);
     const seen = <T>(stage: string) => (inputs[stage]?.content as T | undefined) ?? null;
     const conceptInputs: ConceptInputs = {
-      brief: seen<Brief>('goal'), idea: seen<IdeaReview>('idea'), process: seen<BusinessProcess>('process'), suggestions: seen<Suggestions>('suggestions'),
+      brief: briefOf(inputs), idea: seen<IdeaReview>('idea'), process: seen<BusinessProcess>('process'), suggestions: seen<Suggestions>('suggestions'),
       skipped: ctx.stages.filter((row) => row.status === 'skipped').map((row) => row.stageKey),
     };
     const owner = content ? normalizedOrRaw('concept', content) as Concept : normalizeConcept({});
@@ -1183,7 +1188,7 @@ export class JourneyService {
   /** The ТЗ on screen as Markdown, with the accepted brief and process it was built on. */
   private async specDocument(ctx: Awaited<ReturnType<JourneyCore['load']>>, key: StageKey, content: unknown): Promise<string> {
     const inputs = await this.core.acceptedInputs(ctx, key);
-    return specMarkdown({ brief: (inputs.goal?.content as Brief | undefined) ?? null, process: (inputs.process?.content as BusinessProcess | undefined) ?? null, features: normalizeFeatures(content), locale: ctx.project.locale });
+    return specMarkdown({ brief: briefOf(inputs), process: (inputs.process?.content as BusinessProcess | undefined) ?? null, features: normalizeFeatures(content), locale: ctx.project.locale });
   }
 
   async result(userId: string, projectId: string) {
@@ -1194,7 +1199,9 @@ export class JourneyService {
       return { key, title: this.core.title(ctx, key), status: stage.status, statusLabel: statusExplanations[stage.status].label, accepted };
     }));
     const get = <T>(key: StageKey) => stages.find((stage) => stage.key === key)?.accepted?.content as T | undefined;
-    const brief = get<Brief>('goal');
+    const story = get<Story>('story');
+    // Applications without «Цель»: their name and what they do come from the idea passport.
+    const brief = get<Brief>('goal') ?? briefFromStory(story) ?? undefined;
     const offer = get<Offer>('offer');
     const content = get<ContentArtifact>('content');
     const site = get<SiteArtifact>('build');
@@ -1210,7 +1217,8 @@ export class JourneyService {
       if (technology) lines.push(tr("Технологии: {0}{1}", [technologyLabel[technology.optionKey] ?? technology.optionKey, technology.reason ? ` — ${technology.reason}` : '']));
       lines.push('');
       for (const stage of stages) lines.push(`- ${stage.title}: ${stage.accepted ? tr("принят, версия {0}", [stage.accepted.versionNumber]) : stage.statusLabel.toLowerCase()}`);
-      if (brief) {
+      if (story) lines.push('', tr("## Паспорт идеи"), '', ...storyMarkdown(story));
+      if (brief && ctx.route.includes('goal')) {
         lines.push('', tr("## Паспорт проекта"), '', tr("- Название: {0}", [brief.businessName]), tr("- Чем занимаемся: {0}", [brief.whatYouDo]), tr("- Клиенты: {0}", [brief.audience]));
         if (brief.city) lines.push(tr("- Город: {0}", [brief.city]));
         for (const [label, value] of [[tr("Телефон"), brief.phone], [tr("Мессенджер"), brief.messenger], ['Email', brief.email], [tr("Адрес"), brief.address]] as const) if (value) lines.push(`- ${label}: ${value}`);

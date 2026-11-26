@@ -5,7 +5,7 @@ import { QUALITY_KEYS } from './spec-extras.js';
 import type { Concept } from './concept.js';
 import type { Suggestions } from './suggestions.js';
 import { tr } from '../i18n/i18n.js';
-import type { Brief, ContentArtifact, DesignArtifact, Offer } from './artifacts.js';
+import type { Brief, Story, ContentArtifact, DesignArtifact, Offer } from './artifacts.js';
 import type { ArtifactType } from './catalog.js';
 import type { Catalog } from './products.js';
 import type { BusinessProcess } from './process.js';
@@ -26,6 +26,13 @@ export interface OutputContext { features?: AppFeatures | null; design?: Archite
 
 const PLACEHOLDER = /\[[^\]]{1,80}\]/;
 const filled = (value: string | null | undefined) => Boolean(value?.trim());
+
+const story: OutputItem<Story>[] = [
+  { key: 'essence', level: 'required', text: () => tr('Название и суть в одном предложении — для разбора идеи, концепции и текстов'), met: (x) => filled(x.name) && filled(x.essence) },
+  { key: 'audience', level: 'required', text: () => tr('Для кого — из этого вырастают группы пользователей и роли'), met: (x) => filled(x.audience) },
+  { key: 'problem', level: 'required', text: () => tr('Какую задачу это решает — с неё начинается разбор идеи'), met: (x) => filled(x.problem) },
+  { key: 'materials', level: 'recommended', text: () => tr('Что уже есть — чтобы не начинать с нуля'), met: (x) => filled(x.materials) || filled(x.story) },
+];
 
 const brief: OutputItem<Brief>[] = [
   { key: 'who', level: 'required', text: () => tr('Название и чем вы занимаетесь — для текстов и процесса'), met: (b) => filled(b.businessName) && filled(b.whatYouDo) },
@@ -139,7 +146,7 @@ const testplan: OutputItem<TestPlan>[] = [
 ];
 
 const OUTPUTS: Partial<Record<ArtifactType, OutputItem<never>[]>> = {
-  brief, idea, suggestions, concept, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan, contracts, roadmap, testplan,
+  story, brief, idea, suggestions, concept, offer, process, features, screens, sitemap, content, design, schedule, catalog, techplan, contracts, roadmap, testplan,
 } as unknown as Partial<Record<ArtifactType, OutputItem<never>[]>>;
 
 export interface StageOutputItem { key: string; text: string; level: OutputLevel; met: boolean }

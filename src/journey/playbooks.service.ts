@@ -2,7 +2,7 @@ import { ConflictException, ForbiddenException, Injectable, NotFoundException, U
 import { PrismaService } from '../database/prisma.service.js';
 import { stageDefinitions, type StageKey, definitionOf } from './catalog.js';
 import { JourneyCore, acceptRoles, editableProject, isUuid } from './journey-core.js';
-import type { Brief } from './artifacts.js';
+import { briefFromStory, type Brief, type Story } from './artifacts.js';
 import { PLAYBOOK_LIMITS, checkPlaybook, parsePlaybook, projectFingerprints, type PlaybookIssue } from './playbooks.js';
 
 const playbookSelect = { id: true, stageKey: true, title: true, instructions: true, checklist: true, version: true, checkIssues: true, updatedAt: true } as const;
@@ -113,10 +113,15 @@ export class PlaybooksService {
     return row;
   }
 
-  /** This project's name and contacts from the accepted goal — unredacted, read on the server only. */
+  /** This project's name and contacts from the goal and the idea passport — unredacted, read on the server only. */
   private async fingerprints(ctx: Awaited<ReturnType<JourneyCore['load']>>) {
-    if (!ctx.route.includes('goal')) return [];
-    const goal = await this.core.versionContent(this.core.stageOf(ctx, 'goal').approvedVersionId ?? this.core.stageOf(ctx, 'goal').currentVersionId);
-    return projectFingerprints(goal?.content as Partial<Brief> | undefined);
+    const read = async (key: 'goal' | 'story') => {
+      if (!ctx.route.includes(key)) return undefined;
+      const stage = this.core.stageOf(ctx, key);
+      return (await this.core.versionContent(stage.approvedVersionId ?? stage.currentVersionId))?.content;
+    };
+    const goal = projectFingerprints(await read('goal') as Partial<Brief> | undefined);
+    const story = projectFingerprints(briefFromStory(await read('story') as Story | undefined));
+    return [...new Set([...goal, ...story])];
   }
 }

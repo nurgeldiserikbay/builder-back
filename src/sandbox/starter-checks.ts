@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, type OnApplicationBootstrap, type OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { tr } from '../i18n/i18n.js';
-import type { Brief } from '../journey/artifacts.js';
+import { briefOf } from '../journey/artifacts.js';
 import { inputsSatisfied } from '../journey/stage-state.js';
 import { JourneyCore } from '../journey/journey-core.js';
 import { buildStarterCode, STARTER_NODE_MAJOR, type StarterFile } from '../journey/starter-code.js';
@@ -180,7 +180,7 @@ export class StarterChecksService implements OnApplicationBootstrap, OnModuleDes
     const runs = await this.prisma.sandboxRun.count({ where: { projectId, kind: KIND, sourceVersionId: stage.currentVersionId } });
     if (runs >= STARTER_RUNS_PER_VERSION) throw new ForbiddenException('STARTER_CHECK_LIMIT');
     const inputs = await this.core.acceptedInputs(ctx, 'handoff');
-    const code = buildStarterCode({ brief: (inputs.goal?.content as Brief | undefined) ?? null, features: inputs.features!.content as AppFeatures, plan: inputs.techplan!.content as TechPlan, locale: ctx.project.locale });
+    const code = buildStarterCode({ brief: briefOf(inputs), features: inputs.features!.content as AppFeatures, plan: inputs.techplan!.content as TechPlan, locale: ctx.project.locale });
     await this.prisma.$transaction(async (tx) => {
       const run = await tx.sandboxRun.create({ data: { projectId, kind: KIND, sourceVersionId: stage.currentVersionId!, files: code.files as never, filesDigest: digestOf(code.files), requestedByUserId: userId } });
       await this.core.event(tx, projectId, userId, 'starter_check_requested', 'handoff', { runId: run.id, files: code.files.length, collections: code.collections.length });

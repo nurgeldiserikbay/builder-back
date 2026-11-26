@@ -87,6 +87,9 @@ describe('«Разговор» (database)', async () => {
     const workspace = await prisma!.workspace.create({ data: { ownerUserId: owner.id, name: 'W' } });
     await prisma!.workspaceMember.create({ data: { workspaceId: workspace.id, userId: owner.id, role: 'owner' } });
     const projectId = (await new ProjectsService(prisma!, billing).create(owner.id, { workspaceId: workspace.id, name: 'Усы', startMode: 'build', locale: 'ru', projectType } as never)).data.id;
+    // The idea passport comes first on new routes; accepting it opens «Цель сайта».
+    await journey.saveDraft(owner.id, projectId, 'story', { content: { name: 'Усы', essence: 'Мужчины записываются на стрижку онлайн, а мастер видит записи на день', audience: 'Мужчины 20–45 лет', problem: 'Записи в мессенджере теряются', story: null, materials: null }, baseVersionId: null });
+    await journey.accept(owner.id, projectId, 'story', (await prisma!.projectStage.findFirstOrThrow({ where: { projectId, stageKey: 'story' } })).currentVersionId!);
     return { core, journey, interviews, owner, projectId };
   };
 
@@ -146,11 +149,9 @@ describe('«Разговор» (database)', async () => {
 
   it('on the process stage: needs AI, gathers answers by topic, and the AI composes the stage from them', { skip }, async () => {
     const { core, interviews, owner, projectId } = await setup('web_app');
-    // The goal is accepted, so the process stage is open and has its input.
+    // The idea passport is accepted (setup), so the process stage is open and has its input; an application has no «Цель».
     const stages = Object.fromEntries((await prisma!.projectStage.findMany({ where: { projectId } })).map((stage) => [stage.stageKey, stage]));
-    const brief = { businessName: 'Усы', whatYouDo: 'Мужские стрижки', audience: 'Мужчины', city: 'Астана', mainAction: 'message', phone: null, messenger: null, email: null, address: null, tone: 'friendly' };
-    const goalVersion = await prisma!.stageArtifactVersion.create({ data: { projectId, stageId: stages.goal.id, versionNumber: 1, artifactType: 'brief', content: brief, origin: 'owner_edit', createdByUserId: owner.id } });
-    await prisma!.projectStage.update({ where: { id: stages.goal.id }, data: { status: 'approved', currentVersionId: goalVersion.id, approvedVersionId: goalVersion.id } });
+    assert.equal(stages.goal, undefined);
     await prisma!.projectStage.update({ where: { id: stages.idea.id }, data: { status: 'skipped' } });
     await prisma!.projectStage.update({ where: { id: stages.process.id }, data: { status: 'ready' } });
     core.setProvider(null);
@@ -162,7 +163,7 @@ describe('«Разговор» (database)', async () => {
     const answers: unknown[] = [
       { reply: 'Как клиент к вам попадает?', fields: { ...nulls, people: 'я и два мастера' }, done: false },
       { reply: 'Понял. Нажмите «Составить по разговору».', fields: { ...nulls, people: 'я и два мастера', journey: 'пишет в WhatsApp, мастер подтверждает время, клиент приходит и платит на месте' }, done: true },
-      templateProcess('web_app', brief as never),
+      templateProcess('web_app', { businessName: 'Усы', whatYouDo: 'Мужские стрижки', audience: 'Мужчины', city: 'Астана', mainAction: 'message', phone: null, messenger: null, email: null, address: null, tone: 'friendly' } as never),
     ];
     core.setProvider({ name: 'fake', model: 'fake-1', generate: async (request) => { prompts.push(request); return answers.shift(); } });
     try {
@@ -173,7 +174,7 @@ describe('«Разговор» (database)', async () => {
       view = (await interviews.say(owner.id, projectId, 'process', { message: 'Пишут в WhatsApp, платят на месте', restart: false })).data;
       assert.equal(view.done, true);
       assert.match(prompts[0].system, /collect the owner's answers for each topic/);
-      assert.match(prompts[0].user, /"brief"|Мужские стрижки/, 'the accepted goal is given, so the AI does not ask it again');
+      assert.match(prompts[0].user, /"story"[\s\S]*записываются на стрижку/, 'the accepted idea passport is given, so the AI does not ask it again');
       const applied = (await interviews.apply(owner.id, projectId, 'process')).data;
       const material = JSON.parse(prompts[2].user) as { ownerConversation: Record<string, string> };
       assert.equal(material.ownerConversation['Кто участвует в работе?'], 'я и два мастера');
