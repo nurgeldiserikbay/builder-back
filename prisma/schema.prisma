@@ -2709,7 +2709,7 @@ model GuestComment {
   @@map("guest_comments")
 }
 
-/// The project's Telegram group (STAGE_WORK_MODEL §15): key events go there as plain lines without contents, since the group
+/// The project's Telegram group (STAGE_WORK_MODEL §16): key events go there as plain lines without contents, since the group
 /// may hold people outside the project. Linked by a one-time code through the bot's «add to group» link; chatId is null until then.
 model ProjectTelegramGroup {
   id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

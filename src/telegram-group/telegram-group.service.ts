@@ -1,4 +1,4 @@
-// The project's Telegram group (STAGE_WORK_MODEL §15).
+// The project's Telegram group (STAGE_WORK_MODEL §16).
 //
 // The owner or a manager links one group to a project: BuildPath gives a one-time «add to group» link
 // (t.me/<bot>?startgroup=<code>), Telegram opens the group picker, adds the bot and sends /start <code> in the group.
