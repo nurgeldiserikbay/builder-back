@@ -20,6 +20,7 @@ import type { Roadmap } from '../journey/roadmap.js';
 import type { TestPlan } from '../journey/testplan.js';
 import { markModuleStarted, recordRunResults } from '../journey/plan-results.js';
 import { feedbackUrl } from '../feedback/feedback.service.js';
+import { usageUrl } from '../usage/usage.service.js';
 import { branchNameFor, mainLine, mergePreview, moduleBranch, MERGE_KIND, syncInstruction } from './module-branch.js';
 import { platformChecks } from './agent-loop.js';
 
@@ -82,7 +83,15 @@ export function feedbackRule(url: string): string {
   return `- Feedback form: a «Сообщить о проблеме или идее» link (in the project's language) in the footer or the menu of every role and of the sign-in page opens a small form: kind (problem or idea), text (required, up to 2000 characters), optional contact (how to reach the person). It sends with fetch("${url}", { method: "POST", body: new URLSearchParams({ kind, text, contact, page: location.pathname, website: "" }) }) — form-encoded, no JSON, no headers, no credentials, nothing else about the user or the data —, shows «Спасибо» on any 2xx and a calm message if it fails, and never blocks the app. Add a hidden, empty field named website (a trap for bots). In the preview (build:demo) the form only shows «Спасибо» and sends nothing. This address is the only exception to «do not send data outside the app».`;
 }
 
-export function buildAgentPrompt(input: { locale: string; projectName: string; inputs: Record<string, unknown>; instruction: string | null; feedbackUrl?: string | null }): { system: string; task: string } {
+/**
+ * The owner turned on usage analytics (usage.service.ts): a few lines send «a screen was opened» and «a main action was
+ * done» to the platform — counts only, nothing about the person.
+ */
+export function usageRule(url: string): string {
+  return `- Usage analytics: in the client, after the app starts and on every change of screen (route), call navigator.sendBeacon("${url}", new URLSearchParams({ kind: "view", name: location.pathname })); when a main action of the package succeeds (a request sent, an order placed, a booking made — at most 10 kinds), call it with { kind: "action", name: "<2–4 lowercase words in the project's language, letters, digits, spaces>" }. Wrap it in try/catch, never await it, never block or slow the app. Send nothing else: no ids, emails, names, texts people typed, query strings or data; no cookies, localStorage or other analytics services. In the preview (build:demo) send nothing. This address is, like the feedback address, an exception to «do not send data outside the app».`;
+}
+
+export function buildAgentPrompt(input: { locale: string; projectName: string; inputs: Record<string, unknown>; instruction: string | null; feedbackUrl?: string | null; usageUrl?: string | null }): { system: string; task: string } {
   const language = contentLocale(input.locale) === 'en' ? 'English' : input.locale === 'kk' ? 'Kazakh' : 'Russian';
   const system = [
     'You are the BuildPath agent: a senior full-stack developer working alone in a throwaway Linux machine with Node.js 20, npm and internet access to package registries. You build the application from the accepted project package and leave it working, tested and ready to deploy.',
@@ -104,6 +113,7 @@ export function buildAgentPrompt(input: { locale: string; projectName: string; i
     '- Write .env.example with every variable and a README.md for the owner: what the app does, how to run it locally, the variables. Never write real secrets or .env files.',
     '- Mobile-first UI in the language of the project, clear labels, empty states and error messages, no lorem ipsum. Validate input on the server.',
     ...(input.feedbackUrl ? [feedbackRule(input.feedbackUrl)] : []),
+    ...(input.usageUrl ? [usageRule(input.usageUrl)] : []),
     'Rules of the package are requirements: implement the roles, data and features of the first version and their acceptance criteria. Do not invent features outside the package. If something cannot be done in this stack (payments, outgoing messages, external integrations), leave a clear stub that says so and list it in notDone.',
     'Security: never weaken rights between roles; parameterized SQL only; no eval; no secrets in code; do not send data anywhere outside the app.',
     'Long-running commands: start a dev server only in the background with a timeout and stop it; prefer tests.',
@@ -153,7 +163,7 @@ export function moduleInstruction(input: { roadmap: Roadmap; module: string; tes
  * Step 5: a change described in words. The folder already holds the code of an earlier task; the agent changes it and keeps
  * the rest working. The owner's words and the package are untrusted data, as in the first build.
  */
-export function buildChangePrompt(input: { locale: string; projectName: string; inputs: Record<string, unknown>; instruction: string; feedbackUrl?: string | null; base: { source: 'task'; taskId: string } | { source: 'repository'; branch: string; commit: string | null; truncated: boolean } | { source: 'line'; version: number }; baseFiles: AgentFile[] }): { system: string; task: string } {
+export function buildChangePrompt(input: { locale: string; projectName: string; inputs: Record<string, unknown>; instruction: string; feedbackUrl?: string | null; usageUrl?: string | null; base: { source: 'task'; taskId: string } | { source: 'repository'; branch: string; commit: string | null; truncated: boolean } | { source: 'line'; version: number }; baseFiles: AgentFile[] }): { system: string; task: string } {
   const base = buildAgentPrompt({ ...input, instruction: null });
   const system = [
     base.system,
@@ -600,9 +610,12 @@ export class AgentTasksService {
       // Feedback from the application, when the owner turned it on: the form goes into the code (feedbackRule).
       const inbox = await this.prisma.feedbackInbox.findUnique({ where: { projectId }, select: { token: true, enabled: true } });
       const feedback = inbox?.enabled ? feedbackUrl(inbox.token) : null;
+      // Usage analytics, when the owner turned it on: the counting lines go into the code (usageRule).
+      const collector = await this.prisma.usageCollector.findUnique({ where: { projectId }, select: { token: true, enabled: true } });
+      const usage = collector?.enabled ? usageUrl(collector.token) : null;
       const prompt = base
-        ? buildChangePrompt({ feedbackUrl: feedback, locale: ctx.project.locale, projectName: ctx.project.name, inputs: packageInputs, instruction: instruction!, base: base.repository ? { source: 'repository', ...base.repository } : base.line !== undefined ? { source: 'line', version: base.line } : { source: 'task', taskId: base.id! }, baseFiles: base.files })
-        : buildAgentPrompt({ feedbackUrl: feedback, locale: ctx.project.locale, projectName: ctx.project.name, inputs: packageInputs, instruction });
+        ? buildChangePrompt({ feedbackUrl: feedback, usageUrl: usage, locale: ctx.project.locale, projectName: ctx.project.name, inputs: packageInputs, instruction: instruction!, base: base.repository ? { source: 'repository', ...base.repository } : base.line !== undefined ? { source: 'line', version: base.line } : { source: 'task', taskId: base.id! }, baseFiles: base.files })
+        : buildAgentPrompt({ feedbackUrl: feedback, usageUrl: usage, locale: ctx.project.locale, projectName: ctx.project.name, inputs: packageInputs, instruction });
       const kind = base ? CHANGE_KIND : KIND;
       const created = await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`agent:${projectId}`}))`;

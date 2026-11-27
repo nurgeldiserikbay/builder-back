@@ -401,6 +401,7 @@ model Project {
   planSchedule    PlanSchedule?
   appIncidents    AppIncident[]
   feedbackInbox    FeedbackInbox?
+  usageCollector   UsageCollector?
 }
 
 model ProjectMember {
@@ -2612,5 +2613,54 @@ model FeedbackInbox {
   project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@map("feedback_inboxes")
+}
+
+/// Usage analytics of a launched application (PRODUCT_LIFECYCLE §4.12): a public, write-only token per project. Only daily
+/// counts are kept — no cookies, no addresses, no personal data.
+model UsageCollector {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId String     @unique @map("project_id") @db.Uuid
+  token     String     @unique @db.VarChar(48)
+  enabled   Boolean    @default(true)
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  days      UsageDay[]
+
+  @@map("usage_collectors")
+}
+
+/// One counter for one day: views of a screen (kind view, name = path), a main action (kind action), or the day's
+/// visitors (kind visitors, name empty).
+model UsageDay {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  collectorId String         @map("collector_id") @db.Uuid
+  day         DateTime       @db.Date
+  kind        String         @db.VarChar(8)
+  name        String         @db.VarChar(80)
+  count       Int            @default(0)
+  collector   UsageCollector @relation(fields: [collectorId], references: [id], onDelete: Cascade)
+
+  @@unique([collectorId, day, kind, name])
+  @@index([collectorId, day])
+  @@map("usage_days")
+}
+
+/// Today's visitors as hashes of a salt that changes every day and is deleted with them: counts people once a day without
+/// being able to tell who they are or follow them across days.
+model UsageVisitor {
+  collectorId String   @map("collector_id") @db.Uuid
+  day         DateTime @db.Date
+  hash        String   @db.Char(32)
+
+  @@id([collectorId, day, hash])
+  @@map("usage_visitors")
+}
+
+model UsageSalt {
+  day  DateTime @id @db.Date
+  salt String   @db.Char(64)
+
+  @@map("usage_salts")
 }
 
