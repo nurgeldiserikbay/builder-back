@@ -124,7 +124,7 @@ export async function moduleFacts(db: Pick<Tx, 'planTaskState' | 'planCaseResult
   return {
     moduleKey: input.moduleKey, inPlan: Boolean(module), tasks, cases, contract,
     merge: { state: preview.state, behind: preview.behind, conflicts: preview.conflicts.map((item) => item.path), markers: preview.markers },
-    agent: agentRow ? { taskId: agentRow.id, status: agentRow.status, checksFailed: checks.filter((check) => check.id !== 'cases' && check.id !== 'contract' && check.id !== 'demo' && (check.status === 'failed' || check.status === 'timed_out')).length } : null,
+    agent: agentRow ? { taskId: agentRow.id, status: agentRow.status, checksFailed: checks.filter((check) => check.id !== 'cases' && check.id !== 'contract' && check.id !== 'demo' && check.id !== 'audit' && (check.status === 'failed' || check.status === 'timed_out')).length } : null,
   };
 }
 
