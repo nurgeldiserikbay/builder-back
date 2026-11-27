@@ -68,7 +68,7 @@ describe('Bot language', () => {
       const { TelegramLinkService } = await import('../publishing/telegram-link.service.js');
       let linked: unknown = null;
       const prisma = { externalIdentity: { findUnique: async () => linked } };
-      const service = new TelegramLinkService(prisma as never, {} as never);
+      const service = new TelegramLinkService(prisma as never, {} as never, { handleGroupUpdate: async () => false } as never);
       const message = (language: string) => ({ message: { text: 'hello', chat: { id: 1, type: 'private' }, from: { id: 2, language_code: language } } });
       await service.handleUpdate('S', message('en'));
       await service.handleUpdate('S', message('ru'));
@@ -92,7 +92,7 @@ describe('Bot language', () => {
       const linked = { userId: 'u1', user: { locale: 'ru', deletionRequestedAt: null, consents: [{ termsVersion: LEGAL_VERSIONS.terms, privacyVersion: LEGAL_VERSIONS.privacy }] } };
       const prisma = { externalIdentity: { findUnique: async () => linked } };
       const bot = { onMessage: async (...args: unknown[]) => { calls.push(args); } };
-      const service = new TelegramLinkService(prisma as never, bot as never);
+      const service = new TelegramLinkService(prisma as never, bot as never, { handleGroupUpdate: async () => false } as never);
       const base = { chat: { id: 1, type: 'private' }, from: { id: 2, language_code: 'ru' } };
       await service.handleUpdate('S', { message: { ...base, document: { file_id: 'D1', file_name: 'ТЗ.pdf', file_size: 1200 }, caption: 'Вот ТЗ' } });
       await service.handleUpdate('S', { message: { ...base, photo: [{ file_id: 'small', width: 90, file_size: 900 }, { file_id: 'big', width: 1280, file_size: 90000 }] } });

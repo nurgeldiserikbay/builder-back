@@ -3,6 +3,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 import { answerCallbackQuery, sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
 import { TelegramBotService } from '../telegram-bot/bot.service.js';
+import { TelegramGroupService } from '../telegram-group/telegram-group.service.js';
 import { consentIsCurrent } from '../auth/auth.service.js';
 import { contentLocale, localeFromHeader, runWithLocale, tr } from '../i18n/i18n.js';
 
@@ -17,7 +18,7 @@ const idOf = (value: unknown) => (typeof value === 'number' || typeof value === 
 
 @Injectable()
 export class TelegramLinkService {
-  constructor(private readonly prisma: PrismaService, private readonly bot: TelegramBotService) {}
+  constructor(private readonly prisma: PrismaService, private readonly bot: TelegramBotService, private readonly groups: TelegramGroupService) {}
 
   async status(userId: string) {
     const config = telegramConfig();
@@ -70,6 +71,8 @@ export class TelegramLinkService {
     const expected = Buffer.from(config.webhookSecret);
     const actual = Buffer.from(secretHeader ?? '');
     if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return false;
+    // Groups: linking a project's group, the bot removed from one. Nothing else is read from groups.
+    if (await this.groups.handleGroupUpdate(update)) return true;
     const callback = (update as TelegramUpdate)?.callback_query;
     if (callback) {
       const callbackId = idOf(callback.id);

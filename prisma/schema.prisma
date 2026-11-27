@@ -402,6 +402,7 @@ model Project {
   appIncidents    AppIncident[]
   feedbackInbox    FeedbackInbox?
   usageCollector   UsageCollector?
+  telegramGroup    ProjectTelegramGroup?
   conceptShare     ConceptShare?
 }
 
@@ -2708,3 +2709,25 @@ model GuestComment {
   @@map("guest_comments")
 }
 
+/// The project's Telegram group (STAGE_WORK_MODEL §15): key events go there as plain lines without contents, since the group
+/// may hold people outside the project. Linked by a one-time code through the bot's «add to group» link; chatId is null until then.
+model ProjectTelegramGroup {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId      String    @unique @map("project_id") @db.Uuid
+  codeHash       String?   @unique @map("code_hash") @db.VarChar(64)
+  codeExpiresAt  DateTime? @map("code_expires_at") @db.Timestamptz(3)
+  chatId         String?   @map("chat_id") @db.VarChar(64)
+  title          String?   @db.VarChar(255)
+  linkedByUserId String    @map("linked_by_user_id") @db.Uuid
+  linkedAt       DateTime? @map("linked_at") @db.Timestamptz(3)
+  /// The last event sent (created_at, id): events after it go next, never twice.
+  cursorAt       DateTime? @map("cursor_at") @db.Timestamptz(3)
+  cursorId       String?   @map("cursor_id") @db.Uuid
+  lastSentAt     DateTime? @map("last_sent_at") @db.Timestamptz(3)
+  lastFailedAt   DateTime? @map("last_failed_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  project        Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([chatId], map: "project_telegram_groups_chat_idx")
+  @@map("project_telegram_groups")
+}
