@@ -5036,6 +5036,8 @@ paths:
       summary: Usage analytics of the launched application (web_app only)
       description: 'Report for the last 7 or 30 days (days=7|30, default 7): { enabled, url (the address the application sends to, null when off or PUBLIC_API_URL is not set), configured, period, since (first counted day or null), days [{ day YYYY-MM-DD, views, visitors, actions }], totals { views, visitors, actions }, screens [{ name, count }] (top 10 paths), actions [{ name, count }] (top 10) }. Only daily counters are kept: no cookies, no user ids, no IP addresses; a visitor is counted once a day by a hash with a salt that changes every day and is deleted with the hashes. Counters older than 400 days are deleted. 404 USAGE_NOT_FOR_PROJECT for other project types.'
       x-implementation-status: implemented
+      security:
+        - sessionCookie: []
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: days, in: query, required: false, schema: { type: string, enum: ['7', '30'] } }
@@ -5048,6 +5050,8 @@ paths:
       summary: Turn usage analytics on or off, or give it a new address
       description: 'Body { enabled?: boolean, renew?: true } (one of them). The first call creates the address. renew replaces the token: the old address stops counting at once. Turning off keeps the counters. Owner or a member with write access; event usage_collector_changed. While on, the AI agent adds counting lines to the application (views on every screen change, up to 10 kinds of main actions; nothing about the person; nothing in the preview).'
       x-implementation-status: implemented
+      security:
+        - sessionCookie: []
       parameters:
         - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
