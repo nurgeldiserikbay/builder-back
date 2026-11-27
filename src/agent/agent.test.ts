@@ -10,7 +10,7 @@ import { BillingService } from '../billing/billing.service.js';
 import { PrismaService } from '../database/prisma.service.js';
 import { ProjectsService } from '../projects/projects.service.js';
 import { AgentModelError, ChatCompletionsAgentModel, FallbackAgentModel, configuredAgentModel, type AgentMessage, type AgentModel, type AgentReply } from './agent-model.js';
-import { blueprintProblems, deployFilesCheck, pwaCheck, runAgent, safePath, type AgentStep } from './agent-loop.js';
+import { blueprintProblems, deployFilesCheck, pwaCheck, readAudit, runAgent, safePath, type AgentStep } from './agent-loop.js';
 import { appOrigin, checkAppHealth } from './app-health.js';
 import { createServer } from 'node:http';
 import { AgentRunner, AgentTasksService, buildAgentPrompt, buildChangePrompt, filesDigestOf, keepAwake, keepAwakeUrl, pullRequestText, PREVIEW_CSP, promptDigestOf, withPreviewPolicy } from './agent-tasks.js';
@@ -106,7 +106,7 @@ describe('AI agent: the loop', () => {
       });
       assert.equal(outcome.stopReason, 'finished');
       assert.deepEqual(outcome.report, { summary: 'Удалять может только администратор.', done: ['Права на удаление'], notDone: ['Оплата — нужна интеграция'] });
-      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['test', 'passed'], ['cases', 'skipped'], ['build', 'passed'], ['start', 'passed'], ['contract', 'failed'], ['deploy_files', 'passed'], ['pwa', 'passed'], ['demo', 'passed']]);
+      assert.deepEqual(outcome.checks.map((check) => [check.id, check.status]), [['install', 'passed'], ['audit', 'passed'], ['test', 'passed'], ['cases', 'skipped'], ['build', 'passed'], ['start', 'passed'], ['contract', 'failed'], ['deploy_files', 'passed'], ['pwa', 'passed'], ['demo', 'passed']]);
       const contract = outcome.checks.find((check) => check.id === 'contract')!;
       assert.deepEqual(contract.operations, { login: 'passed', view_request: 'passed', edit_request: 'passed', view_note: 'open', view_report: 'crash', delete_invoice: 'missing' });
       assert.match(contract.output, /^3\/6 contract operations answer as promised/);
@@ -585,5 +585,35 @@ describe('AI agent: tasks (database)', async () => {
     const stranger = await prisma!.user.create({ data: { email: `x-${randomUUID()}@test.local`, emailNormalized: `x-${randomUUID()}@test.local`, passwordHash: 'x', name: 'X', locale: 'ru' } });
     users.push(stranger.id);
     await assert.rejects(service.files(stranger.id, projectId, task.id), /PROJECT_NOT_FOUND/);
+  });
+});
+
+describe('dependency audit', () => {
+  it('counts advisories by severity and names the worst packages first', () => {
+    const report = {
+      auditReportVersion: 2,
+      vulnerabilities: {
+        'body-parser': { name: 'body-parser', severity: 'high', via: [{ source: 1, title: 'body-parser is vulnerable to denial of service', severity: 'high' }] },
+        express: { name: 'express', severity: 'high', via: ['body-parser'] },
+        cookie: { name: 'cookie', severity: 'low', via: [{ title: 'cookie accepts out of bounds characters' }] },
+        weird: { name: 'weird', severity: 'unknown', via: [] },
+      },
+      metadata: { vulnerabilities: { info: 0, low: 1, moderate: 0, high: 2, critical: 0, total: 3 } },
+    };
+    assert.deepEqual(readAudit(JSON.stringify(report)), {
+      critical: 0, high: 2, moderate: 0, low: 1,
+      packages: [
+        { name: 'body-parser', severity: 'high', title: 'body-parser is vulnerable to denial of service' },
+        { name: 'express', severity: 'high', title: null },
+        { name: 'cookie', severity: 'low', title: 'cookie accepts out of bounds characters' },
+      ],
+    });
+  });
+
+  it('claims nothing when npm could not reach the advisory database', () => {
+    assert.equal(readAudit(''), null);
+    assert.equal(readAudit('npm ERR! network'), null);
+    assert.equal(readAudit(JSON.stringify({ error: { code: 'ENOTFOUND', summary: 'request to registry failed' } })), null);
+    assert.deepEqual(readAudit(JSON.stringify({ vulnerabilities: {}, metadata: { vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0 } } })), { critical: 0, high: 0, moderate: 0, low: 0, packages: [] });
   });
 });

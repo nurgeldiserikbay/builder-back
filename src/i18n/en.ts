@@ -4310,4 +4310,5 @@ export const en: Record<string, string> = {
   "Открытия экранов": "Screen views",
   "Скачивать фото, PDF и тексты без водяного знака: на них и на экране этапа — ваша почта и дата": "Download photos, PDF and text files without a watermark: they and the stage screen carry your address and the date",
   "Я не передаю третьим лицам и не публикую материалы проекта, к которым получил доступ: тексты, схемы, файлы, данные клиентов и цены. Использую их только для работы над этим этапом. После окончания работы удаляю копии, которые скачал, если владелец не разрешил оставить их. Эти условия действуют и после окончания работы над проектом.": "I do not pass on to third parties or publish the project materials I was given access to: texts, diagrams, files, customer data and prices. I use them only for the work on this stage. When the work ends I delete the copies I downloaded unless the owner allowed me to keep them. These terms remain in force after the work on the project ends.",
+  "В пакетах нет известных серьёзных уязвимостей": "No known serious vulnerabilities in the packages",
 };

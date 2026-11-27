@@ -21,12 +21,15 @@ const DEMO_LIMIT = 6_000_000;
 export interface AgentLimits { turns: number; wallMs: number; costTiyn: number | null }
 export interface AgentStep { at: string; kind: 'note' | 'tool'; tool?: string; summary: string; status?: 'ok' | 'failed'; output?: string }
 export interface AgentCheck {
-  id: 'install' | 'test' | 'cases' | 'build' | 'start' | 'contract' | 'deploy_files' | 'pwa' | 'demo'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number;
+  id: 'install' | 'audit' | 'test' | 'cases' | 'build' | 'start' | 'contract' | 'deploy_files' | 'pwa' | 'demo'; command: string; status: 'passed' | 'failed' | 'timed_out' | 'skipped'; exitCode: number | null; output: string; durationMs: number;
   /** For «cases»: the result of each test-plan case found in the test names, as the platform's own run saw it. */
   cases?: Record<string, 'passed' | 'failed'>;
   /** For «contract»: each contract operation as the platform's probe found it — passed, or why not. */
   operations?: Record<string, ContractProbeResult>;
+  /** For «audit»: known vulnerabilities in the packages the running application uses, by severity, and the worst packages. */
+  vulnerabilities?: AuditSummary;
 }
+export interface AuditSummary { critical: number; high: number; moderate: number; low: number; packages: Array<{ name: string; severity: string; title: string | null }> }
 /** An operation of the accepted contracts, as the platform probes it in the built application. */
 export interface ContractProbe { key: string; method: string; path: string; signedIn: boolean }
 export type ContractProbeResult = 'passed' | 'missing' | 'crash' | 'open' | 'accepts_empty' | 'unexpected' | 'no_answer';
@@ -218,11 +221,14 @@ export async function platformChecks(workspace: Workspace, contract: ContractPro
     const result = await workspace.exec(item.command, item.timeoutMs);
     const status = result.timedOut ? 'timed_out' : result.exitCode === 0 ? 'passed' : 'failed';
     results.push({ id: item.id, command: item.command, status, exitCode: result.exitCode, output: cut(`${result.stdout}\n${result.stderr}`.trim(), 3000), durationMs: result.durationMs });
+    // Right after the install: the packages that will run in production, against the npm advisory database.
+    if (item.id === 'install') results.push(await auditCheck(workspace, status === 'passed'));
     if (status !== 'passed' && item.id !== 'demo') failed = true;
     // The contract is probed in the started application, then the launch files are read — in the order people read the report.
     if (item.id === 'start') results.push(status === 'passed' ? await contractCheck(workspace, contract) : skippedContract());
     if (item.id === 'start') results.push(await deployFilesCheck(workspace));
   }
+  if (!results.some((check) => check.id === 'audit')) results.splice(1, 0, { id: 'audit', command: AUDIT_COMMAND, status: 'skipped', exitCode: null, output: '', durationMs: 0 });
   if (!results.some((check) => check.id === 'contract')) results.splice(results.length - 1, 0, skippedContract());
   if (!results.some((check) => check.id === 'deploy_files')) results.splice(results.length - 1, 0, await deployFilesCheck(workspace));
   // A client that builds but ships its styles unprocessed (Tailwind directives with no Tailwind in the build) looks like bare
@@ -238,6 +244,45 @@ export async function platformChecks(workspace: Workspace, contract: ContractPro
   const built = results.find((check) => check.id === 'build')?.status === 'passed';
   results.splice(results.findIndex((check) => check.id === 'deploy_files') + 1, 0, built ? await pwaCheck(workspace) : { id: 'pwa', command: PWA_COMMAND, status: 'skipped', exitCode: null, output: '', durationMs: 0 });
   return results;
+}
+
+export const AUDIT_COMMAND = 'npm audit --omit=dev --json';
+const SEVERITY_ORDER = ['critical', 'high', 'moderate', 'low'] as const;
+
+/**
+ * Reads `npm audit --json` (npm 7+). Unknown when npm could not reach the advisory database or printed something else:
+ * then nothing is claimed either way.
+ */
+export function readAudit(stdout: string): AuditSummary | null {
+  let data: unknown;
+  try { data = JSON.parse(stdout); } catch { return null; }
+  if (!data || typeof data !== 'object') return null;
+  const root = data as { metadata?: { vulnerabilities?: Record<string, unknown> }; vulnerabilities?: Record<string, unknown>; error?: unknown };
+  const counts = root.metadata?.vulnerabilities;
+  if (root.error || !counts || typeof counts !== 'object') return null;
+  const count = (key: string) => (typeof counts[key] === 'number' && Number.isFinite(counts[key]) ? counts[key] as number : 0);
+  const packages = Object.entries(root.vulnerabilities ?? {}).flatMap(([name, raw]) => {
+    if (!raw || typeof raw !== 'object') return [];
+    const item = raw as { severity?: unknown; via?: unknown };
+    const severity = typeof item.severity === 'string' && (SEVERITY_ORDER as readonly string[]).includes(item.severity) ? item.severity : null;
+    if (!severity) return [];
+    // «via» holds advisories (objects with a title) or names of the packages that bring the problem in.
+    const advisory = Array.isArray(item.via) ? item.via.find((via): via is { title: string } => Boolean(via) && typeof via === 'object' && typeof (via as { title?: unknown }).title === 'string') : undefined;
+    return [{ name: name.slice(0, 100), severity, title: advisory ? advisory.title.slice(0, 160) : null }];
+  }).sort((a, b) => SEVERITY_ORDER.indexOf(a.severity as never) - SEVERITY_ORDER.indexOf(b.severity as never) || a.name.localeCompare(b.name)).slice(0, 10);
+  return { critical: count('critical'), high: count('high'), moderate: count('moderate'), low: count('low'), packages };
+}
+
+/** «audit» informs: critical or high advisories show as failed, the application itself passes or not on its own checks. */
+async function auditCheck(workspace: Workspace, installed: boolean): Promise<AgentCheck> {
+  if (!installed) return { id: 'audit', command: AUDIT_COMMAND, status: 'skipped', exitCode: null, output: '', durationMs: 0 };
+  const result = await workspace.exec(AUDIT_COMMAND, 120_000);
+  const summary = result.timedOut ? null : readAudit(result.stdout);
+  if (!summary) return { id: 'audit', command: AUDIT_COMMAND, status: 'skipped', exitCode: result.exitCode, output: 'The npm advisory database did not answer: vulnerabilities are not checked.', durationMs: result.durationMs };
+  const serious = summary.critical + summary.high;
+  const line = `critical ${summary.critical}, high ${summary.high}, moderate ${summary.moderate}, low ${summary.low}`;
+  const worst = summary.packages.map((item) => `${item.name} (${item.severity}${item.title ? `: ${item.title}` : ''})`).join('; ');
+  return { id: 'audit', command: AUDIT_COMMAND, status: serious ? 'failed' : 'passed', exitCode: result.exitCode, output: worst ? `${line}. ${worst}` : line, durationMs: result.durationMs, vulnerabilities: summary };
 }
 
 export const CASES_COMMAND = 'node --test --test-reporter=tap';
