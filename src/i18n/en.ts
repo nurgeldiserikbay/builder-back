@@ -4297,4 +4297,13 @@ export const en: Record<string, string> = {
   "Видит свои заявки и заказы в личном кабинете": "Sees their requests and orders in their account",
   "Даёт сотруднику доступ только к его заявкам": "Gives a staff member access only to their requests",
   "Система": "System",
+  "делает платформа, без разработчика": "done by the platform, no developer needed",
+  "плюс плата сервиса по его тарифу": "plus the service's own fee",
+  "Оценка": "Estimate",
+  "Первая версия, оценка по типу работы (не смета): {0}.": "First version, an estimate by the kind of work (not a quote): {0}.",
+  "Оценка дополнительного по типу работы (не смета): {0}.": "An estimate of the extras by the kind of work (not a quote): {0}.",
+  "{0} — {1}": "{0} — {1}",
+  "≈ {0} ч": "≈ {0} h",
+  "{0} раб. дн.": "{0} working days",
+  "плюс плата сервисов по их тарифам ({0})": "plus the services' own fees ({0})",
 };
