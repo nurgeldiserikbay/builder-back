@@ -10,6 +10,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 import { JourneyCore } from '../journey/journey-core.js';
 import { RateLimiter } from '../security/rate-limit.js';
+import { goalProgress, readGoals, type UsageGoal } from './goals.js';
 
 /** A page view every few seconds from one address is plenty; the whole application is capped per day. */
 export const USAGE_RATE = { perIp: { max: 600, windowMs: 60 * 60_000 }, perApp: { max: 50_000, windowMs: 24 * 60 * 60_000 } };
@@ -88,23 +89,52 @@ export function usageReport(rows: Row[], days: number, today: Date) {
 export class UsageService {
   constructor(private readonly prisma: PrismaService, private readonly core: JourneyCore) {}
 
+  /** The success goals of the idea review: the accepted version, else the saved one; none when the stage is not there. */
+  private async ideaMetrics(ctx: Awaited<ReturnType<JourneyCore['load']>>): Promise<Array<{ key: string; text: string }>> {
+    if (!ctx.route.includes('idea')) return [];
+    const stage = this.core.stageOf(ctx, 'idea');
+    if (stage.status === 'skipped') return [];
+    const version = await this.core.versionContent(stage.approvedVersionId ?? stage.currentVersionId);
+    const metrics = (version?.content as { metrics?: Array<{ key: string; text: string }> } | undefined)?.metrics;
+    return Array.isArray(metrics) ? metrics.filter((item) => item && typeof item.key === 'string' && typeof item.text === 'string') : [];
+  }
+
   private async collector(userId: string, projectId: string, access: 'read' | 'write') {
+    return (await this.context(userId, projectId, access)).collector;
+  }
+
+  private async context(userId: string, projectId: string, access: 'read' | 'write') {
     const ctx = await this.core.load(userId, projectId, access);
     if (ctx.type.key !== 'web_app') throw new NotFoundException('USAGE_NOT_FOR_PROJECT');
-    return this.prisma.usageCollector.findUnique({ where: { projectId } });
+    return { ctx, collector: await this.prisma.usageCollector.findUnique({ where: { projectId } }) };
+  }
+
+  /** How each success goal of the idea review is counted. The first call creates the (turned-off) collector. */
+  async setGoals(userId: string, projectId: string, raw: unknown) {
+    const { ctx, collector } = await this.context(userId, projectId, 'write');
+    const goals = readGoals(raw, (await this.ideaMetrics(ctx)).map((metric) => metric.key));
+    if (collector) await this.prisma.usageCollector.update({ where: { projectId }, data: { goals: goals as never } });
+    else await this.prisma.usageCollector.create({ data: { projectId, token: newUsageToken(), enabled: false, goals: goals as never } });
+    await this.core.event(this.prisma, projectId, userId, 'usage_goals_changed', null, { goals: goals.length });
+    return this.get(userId, projectId, '7');
   }
 
   /** The report for the last 7 or 30 days; also says whether collecting is on and where the application sends. */
   async get(userId: string, projectId: string, rawDays: unknown) {
     const days = rawDays === '30' || rawDays === 30 ? 30 : 7;
-    const collector = await this.collector(userId, projectId, 'read');
+    const { ctx, collector } = await this.context(userId, projectId, 'read');
     const today = dayOf(new Date());
-    const from = new Date(today.getTime() - (days - 1) * 86_400_000);
+    // Goals look back up to 30 days whatever period the report shows.
+    const from = new Date(today.getTime() - 29 * 86_400_000);
     const rows = collector ? await this.prisma.usageDay.findMany({ where: { collectorId: collector.id, day: { gte: from } }, select: { day: true, kind: true, name: true, count: true } }) : [];
     const first = collector ? await this.prisma.usageDay.findFirst({ where: { collectorId: collector.id }, orderBy: { day: 'asc' }, select: { day: true } }) : null;
+    const reportFrom = new Date(today.getTime() - (days - 1) * 86_400_000);
+    const stored = Array.isArray(collector?.goals) ? collector!.goals as unknown as UsageGoal[] : [];
+    const actionNames = [...new Set(rows.filter((row) => row.kind === 'action').map((row) => row.name))].slice(0, 20);
     return { data: {
-      enabled: collector?.enabled ?? false, url: collector ? usageUrl(collector.token) : null, configured: Boolean(process.env.PUBLIC_API_URL),
-      period: days, since: first?.day.toISOString().slice(0, 10) ?? null, ...usageReport(rows, days, today),
+      enabled: collector?.enabled ?? false, url: collector?.enabled ? usageUrl(collector.token) : null, configured: Boolean(process.env.PUBLIC_API_URL),
+      period: days, since: first?.day.toISOString().slice(0, 10) ?? null, ...usageReport(rows.filter((row) => row.day >= reportFrom), days, today),
+      goals: goalProgress(stored, await this.ideaMetrics(ctx), rows, today, Boolean(first)), actionNames,
     } };
   }
 

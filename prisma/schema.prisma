@@ -2623,6 +2623,8 @@ model UsageCollector {
   projectId String     @unique @map("project_id") @db.Uuid
   token     String     @unique @db.VarChar(48)
   enabled   Boolean    @default(true)
+  /// Success goals of the idea review measured by these counters: [{ metricKey, kind, name, target, period }], ≤ 3.
+  goals     Json       @default("[]")
   createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
   project   Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
