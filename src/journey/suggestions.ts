@@ -1,7 +1,7 @@
 import { ArtifactValidationError } from './artifacts.js';
 import type { ProjectTypeKey } from './catalog.js';
 import { measurable, type IdeaReview } from './idea.js';
-import type { BusinessProcess, Capability } from './process.js';
+import { PROCESS_LIMITS, type ActorKind, type BusinessProcess, type Capability } from './process.js';
 import { tr } from '../i18n/i18n.js';
 
 /**
@@ -54,6 +54,8 @@ interface CatalogEntry {
   goals?: boolean;
   /** Fits whatever the process: typical for the project type. */
   always?: boolean;
+  /** The step this adds to the business process when chosen: after the first step doing `after`. */
+  step?: { after: Capability; actor: ActorKind; action: string; capability: Capability };
 }
 
 const SITES: ProjectTypeKey[] = ['landing', 'company_site', 'multipage', 'store', 'booking'];
@@ -62,23 +64,23 @@ const ALL: ProjectTypeKey[] = [...SITES, 'web_app'];
 /** The catalog is code, versioned with SUGGESTIONS_VERSION: suggestions are the same for everyone with the same inputs. */
 export const SUGGESTION_CATALOG: CatalogEntry[] = [
   { key: 'reminders', title: 'Напоминание клиенту о записи', value: 'Меньше клиентов забывают и не приходят.', effort: 'medium',
-    types: ['booking', 'web_app'], support: { site: 'account', app: 'account' }, has: ['book'], lacks: ['remind_client'] },
+    types: ['booking', 'web_app'], support: { site: 'account', app: 'account' }, has: ['book'], lacks: ['remind_client'], step: { after: 'book', actor: 'system', action: 'Напоминает клиенту о записи накануне', capability: 'remind_client' } },
   { key: 'cancel_booking', title: 'Отмена и перенос записи самим клиентом', value: 'Освободившееся время снова видно другим, меньше звонков.', effort: 'medium',
-    types: ['booking', 'web_app'], support: { site: 'not_yet', app: 'code' }, has: ['book'], lacks: ['cancel_booking'] },
+    types: ['booking', 'web_app'], support: { site: 'not_yet', app: 'code' }, has: ['book'], lacks: ['cancel_booking'], step: { after: 'book', actor: 'client', action: 'Сам отменяет или переносит запись', capability: 'cancel_booking' } },
   { key: 'pay_online', title: 'Онлайн-оплата', value: 'Деньги приходят сразу, меньше отказов в последний момент.', effort: 'large',
-    types: ['store', 'booking', 'web_app'], support: { site: 'account', app: 'account' }, has: ['order'], lacks: ['pay_online'] },
+    types: ['store', 'booking', 'web_app'], support: { site: 'account', app: 'account' }, has: ['order'], lacks: ['pay_online'], step: { after: 'order', actor: 'client', action: 'Оплачивает заказ онлайн', capability: 'pay_online' } },
   { key: 'prepay_booking', title: 'Предоплата при записи', value: 'Клиенты реже пропускают запись.', effort: 'large',
-    types: ['booking', 'web_app'], support: { site: 'account', app: 'account' }, has: ['book'], lacks: ['pay_online'] },
+    types: ['booking', 'web_app'], support: { site: 'account', app: 'account' }, has: ['book'], lacks: ['pay_online'], step: { after: 'book', actor: 'client', action: 'Вносит предоплату за запись', capability: 'pay_online' } },
   { key: 'owner_alerts', title: 'Уведомления о новых заявках в Telegram или на почту', value: 'Заявка не потеряется, ответ быстрее.', effort: 'small',
-    types: ALL, support: { site: 'account', app: 'code' }, has: ['request_form'], lacks: ['notify_owner'] },
+    types: ALL, support: { site: 'account', app: 'code' }, has: ['request_form'], lacks: ['notify_owner'], step: { after: 'request_form', actor: 'system', action: 'Сообщает владельцу о новой заявке', capability: 'notify_owner' } },
   { key: 'order_alerts', title: 'Уведомления о новых заказах и записях', value: 'Вы узнаёте о заказе сразу, а не когда зайдёте на сайт.', effort: 'small',
-    types: ALL, support: { site: 'account', app: 'code' }, has: ['order'], lacks: ['notify_owner'] },
+    types: ALL, support: { site: 'account', app: 'code' }, has: ['order'], lacks: ['notify_owner'], step: { after: 'order', actor: 'system', action: 'Сообщает владельцу о новом заказе', capability: 'notify_owner' } },
   { key: 'status_updates', title: 'Клиент видит статус своей заявки или заказа', value: 'Меньше вопросов «ну что там?».', effort: 'medium',
-    types: ['store', 'web_app'], support: { site: 'not_yet', app: 'code' }, has: ['change_status'] },
+    types: ['store', 'web_app'], support: { site: 'not_yet', app: 'code' }, has: ['change_status'], step: { after: 'change_status', actor: 'client', action: 'Видит новый статус своей заявки', capability: 'view_info' } },
   { key: 'client_account', title: 'Личный кабинет клиента', value: 'История заказов и повторный заказ в пару нажатий.', effort: 'large',
-    types: ['store', 'booking', 'web_app'], support: { site: 'not_yet', app: 'code' }, has: ['create_request'], lacks: ['account'] },
+    types: ['store', 'booking', 'web_app'], support: { site: 'not_yet', app: 'code' }, has: ['create_request'], lacks: ['account'], step: { after: 'create_request', actor: 'client', action: 'Видит свои заявки и заказы в личном кабинете', capability: 'account' } },
   { key: 'staff_roles', title: 'Роли сотрудников и доступы', value: 'Каждый видит своё; уволенный сотрудник теряет доступ сразу.', effort: 'medium',
-    types: ['web_app'], support: { site: 'not_yet', app: 'code' }, has: ['assign'], lacks: ['manage_staff'] },
+    types: ['web_app'], support: { site: 'not_yet', app: 'code' }, has: ['assign'], lacks: ['manage_staff'], step: { after: 'assign', actor: 'business', action: 'Даёт сотруднику доступ только к его заявкам', capability: 'manage_staff' } },
   { key: 'reports', title: 'Отчёт для владельца: заявки, заказы, выручка за период', value: 'Видно, растёт ли бизнес, без таблиц вручную.', effort: 'medium',
     types: ['store', 'web_app'], support: { site: 'not_yet', app: 'code' }, has: ['manage_orders'] },
   { key: 'export', title: 'Выгрузка данных в Excel', value: 'Бухгалтерия и отчёты без переписывания.', effort: 'small',
@@ -238,3 +240,55 @@ export function importSuggestionsText(text: string): Suggestions {
   });
   return normalizeSuggestions({ items });
 }
+
+/** Who does an added step, in the owner's words, when the process has nobody of that kind yet. */
+const ACTOR_NAMES: Record<ActorKind, string> = { client: 'Клиент', business: 'Владелец', staff: 'Сотрудник', system: 'Система', external: 'Внешний сервис' };
+
+export interface StepAddition { suggestion: string; scenario: string; after: string; actor: string; action: string }
+export interface StepSkip { suggestion: string; reason: string }
+
+/**
+ * New steps of the business process from the suggestions chosen for the first version (PRODUCT_LIFECYCLE.md §4.3): each
+ * catalog suggestion that fills a missing step adds it right after the step it builds on, in every scenario that has that
+ * step and not yet this one. Steps of the owner's or the AI's own suggestions are not guessed: they stay in the ТЗ only.
+ */
+export function processWithSuggestedSteps(process: BusinessProcess, suggestions: Suggestions): { process: BusinessProcess; added: StepAddition[]; skipped: StepSkip[] } {
+  const next: BusinessProcess = structuredClone(process);
+  const added: StepAddition[] = [];
+  const skipped: StepSkip[] = [];
+  const keys = new Set(next.scenarios.flatMap((scenario) => scenario.steps.map((step) => step.key)));
+  const actorOf = (kind: ActorKind) => {
+    const found = next.actors.find((actor) => actor.kind === kind);
+    if (found) return found;
+    if (next.actors.length >= PROCESS_LIMITS.actors) return null;
+    let key = kind; let n = 2;
+    while (next.actors.some((actor) => actor.key === key)) key = `${kind}${n++}` as ActorKind;
+    const actor = { key, name: tr(ACTOR_NAMES[kind]), kind };
+    next.actors.push(actor);
+    return actor;
+  };
+  for (const item of suggestions.items) {
+    if (item.decision !== 'now') continue;
+    const step = catalogEntry(item.catalogKey)?.step;
+    if (!step) continue;
+    const places = next.scenarios.filter((scenario) => scenario.steps.some((candidate) => candidate.capability === step.after));
+    if (!places.length) { skipped.push({ suggestion: item.title, reason: tr('В процессе нет шага, к которому это добавить.') }); continue; }
+    // Already there: a step doing the same (for a plain «посмотреть» step, the same words).
+    const has = (candidate: { capability: Capability; action: string }) => candidate.capability === step.capability && (step.capability !== 'view_info' || candidate.action === tr(step.action));
+    const todo = places.filter((scenario) => !scenario.steps.some(has));
+    if (!todo.length) continue;
+    const actor = actorOf(step.actor);
+    if (!actor) { skipped.push({ suggestion: item.title, reason: tr('В процессе уже {0} участников — больше добавить нельзя.', [PROCESS_LIMITS.actors]) }); continue; }
+    for (const scenario of todo) {
+      if (scenario.steps.length >= PROCESS_LIMITS.steps) { skipped.push({ suggestion: item.title, reason: tr('В сценарии «{0}» уже {1} шагов.', [scenario.title, PROCESS_LIMITS.steps]) }); continue; }
+      const at = scenario.steps.findIndex((candidate) => candidate.capability === step.after);
+      let key = `${item.key}_step`.slice(0, 24); let n = 2;
+      while (keys.has(key)) key = `${item.key.slice(0, 18)}_step${n++}`;
+      keys.add(key);
+      scenario.steps.splice(at + 1, 0, { key, actor: actor.key, action: tr(step.action), capability: step.capability });
+      added.push({ suggestion: item.title, scenario: scenario.title, after: scenario.steps[at]!.action, actor: actor.name, action: tr(step.action) });
+    }
+  }
+  return { process: next, added, skipped };
+}
+
