@@ -15,6 +15,7 @@ import { AccountModule } from './account/account.module.js';
 import { ChoicesModule } from './choices/choices.module.js';
 import { NetworkAgentModule } from './network-agent/network-agent.module.js';
 import { FeedbackModule } from './feedback/feedback.module.js';
+import { UsageModule } from './usage/usage.module.js';
 import { PaymentsModule } from './payments/payments.module.js';
 import { BudgetModule } from './budget/budget.module.js';
 import { DisputesModule } from './disputes/disputes.module.js';
@@ -30,7 +31,7 @@ import { BrowserChecksModule } from './quality/browser-checks.module.js';
 import { SandboxModule } from './sandbox/sandbox.module.js';
 
 @Module({
-  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule, MonitoringModule, TeamModule, InboxModule, WorkModule, RequestsModule, AnalysisModule, BrowserChecksModule, SandboxModule, NetworkAgentModule, FeedbackModule],
+  imports: [DatabaseModule, AuthModule, ProjectsModule, ReviewsModule, CapabilitiesModule, StaffAuthModule, JourneyModule, PublishingModule, BillingModule, ImagesModule, AccountModule, ChoicesModule, BudgetModule, PaymentsModule, DisputesModule, CatalogModule, InsightsModule, MonitoringModule, TeamModule, InboxModule, WorkModule, RequestsModule, AnalysisModule, BrowserChecksModule, SandboxModule, NetworkAgentModule, FeedbackModule, UsageModule],
   controllers: [HealthController, WorkspacesController],
 })
 export class AppModule {}

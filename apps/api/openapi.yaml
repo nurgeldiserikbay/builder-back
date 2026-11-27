@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.35.0
+  version: 1.36.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -5029,6 +5029,50 @@ paths:
         '400': { description: FEEDBACK_TEXT_REQUIRED }
         '404': { description: FEEDBACK_NOT_FOUND }
         '429': { description: FEEDBACK_TOO_MANY }
+  /projects/{projectId}/usage:
+    get:
+      tags: [Journey]
+      operationId: getAppUsage
+      summary: Usage analytics of the launched application (web_app only)
+      description: 'Report for the last 7 or 30 days (days=7|30, default 7): { enabled, url (the address the application sends to, null when off or PUBLIC_API_URL is not set), configured, period, since (first counted day or null), days [{ day YYYY-MM-DD, views, visitors, actions }], totals { views, visitors, actions }, screens [{ name, count }] (top 10 paths), actions [{ name, count }] (top 10) }. Only daily counters are kept: no cookies, no user ids, no IP addresses; a visitor is counted once a day by a hash with a salt that changes every day and is deleted with the hashes. Counters older than 400 days are deleted. 404 USAGE_NOT_FOR_PROJECT for other project types.'
+      x-implementation-status: implemented
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: days, in: query, required: false, schema: { type: string, enum: ['7', '30'] } }
+      responses:
+        '200': { description: The report }
+        '404': { description: USAGE_NOT_FOR_PROJECT }
+    put:
+      tags: [Journey]
+      operationId: setAppUsage
+      summary: Turn usage analytics on or off, or give it a new address
+      description: 'Body { enabled?: boolean, renew?: true } (one of them). The first call creates the address. renew replaces the token: the old address stops counting at once. Turning off keeps the counters. Owner or a member with write access; event usage_collector_changed. While on, the AI agent adds counting lines to the application (views on every screen change, up to 10 kinds of main actions; nothing about the person; nothing in the preview).'
+      x-implementation-status: implemented
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: '{ enabled, url, configured }' }
+        '400': { description: INVALID_BODY }
+        '404': { description: USAGE_NOT_FOR_PROJECT }
+  /usage/{token}:
+    post:
+      tags: [Journey]
+      operationId: receiveAppUsage
+      summary: A screen view or a main action from the launched application (public, navigator.sendBeacon)
+      description: 'No session and no cookies; allowed from any origin (exempt from the origin check, Access-Control-Allow-Origin *). application/x-www-form-urlencoded: kind view (default) with name = location.pathname, or kind action with name = 1–40 characters (letters, digits, spaces, _ and -). The path is cleaned: query and hash dropped, ids (numbers, uuids, long tokens, e-mails) replaced by :id, lower case, ≤ 80. Requests without a User-Agent or from bots, and malformed ones, are answered the same and not counted. Past 60 distinct names a day the rest is counted as «…». Limits: 600 an hour from one address, 50 000 a day per application (429 USAGE_TOO_MANY). An unknown, turned-off or replaced address is 404 USAGE_NOT_FOUND.'
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string, pattern: '^[A-Za-z0-9_-]{24,48}$' } }
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { type: object, properties: { kind: { type: string, enum: [view, action] }, name: { type: string } } }
+      responses:
+        '204': { description: Accepted (counted or not) }
+        '404': { description: USAGE_NOT_FOUND }
+        '429': { description: USAGE_TOO_MANY }
   /network-agent/monitor:
     post:
       tags: [Journey]
