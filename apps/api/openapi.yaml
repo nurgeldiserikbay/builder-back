@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.39.0
+  version: 1.40.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -5127,7 +5127,7 @@ paths:
       tags: [Journey]
       operationId: getAppUsage
       summary: Usage analytics of the launched application (web_app only)
-      description: 'Report for the last 7 or 30 days (days=7|30, default 7): { enabled, url (the address the application sends to, null when off or PUBLIC_API_URL is not set), configured, period, since (first counted day or null), days [{ day YYYY-MM-DD, views, visitors, actions }], totals { views, visitors, actions }, screens [{ name, count }] (top 10 paths), actions [{ name, count }] (top 10) }. Only daily counters are kept: no cookies, no user ids, no IP addresses; a visitor is counted once a day by a hash with a salt that changes every day and is deleted with the hashes. Counters older than 400 days are deleted. 404 USAGE_NOT_FOR_PROJECT for other project types.'
+      description: 'Report for the last 7 or 30 days (days=7|30, default 7): { enabled, url (the address the application sends to, null when off or PUBLIC_API_URL is not set), goals and actionNames (see PUT /projects/{projectId}/usage/goals), configured, period, since (first counted day or null), days [{ day YYYY-MM-DD, views, visitors, actions }], totals { views, visitors, actions }, screens [{ name, count }] (top 10 paths), actions [{ name, count }] (top 10) }. Only daily counters are kept: no cookies, no user ids, no IP addresses; a visitor is counted once a day by a hash with a salt that changes every day and is deleted with the hashes. Counters older than 400 days are deleted. 404 USAGE_NOT_FOR_PROJECT for other project types.'
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -5150,6 +5150,26 @@ paths:
       responses:
         '200': { description: '{ enabled, url, configured }' }
         '400': { description: INVALID_BODY }
+        '404': { description: USAGE_NOT_FOR_PROJECT }
+  /projects/{projectId}/usage/goals:
+    put:
+      tags: [Journey]
+      operationId: setUsageGoals
+      summary: How the success goals of the idea review are counted
+      description: 'Body { goals: [{ metricKey (a goal of the idea review: accepted version, else saved), kind visitors|views|action, name (action name, for kind action), target 1–10 000 000, period week|month }] } (≤ 3, each goal once). The idea review is not changed. The first call creates the collector turned off. GET /projects/{projectId}/usage then returns goals [{ metricKey, text, goal | null, hint { target, period, kind } (read from the goal''s words, for goals without a setting), actual, percent, status not_set|no_data|reached|behind }] over the last 7 days (week) or 30 (month) whatever the report period, and actionNames seen in the last 30 days. Event usage_goals_changed. 400 INVALID_GOALS.'
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { goals: { type: array, items: { type: object } } } }
+      responses:
+        '200': { description: 'The usage report, as GET /projects/{projectId}/usage' }
+        '400': { description: INVALID_GOALS }
         '404': { description: USAGE_NOT_FOR_PROJECT }
   /usage/{token}:
     post:

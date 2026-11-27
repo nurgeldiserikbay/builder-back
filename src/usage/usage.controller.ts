@@ -17,6 +17,11 @@ export class UsageController {
     return this.usage.get(request.user.id, projectId, days);
   }
 
+  @Put('goals')
+  goals(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() body: unknown) {
+    return this.usage.setGoals(request.user.id, projectId, record(body).goals);
+  }
+
   @Put()
   set(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Body() body: unknown) {
     const input = record(body);

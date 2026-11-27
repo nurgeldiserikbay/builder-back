@@ -4306,4 +4306,6 @@ export const en: Record<string, string> = {
   "≈ {0} ч": "≈ {0} h",
   "{0} раб. дн.": "{0} working days",
   "плюс плата сервисов по их тарифам ({0})": "plus the services' own fees ({0})",
+  "Посетители": "Visitors",
+  "Открытия экранов": "Screen views",
 };
