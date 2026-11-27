@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.42.0
+  version: 1.43.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -5122,6 +5122,51 @@ paths:
         '400': { description: REMARK_TEXT_REQUIRED | REMARK_NAME_REQUIRED }
         '404': { description: SHARE_NOT_FOUND }
         '429': { description: REMARK_TOO_MANY }
+  /projects/{projectId}/telegram-group:
+    get:
+      tags: [Telegram]
+      operationId: getTelegramGroup
+      summary: The project's Telegram group
+      description: 'Project members. data: configured, botUsername, group (title, linkedAt, lastSentAt, lastFailedAt) or null, waiting (expiresAt of an unused link) or null, events[] (type, title) that go to the group, canManage (owner or manager). Lines in the group carry only the project name and stage titles; no contents, names, contacts or money.'
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: OK }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/telegram-group/link:
+    post:
+      tags: [Telegram]
+      operationId: linkTelegramGroup
+      summary: A one-time «add to group» link
+      description: 'Owner or manager. data: deepLink (https://t.me/<bot>?startgroup=<code>, valid 30 minutes, once), expiresAt. Telegram opens the group picker and sends /start <code> in the chosen group; the webhook links it (telegram_group_linked) and replies there. Events before the link are not sent. 409 TELEGRAM_GROUP_LINKED, 503 TELEGRAM_NOT_CONFIGURED, 403 TELEGRAM_GROUP_FORBIDDEN.'
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        '503': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/telegram-group/unlink:
+    post:
+      tags: [Telegram]
+      operationId: unlinkTelegramGroup
+      summary: Disconnect the project's Telegram group
+      description: 'Owner or manager. The bot says so in the group (telegram_group_unlinked). The link also ends by itself when the bot is removed from the group. 404 TELEGRAM_GROUP_NOT_LINKED.'
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200': { description: OK }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/usage:
     get:
       tags: [Journey]

@@ -50,7 +50,7 @@ export function canSee(viewer: ActivityViewer, event: { type: string; stageKey: 
 }
 
 /** Details shown in the log: short scalar facts only, never free text, contacts, tokens or file contents. */
-const detailKeys = ['versionNumber', 'sourceStageKey', 'role', 'rating', 'amount', 'status', 'outcome', 'buildVersion', 'approvals', 'byOwner', 'stageKeys', 'baseline', 'to', 'workingDaysLate', 'watermarked', 'enabled'] as const;
+const detailKeys = ['versionNumber', 'sourceStageKey', 'role', 'rating', 'amount', 'status', 'outcome', 'buildVersion', 'approvals', 'byOwner', 'stageKeys', 'baseline', 'to', 'workingDaysLate', 'watermarked', 'enabled', 'byTelegram'] as const;
 export function publicDetails(raw: unknown): Record<string, string | number | boolean | string[]> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
   const input = raw as Record<string, unknown>;
