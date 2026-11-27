@@ -8,7 +8,7 @@ import { ArtifactValidationError, type Brief } from './artifacts.js';
 import type { IdeaReview } from './idea.js';
 import { CAPABILITIES, type BusinessProcess } from './process.js';
 import { situationQuestions } from './situations.js';
-import type { Suggestions } from './suggestions.js';
+import { estimateFirstVersion, estimateText, type Suggestions } from './suggestions.js';
 
 export const CONCEPT_VERSION = '1.0.0';
 export const CONCEPT_LIMITS = { pitch: 600, glossary: 20, term: 40, meaning: 240, questions: 12, question: 240, notes: 1200 };
@@ -171,6 +171,8 @@ export function conceptDocument(input: ConceptInputs, concept: Concept, name: st
   const steps = [...new Set((process?.scenarios ?? []).flatMap((scenario) => scenario.steps).filter((step) => step.capability !== 'offline' && step.capability !== 'other').map((step) => tr(CAPABILITIES[step.capability])))];
   if (steps.length) scope.push(`**${tr('Продукт делает')}**`, ...steps.map((step) => `- ${step}`), '');
   if (now.length) scope.push(`**${tr('Дополнительно в первой версии')}**`, ...now.map((item) => `- ${item.title}${item.value ? ` — ${lower(clean(item.value))}` : ''}`), '');
+  // A rough estimate of the extras, labelled as one: by the kind of work, not a quote.
+  if (now.length && suggestions) scope.push(tr('Оценка дополнительного по типу работы (не смета): {0}.', [estimateText(estimateFirstVersion(suggestions))]), '');
   if (later.length) scope.push(`**${tr('Потом')}**`, ...later.map((item) => `- ${item.title}`));
   add('scope', tr('Первая версия и что потом'), suggestions ? scopeTitle : processTitle, scope, tr('Состав первой версии определится в ТЗ.'));
 

@@ -7,7 +7,7 @@ import { stageRequests, UNSETTLED_REQUESTS } from './stage-requests.js';
 import { conceptDocument, importConceptText, normalizeConcept, slugFile, type Concept, type ConceptInputs } from './concept.js';
 import { markdownToDocx } from './docx.js';
 import { ideaMarkdown, importIdeaText, type IdeaReview } from './idea.js';
-import { importSuggestionsText, normalizeSuggestions, processWithSuggestedSteps, suggestionsMarkdown, type Suggestions } from './suggestions.js';
+import { EFFORT_HOURS, ESTIMATE_LIMITS, importSuggestionsText, normalizeSuggestions, processWithSuggestedSteps, suggestionsMarkdown, type Suggestions } from './suggestions.js';
 import { tr } from '../i18n/i18n.js';
 import { cardFor } from '../choices/cards.js';
 import { assertBrowserGate } from '../quality/browser-gate.js';
@@ -348,7 +348,7 @@ export class JourneyService {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
           ...(definition.artifactType === 'techplan' ? { techplan: { preview: techPlanPreview, outdated: techPlanOutdated } } : {}),
           ...(concept ? { concept } : {}),
-          ...(definition.artifactType === 'suggestions' ? { processSteps: await this.suggestedSteps(ctx, current?.content ?? null) } : {}),
+          ...(definition.artifactType === 'suggestions' ? { processSteps: await this.suggestedSteps(ctx, current?.content ?? null), estimate: await this.estimateOptions(ctx, projectId) } : {}),
           ...(contracts ? { contracts } : {}),
           ...(roadmap ? { roadmap } : {}),
           ...(testplan ? { testplan } : {}),
@@ -1049,6 +1049,22 @@ export class JourneyService {
     if (!ctx || !ctx.route.includes('concept')) return null;
     const version = await this.core.versionContent(this.core.stageOf(ctx, 'concept').currentVersionId);
     return version ? { document: await this.conceptView(ctx, 'concept', version.content), locale: ctx.project.locale } : null;
+  }
+
+  /**
+   * What the estimates of the suggestions are made of: hours per effort, a working day, and — for the owner and managers
+   * only — the hourly rates of specialists already working on the project, to take one as the rate in one tap.
+   */
+  private async estimateOptions(ctx: Awaited<ReturnType<JourneyCore['load']>>, projectId: string) {
+    const manager = ctx.viewer.kind === 'member' && ['owner', 'manager'].includes(ctx.viewer.role);
+    const assignments = manager ? await this.prisma.stageAssignment.findMany({
+      where: { projectId, status: { in: ['active', 'completed'] }, hourlyRateTiyn: { not: null } },
+      select: { email: true, hourlyRateTiyn: true, stage: { select: { stageKey: true } }, user: { select: { name: true } } }, take: 10,
+    }) : [];
+    return {
+      hours: EFFORT_HOURS, hoursPerDay: ESTIMATE_LIMITS.hoursPerDay, maxRate: ESTIMATE_LIMITS.rate,
+      rateHints: assignments.map((item) => ({ label: tr('{0} — {1}', [item.user?.name || item.email, tr(definitionOf(item.stage.stageKey as StageKey).title)]), rate: Math.round(item.hourlyRateTiyn! / 100) })),
+    };
   }
 
   /**

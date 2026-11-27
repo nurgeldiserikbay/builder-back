@@ -346,6 +346,11 @@ export function changedKeys(type: ArtifactType, before: unknown, after: unknown)
  */
 export function mergeProposal(type: ArtifactType, base: unknown | null, proposal: unknown, lockedKeys: string[], targetKey: string | null): unknown {
   if (!base) return proposal;
+  // The developer's rate is the owner's number: an AI or template redraft of the suggestions keeps it.
+  if (type === 'suggestions') {
+    const rate = (base as { rate?: unknown }).rate;
+    if (rate !== undefined && rate !== null && proposal && typeof proposal === 'object' && (proposal as { rate?: unknown }).rate == null) proposal = { ...(proposal as object), rate };
+  }
   const keep = new Set(lockedKeys.filter((key) => key !== targetKey));
   if (type === 'content') {
     const baseContent = base as ContentArtifact;

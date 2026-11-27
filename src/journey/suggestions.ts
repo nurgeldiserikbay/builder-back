@@ -30,7 +30,8 @@ export interface Suggestion {
   key: string; title: string; value: string; basis: string; source: SuggestionSource; catalogKey: string | null;
   support: SuggestionSupport; effort: SuggestionEffort; decision: SuggestionDecision; reason: string;
 }
-export interface Suggestions { items: Suggestion[] }
+/** rate: the developer's hourly rate in tenge the owner entered, for a price next to each estimate; null — hours only. */
+export interface Suggestions { items: Suggestion[]; rate?: number | null }
 
 const SUPPORTS: SuggestionSupport[] = ['site', 'code', 'account', 'not_yet'];
 const EFFORTS: SuggestionEffort[] = ['small', 'medium', 'large'];
@@ -134,13 +135,53 @@ export function normalizeSuggestions(raw: unknown): Suggestions {
       reason: decision === 'now' ? '' : text(item.reason, `items.${index}.reason`, 300),
     });
   });
-  return { items: result };
+  const rate = raw.rate === null || raw.rate === undefined || raw.rate === '' ? null : Number(raw.rate);
+  if (rate !== null && (!Number.isInteger(rate) || rate < 0 || rate > ESTIMATE_LIMITS.rate)) throw new ArtifactValidationError('FIELD_INVALID:rate');
+  return { items: result, ...(rate !== null ? { rate } : {}) };
+}
+
+/**
+ * A rough estimate by the kind of work, not a quote: developer hours with AI help for each effort, working days at
+ * ESTIMATE_LIMITS.hoursPerDay, and a price when the owner entered a rate. What the platform makes on the site takes no
+ * developer time; a service account (payments, messages) has its own fee on top, by its tariff.
+ */
+export const EFFORT_HOURS: Record<SuggestionEffort, [number, number]> = { small: [2, 6], medium: [6, 16], large: [16, 40] };
+export const ESTIMATE_LIMITS = { rate: 1_000_000, hoursPerDay: 6 };
+export interface SuggestionEstimate { hours: [number, number]; days: [number, number]; price: [number, number] | null; byPlatform: boolean; serviceFee: boolean }
+
+const daysOf = (hours: number) => (hours ? Math.max(1, Math.ceil(hours / ESTIMATE_LIMITS.hoursPerDay)) : 0);
+
+export function estimateSuggestion(item: Pick<Suggestion, 'effort' | 'support'>, rate: number | null | undefined): SuggestionEstimate {
+  const byPlatform = item.support === 'site';
+  const hours: [number, number] = byPlatform ? [0, 0] : EFFORT_HOURS[item.effort];
+  return { hours, days: [daysOf(hours[0]), daysOf(hours[1])], price: rate ? [hours[0] * rate, hours[1] * rate] : null, byPlatform, serviceFee: item.support === 'account' };
+}
+
+/** What the first version adds: the sum over «В первую версию». Days assume one developer working in a row. */
+export function estimateFirstVersion(value: Suggestions): { items: number; hours: [number, number]; days: [number, number]; price: [number, number] | null; serviceFees: number } {
+  const now = value.items.filter((item) => item.decision === 'now');
+  const estimates = now.map((item) => estimateSuggestion(item, value.rate));
+  const hours: [number, number] = [estimates.reduce((sum, item) => sum + item.hours[0], 0), estimates.reduce((sum, item) => sum + item.hours[1], 0)];
+  return { items: now.length, hours, days: [daysOf(hours[0]), daysOf(hours[1])], price: value.rate ? [hours[0] * value.rate, hours[1] * value.rate] : null, serviceFees: estimates.filter((item) => item.serviceFee).length };
+}
+
+const money = (value: number) => `${value.toLocaleString('ru-RU').replace(/\u00a0/g, ' ')} ₸`;
+
+/** «≈ 6–16 ч · 1–3 раб. дн. · 24 000 ₸–64 000 ₸», or that the platform does it. */
+export function estimateText(estimate: Pick<SuggestionEstimate, 'hours' | 'days' | 'price'> & { byPlatform?: boolean; serviceFee?: boolean; serviceFees?: number }): string {
+  if (estimate.byPlatform) return tr('делает платформа, без разработчика');
+  const range = ([low, high]: [number, number], show: (value: number) => string | number = (value) => value) => (low === high ? `${show(low)}` : `${show(low)}–${show(high)}`);
+  const parts = [tr('≈ {0} ч', [range(estimate.hours)]), tr('{0} раб. дн.', [range(estimate.days)])];
+  if (estimate.price) parts.push(range(estimate.price, money));
+  if (estimate.serviceFee) parts.push(tr('плюс плата сервиса по его тарифу'));
+  if (estimate.serviceFees) parts.push(tr('плюс плата сервисов по их тарифам ({0})', [estimate.serviceFees]));
+  return parts.join(' · ');
 }
 
 /** Support depends on the project kind; normalization cannot know it, so the template and the AI path fix it here. */
 export function withHonestSupport(value: Suggestions, type: ProjectTypeKey): Suggestions {
   const kind: Kind = type === 'web_app' ? 'app' : 'site';
-  return { items: value.items.map((item) => {
+  return { ...value, items: value.items.map((item) => {
     const entry = catalogEntry(item.catalogKey);
     if (entry) return { ...item, support: entry.support[kind] };
     // The AI cannot promise the platform builds something outside the catalog: at most it goes into the app code.
@@ -225,9 +266,11 @@ export function suggestionsMarkdown(value: Suggestions): string {
     const items = group(decision);
     if (!items.length) continue;
     lines.push(`### ${labels[decision]}`, '');
-    for (const item of items) lines.push(`- **${item.title}** — ${item.value}${item.basis ? ` (${item.basis})` : ''}${item.reason ? `. ${tr('Причина')}: ${item.reason}` : ''}`);
+    for (const item of items) lines.push(`- **${item.title}** — ${item.value}${item.basis ? ` (${item.basis})` : ''}${item.reason ? `. ${tr('Причина')}: ${item.reason}` : ''}${decision === 'no' ? '' : `. ${tr('Оценка')}: ${estimateText(estimateSuggestion(item, value.rate))}`}`);
     lines.push('');
   }
+  const total = estimateFirstVersion(value);
+  if (total.items) lines.push(tr('Первая версия, оценка по типу работы (не смета): {0}.', [estimateText(total)]));
   return lines.join('\n').trim();
 }
 
