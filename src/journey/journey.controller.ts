@@ -478,6 +478,13 @@ export class JourneyController {
     return this.journey.reopen(request.user.id, projectId, stageKey(key));
   }
 
+  /** «Добавить в процесс»: the steps of the suggestions chosen for the first version become a new version of the process. */
+  @Post('projects/:projectId/suggested-steps')
+  @HttpCode(200)
+  addSuggestedSteps(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.journey.addSuggestedSteps(request.user.id, projectId);
+  }
+
   /** The product concept as a file: ?format=md or docx. The PDF is the print page of the web app. */
   @Get('projects/:projectId/stages/concept/document')
   async conceptDocument(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Query('format') format: string | undefined, @Res() response: Download) {

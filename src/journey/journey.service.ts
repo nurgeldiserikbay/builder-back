@@ -7,14 +7,14 @@ import { stageRequests, UNSETTLED_REQUESTS } from './stage-requests.js';
 import { conceptDocument, importConceptText, normalizeConcept, slugFile, type Concept, type ConceptInputs } from './concept.js';
 import { markdownToDocx } from './docx.js';
 import { ideaMarkdown, importIdeaText, type IdeaReview } from './idea.js';
-import { importSuggestionsText, suggestionsMarkdown, type Suggestions } from './suggestions.js';
+import { importSuggestionsText, normalizeSuggestions, processWithSuggestedSteps, suggestionsMarkdown, type Suggestions } from './suggestions.js';
 import { tr } from '../i18n/i18n.js';
 import { cardFor } from '../choices/cards.js';
 import { assertBrowserGate } from '../quality/browser-gate.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { WorktimeService } from './worktime.service.js';
 import { SLOT_STEPS, TIMEZONES, WEEKDAYS, templateSchedule, weekdayShort, type Schedule } from './schedule.js';
-import { capabilitiesFor, PROCESS_LIMITS } from './process.js';
+import { capabilitiesFor, normalizeProcess, PROCESS_LIMITS } from './process.js';
 import { PHASES_VERSION, guideFor, phaseOf, phasesOf } from './phases.js';
 import { TYPE_QUESTIONS, TYPE_QUESTIONS_VERSION, hintAnswers, parseAnswers, suggestType, type TypeAnswers } from './type-suggest.js';
 import { SITUATIONS_VERSION, situationsFor } from './situations.js';
@@ -348,6 +348,7 @@ export class JourneyService {
           palettes, fonts, corners, heroLayouts, sectionTypes: sectionTypeLabels,
           ...(definition.artifactType === 'techplan' ? { techplan: { preview: techPlanPreview, outdated: techPlanOutdated } } : {}),
           ...(concept ? { concept } : {}),
+          ...(definition.artifactType === 'suggestions' ? { processSteps: await this.suggestedSteps(ctx, current?.content ?? null) } : {}),
           ...(contracts ? { contracts } : {}),
           ...(roadmap ? { roadmap } : {}),
           ...(testplan ? { testplan } : {}),
@@ -381,7 +382,7 @@ export class JourneyService {
     };
   }
 
-  async saveDraft(userId: string, projectId: string, key: string, input: { content: unknown; baseVersionId: string | null }) {
+  async saveDraft(userId: string, projectId: string, key: string, input: { content: unknown; baseVersionId: string | null; note?: string }) {
     const ctx = await this.core.load(userId, projectId, 'write', key);
     this.core.assertEditWay(ctx, key, 'manual');
     const stage = this.core.stageOf(ctx, key);
@@ -413,7 +414,7 @@ export class JourneyService {
     const valid = new Set(lockableKeys(definition.artifactType, content));
     const locked = aiLocksFor(definition.artifactType, [...new Set([...stage.lockedKeys, ...changed])].filter((item) => valid.has(item)));
     const version = await this.prisma.$transaction(async (tx) => {
-      const created = await this.core.createVersion(tx, { projectId, stage, artifactType: definition.artifactType, content, origin: 'owner_edit', note: 'Изменено вручную', userId, lockedKeys: locked });
+      const created = await this.core.createVersion(tx, { projectId, stage, artifactType: definition.artifactType, content, origin: 'owner_edit', note: input.note ?? 'Изменено вручную', userId, lockedKeys: locked });
       await this.core.event(tx, projectId, userId, 'stage_draft_saved', key, { versionNumber: created.versionNumber, changed });
       return created;
     });
@@ -1048,6 +1049,44 @@ export class JourneyService {
     if (!ctx || !ctx.route.includes('concept')) return null;
     const version = await this.core.versionContent(this.core.stageOf(ctx, 'concept').currentVersionId);
     return version ? { document: await this.conceptView(ctx, 'concept', version.content), locale: ctx.project.locale } : null;
+  }
+
+  /**
+   * What «Добавить в процесс» would change: the steps the suggestions chosen for the first version add to the business
+   * process, and what cannot be added. available is false when the process has no version or was skipped.
+   */
+  private async suggestedSteps(ctx: Awaited<ReturnType<JourneyCore['load']>>, suggestions: unknown) {
+    if (!ctx.route.includes('process') || !suggestions) return { available: false, added: [], skipped: [], canAdd: false };
+    const process = this.core.stageOf(ctx, 'process');
+    const version = process.status === 'skipped' ? null : await this.core.versionContent(process.currentVersionId);
+    if (!version) return { available: false, added: [], skipped: [], canAdd: false };
+    let chosen: Suggestions;
+    try { chosen = normalizeSuggestions(suggestions); } catch { return { available: false, added: [], skipped: [], canAdd: false }; }
+    const result = inProject(ctx, () => processWithSuggestedSteps(normalizeProcess(version.content), chosen));
+    const canAdd = ctx.viewer.kind === 'member' && ['owner', 'manager'].includes(ctx.viewer.role) && result.added.length > 0;
+    return { available: true, added: result.added, skipped: result.skipped, canAdd, processStatus: process.status };
+  }
+
+  /**
+   * «Добавить в процесс»: the steps of the suggestions chosen for the first version become a new version of the business
+   * process. An accepted process is opened again (the stages built on it keep its accepted version meanwhile); the owner
+   * looks the new steps over and accepts the process again, and the usual change notices follow.
+   */
+  async addSuggestedSteps(userId: string, projectId: string) {
+    const ctx = await this.core.load(userId, projectId, 'accept', 'process');
+    if (!ctx.route.includes('process') || !ctx.route.includes('suggestions')) throw new NotFoundException('STAGE_NOT_FOUND');
+    const process = this.core.stageOf(ctx, 'process');
+    if (process.status === 'skipped') throw new ConflictException('PROCESS_SKIPPED');
+    const suggestions = await this.core.versionContent(this.core.stageOf(ctx, 'suggestions').currentVersionId);
+    const current = await this.core.versionContent(process.currentVersionId);
+    if (!suggestions || !current) throw new BadRequestException('NOTHING_TO_ADD');
+    const result = inProject(ctx, () => processWithSuggestedSteps(normalizeProcess(current.content), normalizeSuggestions(suggestions.content)));
+    if (!result.added.length) throw new BadRequestException('NOTHING_TO_ADD');
+    if (process.status === 'in_review') throw new ConflictException('STAGE_IN_REVIEW');
+    if (process.status === 'approved' || process.status === 'imported') await this.reopen(userId, projectId, 'process');
+    await this.saveDraft(userId, projectId, 'process', { content: result.process, baseVersionId: process.currentVersionId, note: 'Шаги из выбранных предложений' });
+    await this.core.event(this.prisma, projectId, userId, 'suggestion_steps_added', 'process', { steps: result.added.length });
+    return { data: { added: result.added, skipped: result.skipped } };
   }
 
   /** The concept as a file: Markdown or Word. The PDF is the print page in the browser, with the diagrams drawn. */

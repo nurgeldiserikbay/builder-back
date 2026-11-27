@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.37.0
+  version: 1.38.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -5029,6 +5029,23 @@ paths:
         '400': { description: FEEDBACK_TEXT_REQUIRED }
         '404': { description: FEEDBACK_NOT_FOUND }
         '429': { description: FEEDBACK_TOO_MANY }
+  /projects/{projectId}/suggested-steps:
+    post:
+      tags: [Journey]
+      operationId: addSuggestedSteps
+      summary: «Добавить в процесс» — new business-process steps from the suggestions chosen for the first version
+      description: 'Each catalog suggestion with decision now that fills a missing step adds it right after the step it builds on (reminder after booking, online payment after order, owner alert after a request…), in every scenario that has that step and not yet this one; a missing actor (system, client…) is added. Owner''s and AI suggestions add no steps. The current suggestions version is used. An accepted process is reopened (stages built on it keep its accepted version) and gets a new version with note «Шаги из выбранных предложений»; the owner accepts it again and the usual change notices follow. Event suggestion_steps_added. The suggestions stage shows the same as options.processSteps { available, added [{ suggestion, scenario, after, actor, action }], skipped [{ suggestion, reason }], canAdd, processStatus }.'
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'data — added [{ suggestion, scenario, after, actor, action }], skipped [{ suggestion, reason }]' }
+        '400': { description: NOTHING_TO_ADD }
+        '403': { description: STAGE_ACCEPT_FORBIDDEN }
+        '404': { description: STAGE_NOT_FOUND }
+        '409': { description: PROCESS_SKIPPED | STAGE_IN_REVIEW }
   /projects/{projectId}/concept-share:
     get:
       tags: [Journey]
