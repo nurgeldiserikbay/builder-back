@@ -43,6 +43,10 @@ describe('module stages', () => {
     const built: ModuleFacts = { ...base, agent: { taskId: 't', status: 'succeeded', checksFailed: 1 }, tasks: base.tasks.map((task) => ({ ...task, status: 'done', failed: 0, cases: 1 })), cases: [{ ...base.cases[0]!, status: 'passed' }] };
     assert.deepEqual(codes(built), ['blocking:MODULE_CHECKS_FAILED']);
     assert.deepEqual(codes({ ...built, agent: { taskId: 't', status: 'succeeded', checksFailed: 0 } }), []);
+    const audited = (audit: NonNullable<ModuleFacts['agent']>['audit']) => codes({ ...built, agent: { taskId: 't', status: 'succeeded', checksFailed: 0, audit } });
+    assert.deepEqual(audited({ state: 'vulnerable', taskId: 't', critical: 0, high: 1, packages: ['qs'] }), ['blocking:MODULE_VULNERABLE_PACKAGES']);
+    assert.deepEqual(audited({ state: 'unchecked', taskId: 't' }), ['important:MODULE_PACKAGES_NOT_CHECKED']);
+    assert.deepEqual(audited({ state: 'clean', taskId: 't' }), []);
     assert.ok(codes({ ...built, inPlan: false }).includes('blocking:MODULE_NOT_IN_PLAN'));
     // The contract: the module's operations as the platform's probe found them in its last build.
     const probed = (result: string | null) => ({ ...built, agent: { taskId: 't', status: 'succeeded', checksFailed: 0 }, contract: [{ key: 'login', method: 'POST', path: '/api/auth/login', result: 'passed' }, { key: 'view_request', method: 'GET', path: '/api/requests', result }] });

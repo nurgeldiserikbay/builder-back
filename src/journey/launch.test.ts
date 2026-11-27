@@ -32,6 +32,12 @@ describe('launch of a web application', () => {
     assert.deepEqual(codes({ deployment: { url: 'http://app.example.com', ok: true, database: 'memory', checkedAt: '' } }), ['blocking:LAUNCH_NO_HTTPS', 'blocking:LAUNCH_MEMORY_DATABASE']);
     const partly = normalizeLaunch({ items: allDone.items.map((item) => (item.key === 'legal' ? { ...item, status: 'not_needed', note: 'потом' } : item.key === 'domain' ? { ...item, status: 'not_needed' } : item.key === 'audit' ? { ...item, status: 'todo' } : item)) });
     assert.deepEqual(codes({}, partly), ['minor:LAUNCH_ITEM_NO_REASON', 'important:LAUNCH_ITEM_REQUIRED', 'minor:LAUNCH_ITEM_OPEN', 'minor:LAUNCH_NO_AUDIT']);
+    // Known vulnerabilities of the code to launch block; an audit that could not run is said so; a clean one says nothing.
+    const vulnerable = launchIssues(allDone, facts({ audit: { state: 'vulnerable', taskId: 't', critical: 1, high: 2, packages: ['express', 'qs'] } }));
+    assert.deepEqual(vulnerable.map((issue) => `${issue.severity}:${issue.code}`), ['blocking:LAUNCH_VULNERABLE_PACKAGES']);
+    assert.match(vulnerable[0]!.message, /критических 1, высоких 2 \(express, qs\)/);
+    assert.deepEqual(codes({ audit: { state: 'unchecked', taskId: 't' } }), ['important:LAUNCH_PACKAGES_NOT_CHECKED']);
+    assert.deepEqual(codes({ audit: { state: 'clean', taskId: 't' } }), []);
     // Without personal data or money, legal texts and the audit are not demanded.
     assert.equal(launchItems(facts({ features: { sensitivity: 'normal' } as AppFeatures })).find((item) => item.key === 'legal')!.required, false);
   });

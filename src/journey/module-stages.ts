@@ -1,6 +1,7 @@
 // Module stages (PRODUCT_LIFECYCLE §4.9): every module of an application's accepted «План реализации» becomes its own stage
 // m_<module>, after the developer package. A module stage has its own page, its own lead (a specialist or the AI agent) and
 // its own acceptance; a change of the contracts or the plan reaches each module stage as a change notice.
+import { auditFact, type AuditFact } from '../agent/audit-gate.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import { tr } from '../i18n/i18n.js';
 import { ArtifactValidationError } from './artifacts.js';
@@ -82,7 +83,7 @@ export interface ModuleFacts {
   tasks: Array<{ key: string; title: string; status: string; cases: number; passed: number; failed: number; fromCase: string | null }>;
   cases: Array<{ key: string; title: string; task: string; method: string; status: 'passed' | 'failed' | null; stale: boolean }>;
   /** The latest agent task of this module: whether it finished and its platform checks passed. */
-  agent: { taskId: string; status: string; checksFailed: number } | null;
+  agent: { taskId: string; status: string; checksFailed: number; audit?: AuditFact | null } | null;
   /**
    * The module's operations of the accepted contracts and what the platform's probe found for each in the agent's last
    * build of the module: null when that build was not probed (an older task, or the application did not start).
@@ -124,7 +125,7 @@ export async function moduleFacts(db: Pick<Tx, 'planTaskState' | 'planCaseResult
   return {
     moduleKey: input.moduleKey, inPlan: Boolean(module), tasks, cases, contract,
     merge: { state: preview.state, behind: preview.behind, conflicts: preview.conflicts.map((item) => item.path), markers: preview.markers },
-    agent: agentRow ? { taskId: agentRow.id, status: agentRow.status, checksFailed: checks.filter((check) => check.id !== 'cases' && check.id !== 'contract' && check.id !== 'demo' && check.id !== 'audit' && (check.status === 'failed' || check.status === 'timed_out')).length } : null,
+    agent: agentRow ? { taskId: agentRow.id, status: agentRow.status, checksFailed: checks.filter((check) => check.id !== 'cases' && check.id !== 'contract' && check.id !== 'demo' && check.id !== 'audit' && (check.status === 'failed' || check.status === 'timed_out')).length, audit: auditFact(agentRow.id, agentRow.result) } : null,
   };
 }
 
@@ -145,6 +146,10 @@ export function moduleIssues(facts: ModuleFacts): ModuleIssue[] {
   if (failed.length) out.push({ code: 'MODULE_CASES_FAILED', severity: 'blocking', target: facts.moduleKey, message: tr('Не проходят кейсы: {0}.', [failed.slice(0, 5).map((item) => item.title).join('; ')]), fix: tr('Исправьте модуль и запустите проверку снова.') });
   if (!facts.agent || facts.agent.status !== 'succeeded') out.push({ code: 'MODULE_NOT_BUILT', severity: 'important', target: facts.moduleKey, message: tr('Платформа ещё не собирала и не проверяла код этого модуля.'), fix: tr('Поручите модуль ИИ-агенту: после работы платформа соберёт код и запустит тесты.') });
   else if (facts.agent.checksFailed) out.push({ code: 'MODULE_CHECKS_FAILED', severity: 'blocking', target: facts.moduleKey, message: tr('Проверки платформы последней сборки модуля не прошли: {0}.', [facts.agent.checksFailed]), fix: tr('Поручите агенту исправить, что показали проверки.') });
+  // Known vulnerabilities of the module's last build: accepting it means shipping them, so the owner says why or upgrades.
+  const audit = facts.agent?.status === 'succeeded' ? facts.agent.audit : null;
+  if (audit?.state === 'vulnerable') out.push({ code: 'MODULE_VULNERABLE_PACKAGES', severity: 'blocking', target: facts.moduleKey, message: tr('В пакетах последней сборки модуля известные уязвимости: критических {0}, высоких {1} ({2}).', [audit.critical, audit.high, audit.packages.join(', ')]), fix: tr('Попросите ИИ-агента обновить или заменить эти пакеты и соберите модуль заново. Принять модуль как есть можно, только объяснив почему.') });
+  else if (audit?.state === 'unchecked') out.push({ code: 'MODULE_PACKAGES_NOT_CHECKED', severity: 'important', target: facts.moduleKey, message: tr('Уязвимости в пакетах последней сборки модуля не проверены: база уязвимостей npm не ответила.'), fix: tr('Соберите модуль ещё раз, когда база будет доступна, или проверьте пакеты сами (npm audit).') });
   // The contract: what the module promised its neighbours. Checked by the platform's probe of the module's last build.
   const broken = facts.contract.filter((operation) => operation.result && operation.result !== 'passed');
   if (broken.length) out.push({ code: 'MODULE_CONTRACT_FAILED', severity: 'blocking', target: facts.moduleKey, message: tr('Операции не отвечают так, как обещано в контрактах: {0}.', [broken.slice(0, 5).map((operation) => `${operation.method} ${operation.path} — ${contractResultText(operation.result!)}`).join('; ')]), fix: tr('Поручите агенту исправить модуль: операция должна быть, без входа отвечать 401 и не падать.') });

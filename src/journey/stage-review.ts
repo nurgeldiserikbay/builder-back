@@ -747,10 +747,10 @@ export function reviewStage(type: string, content: unknown, context: { features?
       });
     }
     if (type === 'launch' && context.launch) for (const issue of launchIssues(content as LaunchChecklist, context.launch)) push({
-      code: issue.code, severity: issue.severity, category: issue.code === 'LAUNCH_NO_HTTPS' || issue.code === 'LAUNCH_NO_AUDIT' ? 'security' : 'logic', target: issue.target, where: tr('Подготовка к запуску'), message: issue.message, fix: issue.fix,
+      code: issue.code, severity: issue.severity, category: issue.code === 'LAUNCH_NO_HTTPS' || issue.code === 'LAUNCH_NO_AUDIT' || issue.code.startsWith('LAUNCH_VULNERABLE') || issue.code === 'LAUNCH_PACKAGES_NOT_CHECKED' ? 'security' : 'logic', target: issue.target, where: tr('Подготовка к запуску'), message: issue.message, fix: issue.fix,
     });
     if (type === 'module' && context.module) for (const issue of moduleIssues(context.module)) push({
-      code: issue.code, severity: issue.severity, category: 'logic', target: issue.target, where: tr('Модуль'), message: issue.message, fix: issue.fix,
+      code: issue.code, severity: issue.severity, category: issue.code === 'MODULE_VULNERABLE_PACKAGES' || issue.code === 'MODULE_PACKAGES_NOT_CHECKED' ? 'security' : 'logic', target: issue.target, where: tr('Модуль'), message: issue.message, fix: issue.fix,
     });
     if (type === 'testplan') for (const issue of testPlanIssues(content as TestPlan, context.features ?? null, context.design ?? null)) push({
       code: issue.code, severity: issue.severity, category: issue.code === 'TESTPLAN_THREAT_UNCOVERED' || issue.code === 'TESTPLAN_SENSITIVE_UNCOVERED' ? 'security' : 'logic', target: issue.target, where: tr('План проверки'), message: issue.message, fix: issue.fix,
