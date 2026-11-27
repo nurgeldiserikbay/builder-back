@@ -1037,6 +1037,19 @@ export class JourneyService {
     return { ...document, inputs: { process: conceptInputs.process } };
   }
 
+  /**
+   * The concept as the shared link shows it: the current saved version, built as the project owner sees it. null when
+   * the project has no concept stage or nothing is saved yet.
+   */
+  async conceptForShare(projectId: string) {
+    const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { ownerUserId: true } });
+    if (!project) return null;
+    const ctx = await this.core.load(project.ownerUserId, projectId, 'read', 'concept').catch(() => null);
+    if (!ctx || !ctx.route.includes('concept')) return null;
+    const version = await this.core.versionContent(this.core.stageOf(ctx, 'concept').currentVersionId);
+    return version ? { document: await this.conceptView(ctx, 'concept', version.content), locale: ctx.project.locale } : null;
+  }
+
   /** The concept as a file: Markdown or Word. The PDF is the print page in the browser, with the diagrams drawn. */
   async conceptFile(userId: string, projectId: string, format: 'md' | 'docx') {
     const ctx = await this.core.load(userId, projectId, 'read', 'concept');

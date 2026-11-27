@@ -65,7 +65,7 @@ export function publicDetails(raw: unknown): Record<string, string | number | bo
   return out;
 }
 
-export type InboxKind = 'stage_review' | 'stage_changes' | 'change_notice' | 'change_proposal' | 'time_entries' | 'dispute' | 'mention' | 'request_responses' | 'plan_tasks' | 'plan_slip';
+export type InboxKind = 'stage_review' | 'stage_changes' | 'change_notice' | 'change_proposal' | 'time_entries' | 'dispute' | 'mention' | 'request_responses' | 'plan_tasks' | 'plan_slip' | 'guest_remarks';
 export interface InboxItem {
   id: string;
   kind: InboxKind;
@@ -85,7 +85,7 @@ export interface InboxItem {
   text: string | null;
 }
 
-const urgency: Record<InboxKind, number> = { dispute: 0, change_notice: 1, stage_review: 2, stage_changes: 3, plan_slip: 4, change_proposal: 5, plan_tasks: 6, request_responses: 7, time_entries: 8, mention: 9 };
+const urgency: Record<InboxKind, number> = { dispute: 0, change_notice: 1, stage_review: 2, stage_changes: 3, plan_slip: 4, change_proposal: 5, plan_tasks: 6, request_responses: 7, time_entries: 8, mention: 9, guest_remarks: 10 };
 
 /** Overdue first, then by deadline, then by how urgent the kind is, then the oldest. */
 export function orderInbox(items: InboxItem[], now: Date = new Date()): InboxItem[] {

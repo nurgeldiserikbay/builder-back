@@ -1,3 +1,5 @@
+import { ConceptShareController, SharedConceptController } from './concept-share.controller.js';
+import { ConceptShareService } from './concept-share.service.js';
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module.js';
 import { CatalogModule } from '../catalog/catalog.module.js';
@@ -20,8 +22,8 @@ import { PlanScheduleService } from './plan-schedule.service.js';
 
 @Module({
   imports: [AuthModule, CatalogModule],
-  controllers: [JourneyController, InviteInfoController],
-  providers: [JourneyCore, StageAiService, InterviewService, ChangeNoticesService, JourneyService, SpecialistsService, WorktimeService, ChangeDeadlinesService, CommentsService, StageReviewService, ChangeProposalsService, PlaybooksService, RoadmapProgressService, BacklogService, PlanScheduleService],
+  controllers: [JourneyController, InviteInfoController, ConceptShareController, SharedConceptController],
+  providers: [JourneyCore, StageAiService, InterviewService, ChangeNoticesService, JourneyService, SpecialistsService, WorktimeService, ChangeDeadlinesService, CommentsService, StageReviewService, ChangeProposalsService, PlaybooksService, RoadmapProgressService, BacklogService, PlanScheduleService, ConceptShareService],
   exports: [JourneyService, SpecialistsService, WorktimeService, JourneyCore, CommentsService, StageReviewService, InterviewService],
 })
 export class JourneyModule {}

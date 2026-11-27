@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.36.0
+  version: 1.37.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -2742,7 +2742,7 @@ paths:
       x-implementation-status: implemented
       security: [{ sessionCookie: [] }]
       responses:
-        '200': { description: 'data — waiting[] (id, kind: stage_review|stage_changes|change_notice|change_proposal|time_entries|dispute|mention|request_responses|plan_tasks|plan_slip — plan_tasks: unfinished implementation-plan tasks given to this person, one item per project, count, dueAt the nearest task date, text the title when there is one task; plan_slip: for the owner and managers while the plan''s finish is later than promised after they were told, text «promised→forecast» dates, projectId, projectName, projectType, stageKey, since, dueAt, count, who, text), updates[] (id, projectId, projectName, projectType, type, kind, stageKey, createdAt, details, actor { id, name, isMe } or null, unread), unreadUpdates, seenAt' }
+        '200': { description: 'data — waiting[] (id, kind: stage_review|stage_changes|change_notice|change_proposal|time_entries|dispute|mention|request_responses|plan_tasks|plan_slip|guest_remarks — guest_remarks: for the owner and managers, unresolved remarks of readers of the shared concept, one item per project, count, who and text when there is one; plan_tasks: unfinished implementation-plan tasks given to this person, one item per project, count, dueAt the nearest task date, text the title when there is one task; plan_slip: for the owner and managers while the plan''s finish is later than promised after they were told, text «promised→forecast» dates, projectId, projectName, projectType, stageKey, since, dueAt, count, who, text), updates[] (id, projectId, projectName, projectType, type, kind, stageKey, createdAt, details, actor { id, name, isMe } or null, unread), unreadUpdates, seenAt' }
         '401': { description: Not signed in }
   /me/inbox/seen:
     post:
@@ -5029,6 +5029,82 @@ paths:
         '400': { description: FEEDBACK_TEXT_REQUIRED }
         '404': { description: FEEDBACK_NOT_FOUND }
         '429': { description: FEEDBACK_TOO_MANY }
+  /projects/{projectId}/concept-share:
+    get:
+      tags: [Journey]
+      operationId: getConceptShare
+      summary: «Показать другому человеку» — the read-only link to the product concept and the remarks of its readers
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: 'data — enabled, url (PUBLIC_APP_URL/concept/{token}; null before it is turned on or when PUBLIC_APP_URL is not set), configured, allowComments, hiddenSections (default [goals]), views, sections [{ key, title }] of the current concept, comments [{ id, name, section, text, createdAt, resolvedAt }] newest first (≤ 200)' }
+        '403': { description: Not allowed to read the concept stage }
+    put:
+      tags: [Journey]
+      operationId: setConceptShare
+      summary: Turn the link on or off, allow remarks, hide sections, or give it a new address
+      description: 'Body { enabled?, allowComments?, hiddenSections? (≤ 20 section keys), renew? }. The link shows the current saved concept as the project owner sees it, without hidden sections (their diagrams and the whole Markdown are left out). renew makes a new token and resets views: the old link stops at once. Owner or manager; event concept_share_changed. 400 NOTHING_TO_SHARE before the concept is saved, INVALID_SECTIONS, INVALID_BODY.'
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Same as GET }
+        '400': { description: NOTHING_TO_SHARE | INVALID_SECTIONS | INVALID_BODY }
+        '403': { description: STAGE_ACCEPT_FORBIDDEN }
+  /projects/{projectId}/concept-share/remarks/{commentId}/{action}:
+    post:
+      tags: [Journey]
+      operationId: resolveConceptRemark
+      summary: Mark a reader's remark «Учтено» (resolve) or open it again (reopen)
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: commentId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: action, in: path, required: true, schema: { type: string, enum: [resolve, reopen] } }
+      responses:
+        '200': { description: Same as GET of the link }
+        '400': { description: INVALID_ACTION }
+        '404': { description: COMMENT_NOT_FOUND }
+  /shared-concept/{token}:
+    get:
+      tags: [Journey]
+      operationId: readSharedConcept
+      summary: The product concept for a reader without an account (public)
+      description: 'data — document { title, sections, diagrams, inputs { process } } without hidden sections, allowComments, locale. Each opening adds one to views; nothing about the reader is kept. Answer carries X-Robots-Tag noindex. An unknown, turned-off or replaced link, or a project without a saved concept, is 404 SHARE_NOT_FOUND.'
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: The shared document }
+        '404': { description: SHARE_NOT_FOUND }
+  /shared-concept/{token}/remarks:
+    post:
+      tags: [Journey]
+      operationId: remarkSharedConcept
+      summary: A reader leaves a remark on the shared concept (public)
+      description: 'Body { name (1–60), text (3–1000), section? (a shown section key), website (must stay empty: a filled one is a bot — answered 201, nothing stored) }. Plain text, shown to the team only; event concept_guest_remark. Limits: 10 an hour from one address, 100 a day per link (429 REMARK_TOO_MANY). 404 SHARE_NOT_FOUND when remarks are off.'
+      x-implementation-status: implemented
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { name: { type: string }, text: { type: string }, section: { type: string }, website: { type: string } } }
+      responses:
+        '201': { description: '{ ok: true }' }
+        '400': { description: REMARK_TEXT_REQUIRED | REMARK_NAME_REQUIRED }
+        '404': { description: SHARE_NOT_FOUND }
+        '429': { description: REMARK_TOO_MANY }
   /projects/{projectId}/usage:
     get:
       tags: [Journey]

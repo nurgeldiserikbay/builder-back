@@ -45,7 +45,7 @@ export class InboxService {
       items.push({ dueAt: null, count: 1, who: null, text: null, ...item, projectName: project.name, projectType: project.projectType });
     };
 
-    const [reviews, returned, notices, proposals, hours, disputes, mentions, requests, myTasks, slips] = await Promise.all([
+    const [reviews, returned, notices, proposals, hours, disputes, mentions, requests, myTasks, slips, remarks] = await Promise.all([
       // Stages waiting for acceptance, unless this person already gave their approval for the current version.
       managed.length ? this.prisma.projectStage.findMany({
         where: { projectId: { in: managed }, status: 'in_review' },
@@ -113,6 +113,12 @@ export class InboxService {
         where: { projectId: { in: managed }, notifiedFinish: { not: null } },
         select: { projectId: true, baselineFinish: true, forecastFinish: true, notifiedFinish: true, checkedAt: true },
       }) : [],
+      // Remarks readers of the shared concept left and nobody marked «Учтено» yet: the owner and managers look at them.
+      managed.length ? this.prisma.guestComment.findMany({
+        where: { resolvedAt: null, share: { projectId: { in: managed } } },
+        orderBy: { createdAt: 'asc' },
+        select: { createdAt: true, text: true, name: true, share: { select: { projectId: true } } },
+      }) : [],
     ]);
 
     for (const stage of reviews) {
@@ -172,6 +178,13 @@ export class InboxService {
       if (slip.forecastFinish <= slip.baselineFinish) continue;
       push({ id: `slip:${slip.projectId}:${slip.forecastFinish.toISOString().slice(0, 10)}`, kind: 'plan_slip', projectId: slip.projectId, stageKey: 'roadmap', since: slip.checkedAt.toISOString(),
         text: `${slip.baselineFinish.toISOString().slice(0, 10)}→${slip.forecastFinish.toISOString().slice(0, 10)}` });
+    }
+
+    const remarksByProject = new Map<string, typeof remarks>();
+    for (const remark of remarks) remarksByProject.set(remark.share.projectId, [...(remarksByProject.get(remark.share.projectId) ?? []), remark]);
+    for (const [projectId, list] of remarksByProject) {
+      push({ id: `remarks:${projectId}:${list.length}`, kind: 'guest_remarks', projectId, stageKey: 'concept', since: list[0]!.createdAt.toISOString(), count: list.length,
+        who: list.length === 1 ? list[0]!.name : null, text: list.length === 1 ? quote(list[0]!.text) : null });
     }
 
     const updates = await this.updates(userId, memberships, assignments);
