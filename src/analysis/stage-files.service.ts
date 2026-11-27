@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException, UnprocessableEntityException } from '@nestjs/common';
+import { WatermarkError, watermarkFile, watermarkLabel } from '../journey/watermark.js';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service.js';
 import { tr } from '../i18n/i18n.js';
@@ -126,7 +127,22 @@ export class StageFilesService {
     // A specialist downloads what others uploaded only when the owner allowed it; their own files always.
     const assignment = this.core.assignmentFor(ctx, key);
     if (assignment && !assignment.scope.allowDownload && row.createdByUserId !== userId) throw new ForbiddenException('DOWNLOAD_NOT_ALLOWED');
-    return { name: row.name, mime: row.kind === 'text' ? 'text/plain; charset=utf-8' : row.mime, data: Buffer.from(row.data), etag: row.sha256 };
+    const mime = row.kind === 'text' ? 'text/plain; charset=utf-8' : row.mime;
+    if (!assignment) return { name: row.name, mime, data: Buffer.from(row.data), etag: row.sha256 };
+    // A specialist's download: marked with their address and the time when the owner asked for it, and always written down.
+    let data: Buffer = Buffer.from(row.data);
+    let marked = false;
+    if (assignment.scope.watermark && row.createdByUserId !== userId) {
+      const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+      try {
+        ({ data, marked } = await watermarkFile({ kind: row.kind, mime: row.mime, name: row.name, data }, watermarkLabel(user?.email ?? userId, new Date())));
+      } catch (error) {
+        if (error instanceof WatermarkError) throw new UnprocessableEntityException('WATERMARK_FAILED');
+        throw error;
+      }
+    }
+    await this.prisma.$transaction((tx) => this.core.event(tx, projectId, userId, 'stage_file_downloaded', key, { fileId, name: row.name, watermarked: marked }));
+    return { name: row.name, mime, data, etag: marked ? createHash('sha256').update(data).digest('hex') : row.sha256 };
   }
 
   async remove(userId: string, projectId: string, key: string, fileId: string) {

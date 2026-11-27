@@ -165,7 +165,7 @@ export class JourneyController {
 
   @Post('projects/:projectId/stages/:stageKey/assignments')
   async invite(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('stageKey') key: string, @Body() raw: unknown) {
-    const input = body(raw, ['email', 'profileId', 'role', 'aiBudget', 'payKind', 'fixedAmount', 'hourlyRate', 'hourLimit', 'weeklyHourLimit', 'revisionsIncluded', 'onlyResultTime', 'access']);
+    const input = body(raw, ['email', 'profileId', 'role', 'aiBudget', 'payKind', 'fixedAmount', 'hourlyRate', 'hourLimit', 'weeklyHourLimit', 'revisionsIncluded', 'onlyResultTime', 'access', 'confidentiality']);
     // From the catalog the owner picks a profile; the address stays on the server and is never shown in the catalog.
     if ((input.email === undefined) === (input.profileId === undefined)) throw new BadRequestException('INVITE_EMAIL_OR_PROFILE');
     const email = input.profileId !== undefined ? await this.specialistCatalog.emailForInvite(String(input.profileId)) : text(input.email, 'email', 3, 254)!;
@@ -173,13 +173,32 @@ export class JourneyController {
     if (input.role !== 'lead' && input.role !== 'consultant') throw new BadRequestException('INVALID_ROLE');
     const aiBudget = input.aiBudget ?? null;
     if (aiBudget !== null && (!Number.isInteger(aiBudget) || (aiBudget as number) < 0 || (aiBudget as number) > 1000)) throw new BadRequestException('INVALID_AIBUDGET');
-    return this.specialists.invite(request.user.id, projectId, stageKey(key), { email, role: input.role, aiBudget: aiBudget as number | null, terms: termsInput(input), access: input.access });
+    return this.specialists.invite(request.user.id, projectId, stageKey(key), { email, role: input.role, aiBudget: aiBudget as number | null, terms: termsInput(input), access: input.access, confidentiality: input.confidentiality });
   }
 
   /** What the specialist can see and do: { extraReadStages?, hiddenParts?, allowDownload?, readDays?, editMode? }; applies at once. */
   @Put('projects/:projectId/assignments/:assignmentId/access')
   updateAccess(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('assignmentId') assignmentId: string, @Body() raw: unknown) {
     return this.specialists.updateAccess(request.user.id, projectId, assignmentId, raw);
+  }
+
+  /** Confidentiality terms of an assignment: { text: null | true | string }. A changed text closes the stage until accepted. */
+  @Put('projects/:projectId/assignments/:assignmentId/confidentiality')
+  setConfidentiality(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('assignmentId') assignmentId: string, @Body() raw: unknown) {
+    return this.specialists.setConfidentiality(request.user.id, projectId, assignmentId, raw);
+  }
+
+  /** The specialist's terms in this project still to accept. */
+  @Get('projects/:projectId/confidentiality')
+  pendingConfidentiality(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string) {
+    return this.specialists.pendingConfidentiality(request.user.id, projectId);
+  }
+
+  /** { hash } of the text the specialist read. */
+  @Post('projects/:projectId/assignments/:assignmentId/confidentiality/accept')
+  @HttpCode(200)
+  acceptConfidentiality(@Req() request: AuthenticatedRequest, @Param('projectId') projectId: string, @Param('assignmentId') assignmentId: string, @Body() raw: unknown) {
+    return this.specialists.acceptConfidentiality(request.user.id, projectId, assignmentId, raw);
   }
 
   /** A specialist proposes to change an accepted input of their stage: { targetStageKey, text }. */
@@ -253,8 +272,8 @@ export class JourneyController {
 
   @Post('invites/:token/accept')
   @HttpCode(200)
-  acceptInvite(@Req() request: AuthenticatedRequest, @Param('token') token: string) {
-    return this.specialists.accept(request.user.id, request.user.email, token);
+  acceptInvite(@Req() request: AuthenticatedRequest, @Param('token') token: string, @Body() raw: unknown) {
+    return this.specialists.accept(request.user.id, request.user.email, token, raw);
   }
 
   @Get('me/assignments')

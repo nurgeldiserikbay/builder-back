@@ -7,6 +7,7 @@ import { escapeHtml } from './site-renderer.js';
 import { routeInputs, type StageKey, definitionOf } from './catalog.js';
 import { DEFAULT_SCOPE, HIDEABLE_PARTS, editModesFor, hideableFor, parseScope, scopeLines, scopeOf, type AccessScope } from './access-scope.js';
 import { BillingService } from '../billing/billing.service.js';
+import { confidentialityHash, confidentialityPending, confidentialitySelect, confidentialityView, defaultConfidentiality, readConfidentiality } from './confidentiality.js';
 import { reviewState } from '../catalog/catalog-rules.js';
 
 const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -91,6 +92,13 @@ const TIME_RULES = [
   'Когда лимит часов закончится, учёт остановится, пока владелец его не увеличит.',
 ];
 
+/** The hash of the terms text the specialist read, from { confidentialityHash } or { hash }. */
+function hashOf(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const value = (raw as Record<string, unknown>).confidentialityHash ?? (raw as Record<string, unknown>).hash;
+  return typeof value === 'string' && /^[0-9a-f]{64}$/.test(value) ? value : null;
+}
+
 @Injectable()
 export class SpecialistsService {
   constructor(private readonly prisma: PrismaService, private readonly billing: BillingService) {}
@@ -138,7 +146,7 @@ export class SpecialistsService {
     if (!isUuid(assignmentId)) throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
     const row = await this.prisma.stageAssignment.findFirst({
       where: { id: assignmentId, projectId, status: { in: ['invited', 'active', 'completed'] } },
-      select: { id: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, editMode: true, completedAt: true, status: true, stage: { select: { stageKey: true } } },
+      select: { id: true, extraReadStages: true, hiddenParts: true, allowDownload: true, watermark: true, readDays: true, editMode: true, completedAt: true, status: true, stage: { select: { stageKey: true } } },
     });
     if (!row) throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
     const scope = parseScope(raw, this.scopeContext(project, row.stage.stageKey), scopeOf(row));
@@ -155,16 +163,17 @@ export class SpecialistsService {
     const { project, stage } = await this.manager(userId, projectId, stageKey);
     const rows = await this.prisma.stageAssignment.findMany({
       where: { stageId: stage!.id, status: { not: 'revoked' } }, orderBy: { createdAt: 'desc' },
-      select: { id: true, userId: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, editMode: true, user: { select: { name: true, specialistProfile: { select: { id: true, displayName: true, published: true } } } }, review: { select: { rating: true, text: true, reply: true, createdAt: true, authorUserId: true, hiddenAt: true, moderationNote: true } }, ...termsSelect },
+      select: { id: true, userId: true, email: true, role: true, status: true, aiBudget: true, aiUsed: true, inviteExpiresAt: true, acceptedAt: true, completedAt: true, readUntil: true, extraReadStages: true, hiddenParts: true, allowDownload: true, watermark: true, readDays: true, editMode: true, user: { select: { name: true, specialistProfile: { select: { id: true, displayName: true, published: true } } } }, ...confidentialitySelect, review: { select: { rating: true, text: true, reply: true, createdAt: true, authorUserId: true, hiddenAt: true, moderationNote: true } }, ...termsSelect },
     });
     return {
       data: {
-        assignments: rows.map(({ user, review, userId: specialistId, payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime, extraReadStages, hiddenParts, allowDownload, readDays, editMode, ...row }) => {
-          const access = scopeOf({ extraReadStages, hiddenParts, allowDownload, readDays, editMode });
+        assignments: rows.map(({ user, review, userId: specialistId, confidentialityText, confidentialityAcceptedHash, confidentialityAcceptedAt, payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime, extraReadStages, hiddenParts, allowDownload, watermark, readDays, editMode, ...row }) => {
+          const access = scopeOf({ extraReadStages, hiddenParts, allowDownload, watermark, readDays, editMode });
           const terms = termsView({ payKind, fixedAmountTiyn, hourlyRateTiyn, hourLimit, weeklyHourLimit, revisionsIncluded, onlyResultTime });
           const profile = user?.specialistProfile?.published ? user.specialistProfile : null;
           return {
             ...row, name: profile?.displayName ?? user?.name ?? null, profileId: profile?.id ?? null, inviteExpired: row.status === 'invited' && row.inviteExpiresAt < new Date(), terms, termsText: termsText(terms), access, accessText: scopeLines(access),
+            confidentiality: confidentialityView({ confidentialityText, confidentialityAcceptedHash, confidentialityAcceptedAt }),
             review: review ? { rating: review.rating, text: review.text, reply: review.reply, hidden: Boolean(review.hiddenAt), moderationNote: review.hiddenAt ? review.moderationNote : null } : null,
             canReview: !review?.hiddenAt && reviewState({ status: row.status, userId: specialistId }, review, userId).allowed,
           };
@@ -172,13 +181,15 @@ export class SpecialistsService {
         roles: roleAccess,
         accessOptions: this.scopeOptions(project, stageKey),
         defaultAccess: DEFAULT_SCOPE,
+        defaultConfidentiality: defaultConfidentiality(),
       },
     };
   }
 
-  async invite(userId: string, projectId: string, stageKey: string, input: { email: string; role: 'lead' | 'consultant'; aiBudget: number | null; terms: SpecialistTerms; access?: unknown }) {
+  async invite(userId: string, projectId: string, stageKey: string, input: { email: string; role: 'lead' | 'consultant'; aiBudget: number | null; terms: SpecialistTerms; access?: unknown; confidentiality?: unknown }) {
     const { project, stage } = await this.manager(userId, projectId, stageKey);
     const scope = parseScope(input.access, this.scopeContext(project, stageKey));
+    const confidentialityText = readConfidentiality(input.confidentiality);
     if (!['active', 'live'].includes(project.status)) throw new ConflictException('PROJECT_NOT_ACTIVE');
     if (stage!.status === 'approved' || stage!.status === 'imported') throw new ConflictException('STAGE_ACCEPTED_REOPEN_FIRST');
     await this.billing.assertCanInviteSpecialists(projectId);
@@ -192,11 +203,11 @@ export class SpecialistsService {
     const token = randomBytes(24).toString('base64url');
     const assignment = await this.prisma.$transaction(async (tx) => {
       const created = await tx.stageAssignment.create({
-        data: { projectId, stageId: stage!.id, email, role: input.role, inviteTokenHash: digest(token), inviteExpiresAt: new Date(Date.now() + INVITE_TTL_MS), aiBudget: input.aiBudget, invitedByUserId: userId, ...termsData(input.terms), ...scope },
+        data: { projectId, stageId: stage!.id, email, role: input.role, inviteTokenHash: digest(token), inviteExpiresAt: new Date(Date.now() + INVITE_TTL_MS), aiBudget: input.aiBudget, invitedByUserId: userId, ...termsData(input.terms), ...scope, confidentialityText },
         select: { id: true, email: true, role: true, status: true, aiBudget: true, inviteExpiresAt: true },
       });
       if (input.role === 'lead' && stage!.status === 'ready') await tx.projectStage.update({ where: { id: stage!.id }, data: { status: 'awaiting_lead' } });
-      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'specialist_invited', stageKey, details: { assignmentId: created.id, role: input.role, aiBudget: input.aiBudget, payKind: input.terms.payKind, ...scope } } });
+      await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'specialist_invited', stageKey, details: { assignmentId: created.id, role: input.role, aiBudget: input.aiBudget, payKind: input.terms.payKind, ...scope, confidentiality: confidentialityText !== null } } });
       return created;
     });
     const appUrl = process.env.PUBLIC_APP_URL ?? 'http://localhost:3000';
@@ -226,7 +237,7 @@ export class SpecialistsService {
     const assignment = await this.prisma.stageAssignment.findUnique({
       where: { inviteTokenHash: digest(token) },
       select: {
-        id: true, email: true, role: true, status: true, aiBudget: true, inviteExpiresAt: true, userId: true, projectId: true, stageId: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, editMode: true, ...termsSelect,
+        id: true, email: true, role: true, status: true, aiBudget: true, inviteExpiresAt: true, userId: true, projectId: true, stageId: true, extraReadStages: true, hiddenParts: true, allowDownload: true, watermark: true, readDays: true, editMode: true, ...termsSelect, ...confidentialitySelect,
         stage: { select: { stageKey: true, status: true } },
         project: { select: { name: true, owner: { select: { name: true, email: true } } } },
       },
@@ -247,12 +258,13 @@ export class SpecialistsService {
         can: [...roleAccess[invite.role].forSpecialist.can, ...lines.can], cannot: [...roleAccess.cannot.map((item) => (invite.extraReadStages.length && item === 'Видеть другие этапы проекта' ? 'Видеть остальные этапы проекта' : item)), ...lines.cannot], afterAcceptance: lines.afterAcceptance,
         aiBudget: invite.aiBudget, email: maskEmail(invite.email), status: invite.status,
         terms: termsView(invite), termsText: termsText(termsView(invite)), timeRules: TIME_RULES,
+        confidentiality: invite.confidentialityText === null ? null : { text: invite.confidentialityText, hash: confidentialityHash(invite.confidentialityText) },
         expired: invite.status === 'invited' && invite.inviteExpiresAt < new Date(), projectId: invite.status === 'active' ? invite.projectId : null,
       },
     };
   }
 
-  async accept(userId: string, userEmail: string, token: string) {
+  async accept(userId: string, userEmail: string, token: string, raw?: unknown) {
     const invite = await this.byToken(token);
     if (invite.status === 'active' && invite.userId === userId) return { data: { projectId: invite.projectId, stageKey: invite.stage.stageKey } };
     if (invite.status !== 'invited') throw new GoneException('INVITE_NOT_AVAILABLE');
@@ -261,11 +273,15 @@ export class SpecialistsService {
     if (userEmail.trim().toLowerCase() !== invite.email) throw new ForbiddenException('INVITE_EMAIL_MISMATCH');
     const member = await this.prisma.projectMember.findFirst({ where: { projectId: invite.projectId, userId, status: 'active' }, select: { id: true } });
     if (member) throw new ConflictException('ALREADY_PROJECT_MEMBER');
+    // Terms in the invitation are accepted together with it, by the exact text the specialist read.
+    const hash = invite.confidentialityText === null ? null : confidentialityHash(invite.confidentialityText);
+    if (hash !== null && hashOf(raw) !== hash) throw new ConflictException('CONFIDENTIALITY_NOT_ACCEPTED');
     await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.stageAssignment.updateMany({ where: { id: invite.id, status: 'invited' }, data: { status: 'active', userId, acceptedAt: new Date() } });
+      const now = new Date();
+      const updated = await tx.stageAssignment.updateMany({ where: { id: invite.id, status: 'invited', confidentialityText: invite.confidentialityText }, data: { status: 'active', userId, acceptedAt: now, ...(hash ? { confidentialityAcceptedHash: hash, confidentialityAcceptedAt: now } : {}) } });
       if (updated.count !== 1) throw new GoneException('INVITE_NOT_AVAILABLE');
       if (invite.role === 'lead' && invite.stage.status === 'awaiting_lead') await tx.projectStage.update({ where: { id: invite.stageId }, data: { status: 'ready' } });
-      await tx.projectEvent.create({ data: { projectId: invite.projectId, actorUserId: userId, type: 'specialist_joined', stageKey: invite.stage.stageKey, details: { assignmentId: invite.id, role: invite.role } } });
+      await tx.projectEvent.create({ data: { projectId: invite.projectId, actorUserId: userId, type: 'specialist_joined', stageKey: invite.stage.stageKey, details: { assignmentId: invite.id, role: invite.role, ...(hash ? { confidentialityHash: hash } : {}) } } });
     });
     return { data: { projectId: invite.projectId, stageKey: invite.stage.stageKey } };
   }
@@ -273,13 +289,68 @@ export class SpecialistsService {
   async mine(userId: string) {
     const rows = await this.prisma.stageAssignment.findMany({
       where: { userId, OR: [{ status: 'active' }, { status: 'completed', readUntil: { gt: new Date() } }] }, orderBy: { updatedAt: 'desc' }, take: 100,
-      select: { id: true, role: true, status: true, aiBudget: true, aiUsed: true, readUntil: true, projectId: true, project: { select: { name: true } }, stage: { select: { stageKey: true, status: true } } },
+      select: { id: true, role: true, status: true, aiBudget: true, aiUsed: true, readUntil: true, projectId: true, ...confidentialitySelect, project: { select: { name: true } }, stage: { select: { stageKey: true, status: true } } },
     });
     return {
       data: rows.map((row) => ({
         id: row.id, projectId: row.projectId, projectName: row.project.name, stageKey: row.stage.stageKey, stageTitle: definitionOf(row.stage.stageKey as StageKey)?.title ?? row.stage.stageKey,
-        stageStatus: row.stage.status, role: row.role, roleTitle: roleAccess[row.role].title, status: row.status, aiBudget: row.aiBudget, aiUsed: row.aiUsed, readUntil: row.readUntil,
+        stageStatus: row.stage.status, role: row.role, roleTitle: roleAccess[row.role].title, status: row.status, aiBudget: row.aiBudget, aiUsed: row.aiUsed, readUntil: row.readUntil, confidentialityPending: confidentialityPending(row),
       })),
     };
+  }
+
+  /** Owner or manager: { text: null | true | string } — turns the terms off, on with the template, or sets the text. */
+  async setConfidentiality(userId: string, projectId: string, assignmentId: string, raw: unknown) {
+    await this.manager(userId, projectId);
+    if (!isUuid(assignmentId)) throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
+    const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
+    if (Object.keys(input).some((key) => key !== 'text')) throw new BadRequestException('CONFIDENTIALITY_INVALID');
+    const text = readConfidentiality(input.text);
+    const row = await this.prisma.stageAssignment.findFirst({ where: { id: assignmentId, projectId, status: { in: ['invited', 'active', 'completed'] } }, select: { id: true, stage: { select: { stageKey: true } }, ...confidentialitySelect } });
+    if (!row) throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
+    if (row.confidentialityText !== text) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.stageAssignment.update({ where: { id: row.id }, data: { confidentialityText: text } });
+        await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'specialist_confidentiality_changed', stageKey: row.stage.stageKey, details: { assignmentId: row.id, enabled: text !== null, ...(text !== null ? { hash: confidentialityHash(text) } : {}) } } });
+      });
+    }
+    return { data: { id: row.id, confidentiality: confidentialityView({ ...row, confidentialityText: text }) } };
+  }
+
+  /** The specialist: terms in this project still to accept before the stage opens. */
+  async pendingConfidentiality(userId: string, projectId: string) {
+    if (!isUuid(projectId)) throw new NotFoundException('PROJECT_NOT_FOUND');
+    const now = new Date();
+    const rows = await this.prisma.stageAssignment.findMany({
+      where: { projectId, userId, OR: [{ status: 'active' }, { status: 'completed', readUntil: { gt: now } }], confidentialityText: { not: null } },
+      select: { id: true, project: { select: { name: true, owner: { select: { name: true, email: true } } } }, stage: { select: { stageKey: true } }, ...confidentialitySelect },
+    });
+    const pending = rows.filter((row) => confidentialityPending(row));
+    if (!rows.length && !(await this.prisma.stageAssignment.count({ where: { projectId, userId } }))) throw new NotFoundException('PROJECT_NOT_FOUND');
+    return {
+      data: {
+        projectName: rows[0]?.project.name ?? null,
+        invitedBy: rows[0] ? rows[0].project.owner.name ?? maskEmail(rows[0].project.owner.email) : null,
+        pending: pending.map((row) => ({ assignmentId: row.id, stageKey: row.stage.stageKey, stageTitle: definitionOf(row.stage.stageKey as StageKey)?.title ?? row.stage.stageKey, ...confidentialityView(row)! })),
+      },
+    };
+  }
+
+  /** The specialist accepts the current text: { hash } must name the text they read. */
+  async acceptConfidentiality(userId: string, projectId: string, assignmentId: string, raw: unknown) {
+    if (!isUuid(projectId) || !isUuid(assignmentId)) throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
+    const row = await this.prisma.stageAssignment.findFirst({ where: { id: assignmentId, projectId, userId, status: { in: ['active', 'completed'] } }, select: { id: true, stage: { select: { stageKey: true } }, ...confidentialitySelect } });
+    if (!row || row.confidentialityText === null) throw new NotFoundException('ASSIGNMENT_NOT_FOUND');
+    const hash = confidentialityHash(row.confidentialityText);
+    if (hashOf(raw) !== hash) throw new ConflictException('CONFIDENTIALITY_CHANGED');
+    if (row.confidentialityAcceptedHash !== hash) {
+      const now = new Date();
+      await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.stageAssignment.updateMany({ where: { id: row.id, confidentialityText: row.confidentialityText }, data: { confidentialityAcceptedHash: hash, confidentialityAcceptedAt: now } });
+        if (updated.count !== 1) throw new ConflictException('CONFIDENTIALITY_CHANGED');
+        await tx.projectEvent.create({ data: { projectId, actorUserId: userId, type: 'specialist_confidentiality_accepted', stageKey: row.stage.stageKey, details: { assignmentId: row.id, hash } } });
+      });
+    }
+    return { data: { assignmentId: row.id, stageKey: row.stage.stageKey } };
   }
 }
