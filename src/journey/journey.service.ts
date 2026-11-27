@@ -1,4 +1,5 @@
 import { pathsMarkdown, type CustomerPaths, actionAvailable, pathActions, pathSources, PATH_ACTION_LABELS, PATH_SOURCE_LABELS, PATHS_LIMITS } from './paths.js';
+import { watermarkLabel } from './watermark.js';
 import { launchItems, launchMarkdown, normalizeLaunch } from './launch.js';
 import { CASE_CLASSES, CASE_METHODS, TESTPLAN_LIMITS, normalizeTestPlan, templateTestPlan, testPlanMarkdown, type TestPlan } from './testplan.js';
 import { EXECUTORS, ROADMAP_LIMITS, normalizeRoadmap, roadmapMarkdown, scheduleOf, templateRoadmap, type Roadmap } from './roadmap.js';
@@ -319,7 +320,9 @@ export class JourneyService {
         })),
         // Results the owner opened to this specialist beyond the stage's inputs (read-only).
         extraReads: Object.entries(extras).map(([extraKey, value]) => ({ key: extraKey, title: this.core.title(ctx, extraKey as StageKey), versionNumber: value.versionNumber, content: value.content })),
-        access: assignment ? { hiddenParts: assignment.scope.hiddenParts, allowDownload: assignment.scope.allowDownload, readDays: assignment.scope.readDays, editMode: assignment.scope.editMode } : null,
+        access: assignment ? { hiddenParts: assignment.scope.hiddenParts, allowDownload: assignment.scope.allowDownload, watermark: assignment.scope.watermark, readDays: assignment.scope.readDays, editMode: assignment.scope.editMode } : null,
+        // The mark drawn over the stage screen for a specialist whose owner turned watermarks on.
+        watermark: assignment?.scope.watermark ? watermarkLabel((await this.prisma.user.findUnique({ where: { id: userId }, select: { email: true } }))?.email ?? userId, new Date()) : null,
         current: current ? {
           id: current.id, versionNumber: current.versionNumber, origin: current.origin, note: current.note, createdAt: current.createdAt,
           content: site ? { checks: site.checks, quality: site.quality ?? null, compiledAt: site.compiledAt, sourceVersionIds: site.sourceVersionIds }

@@ -1,4 +1,5 @@
 import { inLocale, money, tr, type Message } from '../i18n/i18n.js';
+import { confidentialityPending } from './confidentiality.js';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../database/prisma.service.js';
 import { sendTelegramMessage, telegramConfig } from '../notifications/telegram.js';
@@ -59,7 +60,9 @@ export class WorktimeService {
 
 
   private async activeAssignment(userId: string, projectId: string, stageKey: string) {
-    return this.prisma.stageAssignment.findFirst({ where: { projectId, userId, status: 'active', stage: { stageKey } }, select: { id: true } });
+    const row = await this.prisma.stageAssignment.findFirst({ where: { projectId, userId, status: 'active', stage: { stageKey } }, select: { id: true, confidentialityText: true, confidentialityAcceptedHash: true } });
+    // Time is not counted while the stage is closed for unaccepted confidentiality terms.
+    return row && !confidentialityPending(row) ? { id: row.id } : null;
   }
 
   /** Heartbeat from an open stage page with recent input. A no-op for anyone without an active assignment on the stage. */

@@ -1164,6 +1164,13 @@ model StageAssignment {
   readDays        Int                   @default(7) @map("read_days")
   /// How the lead may change the stage: both (by hand and through the AI), ai_only, manual_only.
   editMode        String                @default("both") @map("edit_mode") @db.VarChar(12)
+  /// Files the specialist downloads (photos, PDF, text) and the stage screen carry their address and the date.
+  watermark       Boolean               @default(false)
+  /// Confidentiality terms the specialist accepts before entering the stage; null — none. Changed terms close access
+  /// until the new text is accepted: the accepted text is identified by its SHA-256.
+  confidentialityText         String?   @map("confidentiality_text") @db.VarChar(4000)
+  confidentialityAcceptedHash String?   @map("confidentiality_accepted_hash") @db.VarChar(64)
+  confidentialityAcceptedAt   DateTime? @map("confidentiality_accepted_at") @db.Timestamptz(3)
   timeEntries     TimeEntry[]
   payments        StagePayment[]
   disputes        Dispute[]

@@ -6,6 +6,7 @@ import { testPlanReadiness } from './plan-results.js';
 import type { IdeaReview } from './idea.js';
 import type { Suggestions } from './suggestions.js';
 import { buildAppPlan, type AppFeatures, type AppScreens } from './webapp.js';
+import { confidentialityPending } from './confidentiality.js';
 // Shared ground of the stage workflow: loading a project with the viewer's access, stage and version helpers,
 // events, notifications and the AI provider with its per-project hold. Used by JourneyService, StageAiService and
 // ChangeNoticesService.
@@ -116,7 +117,7 @@ export class JourneyCore {
       select: {
         id: true, name: true, status: true, locale: true, projectType: true, startStageKey: true, routeVersion: true, ownerUserId: true, changeResponseDays: true,
         members: { where: { userId, status: 'active' }, select: { role: true, stageKeys: true } },
-        assignments: { where: { userId, status: { in: ['active', 'completed'] } }, select: { id: true, stageId: true, role: true, status: true, aiBudget: true, aiUsed: true, readUntil: true, extraReadStages: true, hiddenParts: true, allowDownload: true, readDays: true, editMode: true } },
+        assignments: { where: { userId, status: { in: ['active', 'completed'] } }, select: { id: true, stageId: true, role: true, status: true, aiBudget: true, aiUsed: true, readUntil: true, extraReadStages: true, hiddenParts: true, allowDownload: true, watermark: true, readDays: true, editMode: true, confidentialityText: true, confidentialityAcceptedHash: true } },
         stages: { orderBy: { position: 'asc' }, select: { id: true, stageKey: true, position: true, status: true, currentVersionId: true, approvedVersionId: true, lockedKeys: true, approvedAt: true, updatedAt: true, definitionVersion: true, reviewNote: true, title: true, moduleKey: true } },
       },
     });
@@ -126,11 +127,13 @@ export class JourneyCore {
     const stages = project.stages as StageRow[];
     const member = project.members[0] ?? null;
     const now = Date.now();
-    const assignments: AssignmentRow[] = project.assignments
-      .filter((item) => item.status === 'active' || (item.readUntil && item.readUntil.getTime() > now))
-      .map(({ extraReadStages, hiddenParts, allowDownload, readDays, editMode, ...item }) => ({ ...item, scope: scopeOf({ extraReadStages, hiddenParts, allowDownload, readDays, editMode }), stageKey: stages.find((stage) => stage.id === item.stageId)?.stageKey ?? '' }));
+    const open = project.assignments.filter((item) => item.status === 'active' || (item.readUntil && item.readUntil.getTime() > now));
+    // Confidentiality terms not accepted (or changed since): the stage stays closed until the specialist accepts them.
+    const assignments: AssignmentRow[] = open
+      .filter((item) => !confidentialityPending(item))
+      .map(({ extraReadStages, hiddenParts, allowDownload, watermark, readDays, editMode, confidentialityText: _text, confidentialityAcceptedHash: _hash, ...item }) => ({ ...item, scope: scopeOf({ extraReadStages, hiddenParts, allowDownload, watermark, readDays, editMode }), stageKey: stages.find((stage) => stage.id === item.stageId)?.stageKey ?? '' }));
     const viewer: Viewer = member ? { kind: 'member', role: member.role, stageKeys: member.role === 'contributor' ? member.stageKeys : [] } : { kind: 'specialist', assignments };
-    if (viewer.kind === 'specialist' && assignments.length === 0) throw new NotFoundException('PROJECT_NOT_FOUND');
+    if (viewer.kind === 'specialist' && assignments.length === 0) throw open.length ? new ForbiddenException('CONFIDENTIALITY_NOT_ACCEPTED') : new NotFoundException('PROJECT_NOT_FOUND');
     const role = member?.role ?? 'specialist';
     const route = projectRoute(knownStagesOf(type), stages);
     const statuses: StatusMap = Object.fromEntries(stages.map((stage) => [stage.stageKey, stage.status]));

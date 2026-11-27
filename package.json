@@ -43,6 +43,7 @@
     "e2b": "^2.64.0",
     "lighthouse": "^13.6.0",
     "parse5": "^8.1.1",
+    "pdf-lib": "1.17.1",
     "pg": "^8.16.3",
     "playwright-core": "^1.63.0",
     "reflect-metadata": "^0.2.2",

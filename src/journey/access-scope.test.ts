@@ -18,7 +18,7 @@ describe('specialist access scope: rules', () => {
     assert.deepEqual(parseScope(undefined, ctx('design', ['goal'])), DEFAULT_SCOPE);
     const scope = parseScope({ extraReadStages: ['process', 'goal', 'process'], hiddenParts: ['goal.contacts', 'offer.prices'], allowDownload: true, readDays: 0 }, ctx('design', ['goal']));
     // goal is an input anyway; offer is neither an input nor opened, so hiding its prices is dropped.
-    assert.deepEqual(scope, { extraReadStages: ['process'], hiddenParts: ['goal.contacts'], allowDownload: true, readDays: 0, editMode: 'both' });
+    assert.deepEqual(scope, { extraReadStages: ['process'], hiddenParts: ['goal.contacts'], allowDownload: true, watermark: false, readDays: 0, editMode: 'both' });
     assert.throws(() => parseScope({ extraReadStages: ['design'] }, ctx('design', ['goal'])), /ACCESS_EXTRA_STAGES_INVALID/);
     assert.throws(() => parseScope({ extraReadStages: ['schedule'] }, ctx('design', ['goal'])), /ACCESS_EXTRA_STAGES_INVALID/);
     assert.throws(() => parseScope({ hiddenParts: ['goal.secret'] }, ctx('design', ['goal'])), /ACCESS_HIDDEN_PARTS_INVALID/);
@@ -55,9 +55,9 @@ describe('specialist access scope: rules', () => {
     const offer = { services: [{ name: 'Торт', description: null, price: '5000 ₸' }, { name: 'Пирог', description: null, price: null }], hours: null };
     assert.deepEqual((redact('offer', offer, ['offer.prices']) as typeof offer).services.map((item) => item.price), ['скрыто владельцем', null]);
     assert.equal(redact('goal', brief, []), brief);
-    const lines = scopeLines({ extraReadStages: ['process'], hiddenParts: ['goal.contacts'], allowDownload: false, readDays: 0, editMode: 'both' });
+    const lines = scopeLines({ extraReadStages: ['process'], hiddenParts: ['goal.contacts'], allowDownload: false, watermark: true, readDays: 0, editMode: 'both' });
     assert.equal(lines.can.length, 1);
-    assert.equal(lines.cannot.length, 2);
+    assert.equal(lines.cannot.length, 3);
     assert.match(lines.afterAcceptance, /закроется сразу/);
   });
 });

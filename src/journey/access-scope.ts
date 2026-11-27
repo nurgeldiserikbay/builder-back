@@ -5,6 +5,7 @@
 // - extraReadStages: more accepted results to read (read-only, accepted version only; drafts and discussions stay closed);
 // - hiddenParts: parts of what the specialist sees that are replaced with «скрыто владельцем» for them and their AI;
 // - allowDownload: whether the specialist may download stage files other people uploaded;
+// - watermark: downloaded photos, PDF and text files, and the stage screen, carry the specialist's address and the date;
 // - readDays: how long the specialist can still look at the stage after it is accepted (0–30 days);
 // - editMode: how the lead changes the stage — by hand and through the AI (both), only by instructing the AI (ai_only),
 //   or only by hand (manual_only). Comments and change proposals stay open in every mode.
@@ -31,8 +32,8 @@ export type HiddenPart = keyof typeof HIDEABLE_PARTS;
 
 export const EDIT_MODES = ['both', 'ai_only', 'manual_only'] as const;
 export type EditMode = typeof EDIT_MODES[number];
-export interface AccessScope { extraReadStages: StageKey[]; hiddenParts: HiddenPart[]; allowDownload: boolean; readDays: number; editMode: EditMode }
-export const DEFAULT_SCOPE: AccessScope = { extraReadStages: [], hiddenParts: [], allowDownload: false, readDays: READ_DAYS_DEFAULT, editMode: 'both' };
+export interface AccessScope { extraReadStages: StageKey[]; hiddenParts: HiddenPart[]; allowDownload: boolean; watermark: boolean; readDays: number; editMode: EditMode }
+export const DEFAULT_SCOPE: AccessScope = { extraReadStages: [], hiddenParts: [], allowDownload: false, watermark: false, readDays: READ_DAYS_DEFAULT, editMode: 'both' };
 
 /** Which way of changing a stage an action uses: typing into the stage, or asking the AI. */
 export type EditWay = 'manual' | 'ai';
@@ -56,7 +57,7 @@ export function parseScope(raw: unknown, ctx: { route: StageKey[]; stageKey: Sta
   if (raw === undefined || raw === null) return base;
   if (typeof raw !== 'object' || Array.isArray(raw)) throw new BadRequestException('ACCESS_SCOPE_INVALID');
   const input = raw as Record<string, unknown>;
-  for (const key of Object.keys(input)) if (!['extraReadStages', 'hiddenParts', 'allowDownload', 'readDays', 'editMode'].includes(key)) throw new BadRequestException('ACCESS_SCOPE_INVALID');
+  for (const key of Object.keys(input)) if (!['extraReadStages', 'hiddenParts', 'allowDownload', 'watermark', 'readDays', 'editMode'].includes(key)) throw new BadRequestException('ACCESS_SCOPE_INVALID');
 
   let extraReadStages = base.extraReadStages;
   if (input.extraReadStages !== undefined) {
@@ -83,6 +84,11 @@ export function parseScope(raw: unknown, ctx: { route: StageKey[]; stageKey: Sta
     if (typeof input.allowDownload !== 'boolean') throw new BadRequestException('ACCESS_SCOPE_INVALID');
     allowDownload = input.allowDownload;
   }
+  let watermark = base.watermark;
+  if (input.watermark !== undefined) {
+    if (typeof input.watermark !== 'boolean') throw new BadRequestException('ACCESS_SCOPE_INVALID');
+    watermark = input.watermark;
+  }
   let readDays = base.readDays;
   if (input.readDays !== undefined) {
     if (!Number.isInteger(input.readDays) || (input.readDays as number) < 0 || (input.readDays as number) > READ_DAYS_MAX) throw new BadRequestException('ACCESS_READ_DAYS_INVALID');
@@ -95,16 +101,16 @@ export function parseScope(raw: unknown, ctx: { route: StageKey[]; stageKey: Sta
     if (input.editMode === 'manual_only' && NEEDS_EVERYTHING.has(definitionOf(ctx.stageKey).artifactType)) throw new BadRequestException('ACCESS_EDIT_MODE_INVALID');
     editMode = input.editMode as EditMode;
   }
-  return { extraReadStages, hiddenParts, allowDownload, readDays, editMode };
+  return { extraReadStages, hiddenParts, allowDownload, watermark, readDays, editMode };
 }
 
 /** The scope stored on an assignment row. */
-export function scopeOf(row: { extraReadStages: string[]; hiddenParts: string[]; allowDownload: boolean; readDays: number; editMode?: string | null }): AccessScope {
+export function scopeOf(row: { extraReadStages: string[]; hiddenParts: string[]; allowDownload: boolean; watermark?: boolean | null; readDays: number; editMode?: string | null }): AccessScope {
   return {
     editMode: (EDIT_MODES as readonly string[]).includes(row.editMode ?? '') ? row.editMode as EditMode : 'both',
     extraReadStages: row.extraReadStages.filter((key): key is StageKey => isStageKey(key)),
     hiddenParts: row.hiddenParts.filter((part): part is HiddenPart => part in HIDEABLE_PARTS),
-    allowDownload: row.allowDownload, readDays: row.readDays,
+    allowDownload: row.allowDownload, watermark: row.watermark === true, readDays: row.readDays,
   };
 }
 
@@ -147,6 +153,7 @@ export function scopeLines(scope: AccessScope): { can: string[]; cannot: string[
   if (scope.extraReadStages.length) can.push(tr('Читать принятые результаты: {0}', [scope.extraReadStages.map((key) => `«${tr(definitionOf(key).title)}»`).join(', ')]));
   for (const part of scope.hiddenParts) cannot.push(tr('Видеть: {0} — вместо них «{1}»', [tr(HIDEABLE_PARTS[part].title).toLowerCase(), tr(HIDDEN_MARK)]));
   (scope.allowDownload ? can : cannot).push(tr('Скачивать файлы этапа, загруженные другими'));
+  if (scope.watermark) cannot.push(tr('Скачивать фото, PDF и тексты без водяного знака: на них и на экране этапа — ваша почта и дата'));
   if (scope.editMode === 'ai_only') { can.push(tr('Менять этап через ИИ: давать задания и принимать предложения')); cannot.push(tr('Править этап вручную')); }
   if (scope.editMode === 'manual_only') { can.push(tr('Править этап вручную')); cannot.push(tr('Запускать ИИ на этапе')); }
   const afterAcceptance = scope.readDays === 0

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: BuildPath API
-  version: 1.40.0
+  version: 1.41.0
   description: |
     Contract-first API for BuildPath. This document is the source of truth for
     request and response shapes. An operation marked planned is not implemented
@@ -6542,6 +6542,119 @@ paths:
         '403': { $ref: '#/components/responses/Problem' }
         '404': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/assignments/{assignmentId}/confidentiality:
+    put:
+      tags: [Specialists]
+      operationId: setSpecialistConfidentiality
+      summary: Set confidentiality terms of an assignment
+      description: Owner or manager. text true — the platform template, a string — the owner's text, null — no terms. A changed text closes the project for the specialist (403 CONFIDENTIALITY_NOT_ACCEPTED on every stage request, time is not counted) until they accept it. Logged as specialist_confidentiality_changed with the text hash.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: assignmentId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [text]
+              properties:
+                text:
+                  oneOf:
+                    - { type: boolean }
+                    - { type: string, minLength: 20, maxLength: 4000 }
+                    - { type: 'null' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      confidentiality: { oneOf: [{ $ref: '#/components/schemas/ConfidentialityTerms' }, { type: 'null' }] }
+        '400': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/confidentiality:
+    get:
+      tags: [Specialists]
+      operationId: pendingConfidentiality
+      summary: Terms the specialist still has to accept in this project
+      description: For the signed-in specialist. Answered also while the project itself answers 403 CONFIDENTIALITY_NOT_ACCEPTED.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      projectName: { type: [string, 'null'] }
+                      invitedBy: { type: [string, 'null'] }
+                      pending:
+                        type: array
+                        items:
+                          allOf:
+                            - $ref: '#/components/schemas/ConfidentialityTerms'
+                            - type: object
+                              properties:
+                                assignmentId: { type: string, format: uuid }
+                                stageKey: { type: string }
+                                stageTitle: { type: string }
+        '404': { $ref: '#/components/responses/Problem' }
+  /projects/{projectId}/assignments/{assignmentId}/confidentiality/accept:
+    post:
+      tags: [Specialists]
+      operationId: acceptConfidentiality
+      summary: Accept the current confidentiality terms
+      description: The specialist of the assignment. hash must name the current text (409 CONFIDENTIALITY_CHANGED if the owner changed it meanwhile). Logged as specialist_confidentiality_accepted.
+      x-implementation-status: implemented
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: assignmentId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hash]
+              properties:
+                hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      assignmentId: { type: string, format: uuid }
+                      stageKey: { type: string }
+        '404': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
   /projects/{projectId}/assignments/{assignmentId}/access:
     put:
       tags: [Specialists]
@@ -6889,7 +7002,7 @@ paths:
       tags: [Specialists]
       operationId: acceptInvite
       summary: Accept an invitation
-      description: The signed-in account e-mail must match the invited address.
+      description: The signed-in account e-mail must match the invited address. When the invitation carries confidentiality terms, confidentialityHash must name the text the specialist read (409 CONFIDENTIALITY_NOT_ACCEPTED otherwise); the acceptance and the hash are logged in specialist_joined.
       x-implementation-status: implemented
       security:
         - sessionCookie: []
@@ -6898,6 +7011,14 @@ paths:
           name: token
           required: true
           schema: { type: string, minLength: 20, maxLength: 64 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confidentialityHash: { type: string, pattern: '^[0-9a-f]{64}$' }
       responses:
         '200':
           description: OK
@@ -9035,7 +9156,8 @@ components:
           required: [stage, inputs, current, issues, versions, rules, ai, options]
           properties:
             extraReads: { type: array, items: { type: object }, description: 'For a specialist: accepted results the owner opened beyond the inputs (key, title, versionNumber, content). Empty for members.' }
-            access: { type: [object, 'null'], description: 'For a specialist: hiddenParts, allowDownload, readDays of their assignment. Null for members. Inputs shown to a specialist have hidden parts replaced with «скрыто владельцем».' }
+            watermark: { type: [string, 'null'], description: 'For a specialist whose owner turned watermarks on: the mark to draw over the stage screen (address, time, BuildPath). Null otherwise.' }
+            access: { type: [object, 'null'], description: 'For a specialist: hiddenParts, allowDownload, watermark, readDays of their assignment. Null for members. Inputs shown to a specialist have hidden parts replaced with «скрыто владельцем».' }
             stage:
               type: object
               required: [key, title, status, artifactType, canEdit, canAccept, canReopen, canImport, inputsReady, lockedKeys]
@@ -9444,6 +9566,12 @@ components:
         revisionsIncluded: { type: integer, minimum: 0, maximum: 20, description: Revision rounds included in a fixed price. }
         onlyResultTime: { type: boolean, default: false, description: For hourly — pay only tracked intervals with actions on the stage. }
         access: { $ref: '#/components/schemas/AccessScopeInput' }
+        confidentiality:
+          description: 'Confidentiality terms the specialist accepts together with the invitation: true — the platform template, a string — the owner''s text (20–4000 characters), null or false — none. 400 CONFIDENTIALITY_INVALID.'
+          oneOf:
+            - { type: boolean }
+            - { type: string, minLength: 20, maxLength: 4000 }
+            - { type: 'null' }
     PlaybookInput:
       type: object
       additionalProperties: false
@@ -9464,6 +9592,7 @@ components:
         extraReadStages: { type: array, maxItems: 10, items: { type: string }, description: 'More accepted results to read (route stages other than this one; inputs are visible anyway). Accepted version only; the stage page itself stays closed. 400 ACCESS_EXTRA_STAGES_INVALID.' }
         hiddenParts: { type: array, items: { type: string, enum: [goal.contacts, offer.prices, products.prices] }, description: 'Replaced with «скрыто владельцем» for the specialist, their AI and their preview. Not for build, hand-off or tech plan stages (400 ACCESS_HIDE_NOT_FOR_BUILD), nor for parts the stage copies into its result (400 ACCESS_HIDE_USED_BY_STAGE).' }
         allowDownload: { type: boolean, description: 'Download stage files uploaded by others (own files always). Otherwise 403 DOWNLOAD_NOT_ALLOWED.' }
+        watermark: { type: boolean, description: 'Photos (PNG, JPEG, WebP) and PDF the specialist downloads get a repeated diagonal mark with their address and the time (UTC); Markdown and .txt files get a first line with it. Other files are handed over unchanged. Every download by a specialist is logged as stage_file_downloaded with watermarked true or false. A photo or PDF that cannot be read answers 422 WATERMARK_FAILED. The stage view carries the same mark (StageView.watermark).' }
         readDays: { type: integer, minimum: 0, maximum: 30, description: 'Days the stage stays readable after it is accepted; 0 closes access at acceptance.' }
         editMode:
           type: string
@@ -9476,11 +9605,12 @@ components:
             tech plan stages (400 ACCESS_EDIT_MODE_INVALID). Owners and project members are never limited.
     AccessScope:
       type: object
-      required: [extraReadStages, hiddenParts, allowDownload, readDays, editMode]
+      required: [extraReadStages, hiddenParts, allowDownload, watermark, readDays, editMode]
       properties:
         extraReadStages: { type: array, items: { type: string } }
         hiddenParts: { type: array, items: { type: string } }
         allowDownload: { type: boolean }
+        watermark: { type: boolean }
         readDays: { type: integer }
         editMode: { type: string, enum: [both, ai_only, manual_only] }
     StageAssignment:
@@ -9501,6 +9631,16 @@ components:
         readUntil: { type: [string, 'null'], format: date-time }
         access: { $ref: '#/components/schemas/AccessScope' }
         accessText: { type: object, description: 'Plain lines: can, cannot, afterAcceptance.' }
+        confidentiality: { oneOf: [{ $ref: '#/components/schemas/ConfidentialityTerms' }, { type: 'null' }] }
+    ConfidentialityTerms:
+      type: object
+      required: [text, hash, accepted, acceptedAt, changed]
+      properties:
+        text: { type: string }
+        hash: { type: string, description: SHA-256 of the text; acceptance names it. }
+        accepted: { type: boolean, description: The current text is accepted. }
+        acceptedAt: { type: [string, 'null'], format: date-time }
+        changed: { type: boolean, description: An earlier text was accepted; the current one is not yet. }
     AssignmentListResponse:
       type: object
       required: [data]
@@ -9513,6 +9653,7 @@ components:
             roles: { type: object, description: Plain-language access summary per role. }
             accessOptions: { type: object, description: 'For the invitation form: the stage inputs (always visible), stages that can be opened additionally, parts that can be hidden, readDaysMax, editModes (the ways of changing the stage the owner can choose: both, ai_only, manual_only; no manual_only for builds and the hand-off).' }
             defaultAccess: { $ref: '#/components/schemas/AccessScope' }
+            defaultConfidentiality: { type: string, description: The platform's template of confidentiality terms in the owner's language. }
     InviteSpecialistResponse:
       type: object
       required: [data]
@@ -9548,6 +9689,15 @@ components:
             status: { type: string, enum: [invited, active, completed, revoked] }
             expired: { type: boolean }
             projectId: { type: [string, 'null'] }
+            confidentiality:
+              description: Terms to accept with the invitation; accept sends their hash.
+              oneOf:
+                - { type: 'null' }
+                - type: object
+                  required: [text, hash]
+                  properties:
+                    text: { type: string }
+                    hash: { type: string }
     InviteAcceptResponse:
       type: object
       required: [data]
@@ -9579,6 +9729,7 @@ components:
               aiBudget: { type: [integer, 'null'] }
               aiUsed: { type: integer }
               readUntil: { type: [string, 'null'], format: date-time }
+              confidentialityPending: { type: boolean, description: 'Confidentiality terms to accept before the stage opens (GET /projects/{projectId}/confidentiality).' }
     RequestChangesRequest:
       type: object
       additionalProperties: false
