@@ -402,6 +402,7 @@ model Project {
   appIncidents    AppIncident[]
   feedbackInbox    FeedbackInbox?
   usageCollector   UsageCollector?
+  conceptShare     ConceptShare?
 }
 
 model ProjectMember {
@@ -2662,5 +2663,39 @@ model UsageSalt {
   salt String   @db.Char(64)
 
   @@map("usage_salts")
+}
+
+/// «Показать другому человеку»: a read-only link to the product concept for someone without an account (PRODUCT_LIFECYCLE
+/// §4.4). The owner turns it on, hides sections and may let readers leave remarks.
+model ConceptShare {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  projectId       String         @unique @map("project_id") @db.Uuid
+  token           String         @unique @db.VarChar(48)
+  enabled         Boolean        @default(true)
+  allowComments   Boolean        @default(true) @map("allow_comments")
+  hiddenSections  String[]       @default([]) @map("hidden_sections")
+  views           Int            @default(0)
+  createdByUserId String         @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  comments        GuestComment[]
+
+  @@map("concept_shares")
+}
+
+/// A remark left on the shared concept by a reader without an account: plain text, shown to the project's team only.
+model GuestComment {
+  id         String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shareId    String       @map("share_id") @db.Uuid
+  name       String       @db.VarChar(60)
+  section    String?      @db.VarChar(40)
+  text       String       @db.VarChar(1000)
+  resolvedAt DateTime?    @map("resolved_at") @db.Timestamptz(3)
+  createdAt  DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  share      ConceptShare @relation(fields: [shareId], references: [id], onDelete: Cascade)
+
+  @@index([shareId, createdAt])
+  @@map("guest_comments")
 }
 
