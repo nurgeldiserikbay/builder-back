@@ -4331,4 +4331,12 @@ export const en: Record<string, string> = {
   "Изменился этап, от которого зависят следующие": "A stage the next ones depend on has changed",
   "Сайт опубликован": "The site is published",
   "ИИ-агент закончил задачу": "The AI agent finished a task",
+  "В пакетах приложения известные уязвимости: критических {0}, высоких {1} ({2}).": "The application's packages have known vulnerabilities: {0} critical, {1} high ({2}).",
+  "Попросите ИИ-агента обновить или заменить эти пакеты (изменение приложения) и заново проверьте его. Запускать как есть можно, только объяснив почему.": "Ask the AI agent to upgrade or replace these packages (a change of the application) and check it again. Launching as is is possible only with an explanation why.",
+  "Уязвимости в пакетах приложения не проверены: база уязвимостей npm не ответила при последней сборке.": "Vulnerabilities in the application's packages are not checked: the npm advisory database did not answer at the last build.",
+  "Соберите приложение ещё раз, когда база будет доступна, или проверьте пакеты сами (npm audit).": "Build the application again when the database is available, or check the packages yourself (npm audit).",
+  "В пакетах последней сборки модуля известные уязвимости: критических {0}, высоких {1} ({2}).": "The packages of the module's last build have known vulnerabilities: {0} critical, {1} high ({2}).",
+  "Попросите ИИ-агента обновить или заменить эти пакеты и соберите модуль заново. Принять модуль как есть можно, только объяснив почему.": "Ask the AI agent to upgrade or replace these packages and build the module again. Accepting the module as is is possible only with an explanation why.",
+  "Уязвимости в пакетах последней сборки модуля не проверены: база уязвимостей npm не ответила.": "Vulnerabilities in the packages of the module's last build are not checked: the npm advisory database did not answer.",
+  "Соберите модуль ещё раз, когда база будет доступна, или проверьте пакеты сами (npm audit).": "Build the module again when the database is available, or check the packages yourself (npm audit).",
 };

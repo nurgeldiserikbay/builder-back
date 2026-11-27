@@ -4,6 +4,7 @@
 // item by item, or says why it is not needed: domain, legal texts, outgoing mail, backups, monitoring, data from an old
 // system, measuring the goals of success, a security audit. A failed platform check blocks the launch unless the owner
 // accepts the risk in writing — the same written explanation as for any blocking finding.
+import type { AuditFact } from '../agent/audit-gate.js';
 import { tr } from '../i18n/i18n.js';
 import { ArtifactValidationError } from './artifacts.js';
 import type { ArchitectureDesign } from './architecture.js';
@@ -43,6 +44,8 @@ export interface LaunchFacts {
   domainChoice?: 'own_domain' | 'host_address' | null;
   /** Module stages of the accepted plan (§4.9) that are not accepted yet; absent for projects without them. */
   modulesOpen?: string[];
+  /** Known vulnerabilities of the code that would be launched (audit-gate.ts); null when the agent has not built it. */
+  audit?: AuditFact | null;
 }
 
 export interface LaunchItemInfo { key: LaunchItemKey; title: string; why: string; required: boolean }
@@ -78,6 +81,9 @@ export function launchIssues(value: LaunchChecklist, facts: LaunchFacts): Launch
   }
   // Not blocking: the test plan's cases already decide whether the whole works; a module left open is still worth knowing.
   if (facts.modulesOpen?.length) issues.push({ code: 'LAUNCH_MODULES_NOT_ACCEPTED', severity: 'important', target: 'modules', message: tr('Не приняты модули: {0}.', [facts.modulesOpen.join(', ')]), fix: tr('Примите модули на их этапах или объясните, почему запускаете без них.') });
+  // The application goes to people with these packages: a critical or high advisory blocks, unless the owner says why.
+  if (facts.audit?.state === 'vulnerable') issues.push({ code: 'LAUNCH_VULNERABLE_PACKAGES', severity: 'blocking', target: 'audit', message: tr('В пакетах приложения известные уязвимости: критических {0}, высоких {1} ({2}).', [facts.audit.critical, facts.audit.high, facts.audit.packages.join(', ')]), fix: tr('Попросите ИИ-агента обновить или заменить эти пакеты (изменение приложения) и заново проверьте его. Запускать как есть можно, только объяснив почему.') });
+  else if (facts.audit?.state === 'unchecked') issues.push({ code: 'LAUNCH_PACKAGES_NOT_CHECKED', severity: 'important', target: 'audit', message: tr('Уязвимости в пакетах приложения не проверены: база уязвимостей npm не ответила при последней сборке.'), fix: tr('Соберите приложение ещё раз, когда база будет доступна, или проверьте пакеты сами (npm audit).') });
   const deployment = facts.deployment;
   if (!deployment || !deployment.ok) issues.push({ code: 'LAUNCH_NOT_DEPLOYED', severity: 'blocking', target: 'deployment', message: deployment ? tr('Приложение по адресу {0} не ответило при последней проверке.', [deployment.url]) : tr('Не указан адрес, где работает приложение.'), fix: tr('Разверните приложение и проверьте адрес в «Пакете для разработки», блок «Запуск у вас».') });
   else {

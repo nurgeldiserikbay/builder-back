@@ -1,4 +1,5 @@
 import type { ArchitectureDesign } from './architecture.js';
+import { launchAudit } from '../agent/audit-gate.js';
 import type { ConceptInputs } from './concept.js';
 import type { Contracts } from './contracts.js';
 import type { LaunchFacts } from './launch.js';
@@ -300,6 +301,7 @@ export class JourneyCore {
       features: (inputs.features?.content as AppFeatures | undefined) ?? null, idea: (inputs.idea?.content as IdeaReview | undefined) ?? null, design,
       domainChoice: domain === 'own_domain' || domain === 'host_address' ? domain : null,
       modulesOpen: ctx.stages.filter((stage) => isModuleStageKey(stage.stageKey) && !isSatisfied(stage.status) && stage.status !== 'blocked').map((stage) => stage.title ?? stage.stageKey),
+      audit: await launchAudit(this.prisma as never, ctx.project.id),
     };
   }
 
